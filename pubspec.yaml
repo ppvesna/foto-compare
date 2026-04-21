@@ -1,0 +1,38 @@
+name: photo_compare
+description: Photo comparison tool — XP Edition
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Фото
+  image_picker: ^1.0.7
+  image: ^4.1.7
+
+  # База данных
+  sqflite: ^2.3.2
+  path: ^1.9.0
+
+  # Хранилище
+  path_provider: ^2.1.2
+  shared_preferences: ^2.2.2
+  uuid: ^4.3.3
+
+  # Сеть
+  http: ^1.2.0
+
+  # UI
+  cupertino_icons: ^1.0.6
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true

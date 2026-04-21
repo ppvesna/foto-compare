@@ -1,0 +1,688 @@
+import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import '../config/app_theme.dart';
+import '../widgets/xp_widgets.dart';
+
+class CompareScreen extends StatefulWidget {
+  const CompareScreen({super.key});
+
+  @override
+  State<CompareScreen> createState() => _CompareScreenState();
+}
+
+class _CompareScreenState extends State<CompareScreen>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabs;
+  File? _refImg;
+  File? _cmpImg;
+  final _picker = ImagePicker();
+  double _sliderPos = 0.5;
+  double _opacity   = 0.5;
+  double _zoom      = 1.0;
+  int    _rotation  = 0;
+  String _mode      = 's'; // s=slider, d=side, o=overlay, f=diff
+
+  // Заглушки истории
+  final _history = [
+    {'file': 'photo_001.jpg', 'sim': 87.4, 'date': '16.04.2026'},
+    {'file': 'photo_002.jpg', 'sim': 71.2, 'date': '15.04.2026'},
+    {'file': 'photo_003.jpg', 'sim': 45.8, 'date': '14.04.2026'},
+    {'file': 'photo_004.jpg', 'sim': 93.1, 'date': '13.04.2026'},
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _tabs = TabController(length: 4, vsync: this);
+  }
+
+  @override
+  void dispose() {
+    _tabs.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickImage(bool isRef) async {
+    final result = await showModalBottomSheet<String>(
+      context: context,
+      builder: (_) => Container(
+        color: AppTheme.silver,
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(leading: const Text('📂', style: TextStyle(fontSize: 20)),
+              title: const Text('Открыть файл'),
+              onTap: () => Navigator.pop(context, 'file')),
+          ListTile(leading: const Text('🖼️', style: TextStyle(fontSize: 20)),
+              title: const Text('Галерея'),
+              onTap: () => Navigator.pop(context, 'gallery')),
+          ListTile(leading: const Text('📷', style: TextStyle(fontSize: 20)),
+              title: const Text('Камера'),
+              onTap: () => Navigator.pop(context, 'camera')),
+        ]),
+      ),
+    );
+    if (result == null) return;
+
+    final source = result == 'camera'
+        ? ImageSource.camera : ImageSource.gallery;
+    final x = await _picker.pickImage(source: source, imageQuality: 92);
+    if (x == null) return;
+
+    setState(() {
+      if (isRef) _refImg = File(x.path);
+      else _cmpImg = File(x.path);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(children: [
+      // Менюбар
+      XpMenuBar(icon: '🖼️', menus: [
+        XpMenu(label: 'Файл', items: [
+          XpMenuItem(label: 'Новое', icon: '🆕', shortcut: 'Ctrl+N',
+              onTap: () => setState(() { _refImg=null; _cmpImg=null; _tabs.animateTo(0); })),
+          XpMenuItem.sep,
+          XpMenuItem(label: 'Сохранить', icon: '💾', shortcut: 'Ctrl+S',
+              onTap: () => xpDlg(context, 'Сохранено', 'Результат сохранён в историю')),
+          XpMenuItem(label: 'Экспорт...', icon: '📤', shortcut: 'Ctrl+E',
+              onTap: () => xpDlg(context, 'Экспорт', 'Форматы: PNG, PDF, CSV')),
+        ]),
+        XpMenu(label: 'Вид', items: [
+          XpMenuItem(label: 'Загрузка эталона', icon: '🖼️',
+              onTap: () => _tabs.animateTo(0)),
+          XpMenuItem(label: 'Сравнение', icon: '🔍',
+              onTap: () => _tabs.animateTo(1)),
+          XpMenuItem(label: 'Результат', icon: '📊',
+              onTap: () => _tabs.animateTo(2)),
+          XpMenuItem(label: 'История', icon: '📋',
+              onTap: () => _tabs.animateTo(3)),
+        ]),
+        XpMenu(label: 'Инструменты', items: [
+          XpMenuItem(label: 'Увеличить', icon: '🔍', shortcut: 'Ctrl++',
+              onTap: () => setState(() => _zoom = (_zoom * 1.25).clamp(0.25, 4))),
+          XpMenuItem(label: 'Уменьшить', icon: '🔎', shortcut: 'Ctrl+-',
+              onTap: () => setState(() => _zoom = (_zoom * 0.8).clamp(0.25, 4))),
+          XpMenuItem(label: 'Повернуть', icon: '↺', shortcut: 'Ctrl+R',
+              onTap: () => setState(() => _rotation = (_rotation + 90) % 360)),
+          XpMenuItem.sep,
+          XpMenuItem(label: 'AI Анализ (Pro)', icon: '🤖', disabled: true),
+        ]),
+        XpMenu(label: 'Справка', items: [
+          XpMenuItem(label: 'Горячие клавиши', icon: '⌨️',
+              onTap: () => xpDlg(context, 'Горячие клавиши',
+                  'Ctrl+N — Новое\nCtrl+S — Сохранить\nCtrl+E — Экспорт\nCtrl+R — Повернуть\nCtrl++/- — Зум')),
+        ]),
+      ]),
+
+      // Табы
+      Container(
+        color: AppTheme.silver,
+        padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+        child: TabBar(
+          controller: _tabs,
+          isScrollable: true,
+          labelPadding: EdgeInsets.zero,
+          indicatorColor: Colors.transparent,
+          dividerColor: AppTheme.blue,
+          dividerHeight: 2,
+          tabs: [
+            _xpTab('🖼️ Эталон',   0),
+            _xpTab('🔍 Сравнение', 1),
+            _xpTab('📊 Результат', 2),
+            _xpTab('📋 История',   3),
+          ],
+        ),
+      ),
+
+      // Контент табов
+      Expanded(
+        child: TabBarView(
+          controller: _tabs,
+          physics: const NeverScrollableScrollPhysics(),
+          children: [
+            _tabRef(),
+            _tabCmp(),
+            _tabResult(),
+            _tabHistory(),
+          ],
+        ),
+      ),
+    ]);
+  }
+
+  Widget _xpTab(String label, int idx) {
+    return AnimatedBuilder(
+      animation: _tabs,
+      builder: (_, __) {
+        final active = _tabs.index == idx;
+        return GestureDetector(
+          onTap: () => _tabs.animateTo(idx),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+            margin: const EdgeInsets.only(right: 2),
+            decoration: BoxDecoration(
+              color: active ? AppTheme.silver : AppTheme.silverDark,
+              border: Border(
+                top:   BorderSide(color: active ? AppTheme.blue : AppTheme.silverDark),
+                left:  BorderSide(color: active ? AppTheme.blue : AppTheme.silverDark),
+                right: BorderSide(color: active ? AppTheme.blue : AppTheme.silverDark),
+                bottom: BorderSide(color: active ? AppTheme.silver : AppTheme.silverDark),
+              ),
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(3), topRight: Radius.circular(3)),
+            ),
+            child: Text(label,
+                style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: active ? FontWeight.bold : FontWeight.normal,
+                    color: active ? Colors.black : Colors.black54)),
+          ),
+        );
+      },
+    );
+  }
+
+  // ── Таб: Эталон ───────────────────────────────────
+  Widget _tabRef() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(12),
+      child: Column(children: [
+        XpGroup(label: 'Эталонное изображение', child: Column(children: [
+          GestureDetector(
+            onTap: () => _pickImage(true),
+            child: Container(
+              height: 160,
+              width: double.infinity,
+              decoration: BoxDecoration(
+                border: Border.all(
+                    color: _refImg != null ? AppTheme.blue : AppTheme.border,
+                    style: _refImg != null ? BorderStyle.solid : BorderStyle.solid,
+                    width: 2),
+                color: Colors.white,
+              ),
+              child: _refImg != null
+                  ? Image.file(_refImg!, fit: BoxFit.cover)
+                  : const Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                      Text('🖼️', style: TextStyle(fontSize: 40)),
+                      SizedBox(height: 8),
+                      Text('Нажмите для выбора',
+                          style: TextStyle(fontSize: 11, color: Colors.grey)),
+                      Text('JPEG, PNG, TIFF, RAW',
+                          style: TextStyle(fontSize: 10, color: Colors.grey)),
+                    ]),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(children: [
+            Expanded(child: XpBtn(label: '📂 Файл',
+                onPressed: () => _pickImage(true))),
+            const SizedBox(width: 4),
+            Expanded(child: XpBtn(label: '🖼️ Галерея',
+                onPressed: () => _pickImage(true))),
+            const SizedBox(width: 4),
+            Expanded(child: XpBtn(label: '📷 Камера',
+                onPressed: () => _pickImage(true))),
+          ]),
+        ])),
+        XpGroup(label: 'Параметры', child: Column(children: [
+          _check('Автомасштабирование', true),
+          _check('Нормализация яркости', true),
+          _check('Автоповорот по EXIF', false),
+        ])),
+        const SizedBox(height: 12),
+        const Divider(),
+        Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+          XpBtn(label: 'Далее ›', primary: true,
+              onPressed: () => _tabs.animateTo(1)),
+        ]),
+      ]),
+    );
+  }
+
+  // ── Таб: Сравнение ────────────────────────────────
+  Widget _tabCmp() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(12),
+      child: Column(children: [
+        // Превью двух фото
+        Row(children: [
+          Expanded(child: Column(children: [
+            const Text('Эталон ✓',
+                style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 4),
+            Container(
+              height: 110,
+              decoration: BoxDecoration(
+                border: Border.all(color: AppTheme.simHigh, width: 2),
+                color: const Color(0xFFF0FFF0),
+              ),
+              child: _refImg != null
+                  ? Image.file(_refImg!, fit: BoxFit.cover)
+                  : const Center(child: Text('🖼️',
+                      style: TextStyle(fontSize: 28))),
+            ),
+          ])),
+          const Padding(
+            padding: EdgeInsets.only(top: 20),
+            child: Text(' → ',
+                style: TextStyle(fontSize: 20, color: Colors.grey)),
+          ),
+          Expanded(child: GestureDetector(
+            onTap: () => _pickImage(false),
+            child: Column(children: [
+              const Text('Для сравнения',
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 4),
+              Container(
+                height: 110,
+                decoration: BoxDecoration(
+                  border: Border.all(color: AppTheme.border),
+                  color: Colors.white,
+                ),
+                child: _cmpImg != null
+                    ? Image.file(_cmpImg!, fit: BoxFit.cover)
+                    : const Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text('📷', style: TextStyle(fontSize: 28)),
+                          Text('не выбрано',
+                              style: TextStyle(fontSize: 10, color: Colors.grey)),
+                        ]),
+              ),
+            ]),
+          )),
+        ]),
+        const SizedBox(height: 8),
+
+        // Режимы
+        XpGroup(label: 'Режим', child: Wrap(spacing: 4, runSpacing: 4, children: [
+          _modeBtn('s', '🔄 Слайдер'),
+          _modeBtn('d', '◀▶ Рядом'),
+          _modeBtn('o', '🔲 Наложение'),
+          _modeBtn('f', '🔴 Отличия'),
+        ])),
+
+        // Область сравнения
+        Container(
+          margin: const EdgeInsets.symmetric(vertical: 8),
+          height: 200,
+          decoration: BoxDecoration(
+            color: Colors.black,
+            border: Border.all(color: AppTheme.border),
+          ),
+          child: _buildCompareView(),
+        ),
+
+        // Контролы
+        XpGroup(label: 'Управление', child: Column(children: [
+          if (_mode == 's') Row(children: [
+            const Text('◀', style: TextStyle(fontSize: 10)),
+            Expanded(
+              child: Slider(
+                value: _sliderPos,
+                onChanged: (v) => setState(() => _sliderPos = v),
+                activeColor: AppTheme.blue,
+                inactiveColor: AppTheme.silverDark,
+              ),
+            ),
+            const Text('▶', style: TextStyle(fontSize: 10)),
+          ]),
+          if (_mode == 'o') Row(children: [
+            const Text('Эталон', style: TextStyle(fontSize: 10)),
+            Expanded(
+              child: Slider(
+                value: _opacity,
+                onChanged: (v) => setState(() => _opacity = v),
+                activeColor: AppTheme.blue,
+                inactiveColor: AppTheme.silverDark,
+              ),
+            ),
+            const Text('Фото', style: TextStyle(fontSize: 10)),
+          ]),
+          const SizedBox(height: 4),
+          Row(children: [
+            _toolBtn('🔍+', () => setState(() => _zoom = (_zoom*1.25).clamp(0.25,4))),
+            _toolBtn('🔍-', () => setState(() => _zoom = (_zoom*0.8).clamp(0.25,4))),
+            _toolBtn('↺ 90°', () => setState(() => _rotation=(_rotation+90)%360)),
+            _toolBtn('⟳ Сброс', () => setState((){_zoom=1;_rotation=0;_sliderPos=0.5;})),
+          ]),
+        ])),
+
+        // Прогресс анализа (заглушка)
+        XpGroup(label: 'Анализ', child: Column(children: [
+          const Row(children: [
+            Text('Итерации: 3/3', style: TextStyle(fontSize: 10)),
+          ]),
+          const SizedBox(height: 4),
+          Container(
+            height: 16,
+            decoration: BoxDecoration(
+              border: Border.all(color: AppTheme.border),
+              color: Colors.white,
+            ),
+            child: const FractionallySizedBox(
+              widthFactor: 1.0,
+              alignment: Alignment.centerLeft,
+              child: DecoratedBox(decoration: BoxDecoration(
+                gradient: LinearGradient(
+                    colors: [Color(0xFF6AB0F5), AppTheme.blue]),
+              )),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            const Text('Схожесть:', style: TextStyle(fontSize: 11)),
+            SimBadge(value: 87.4),
+          ]),
+        ])),
+
+        const SizedBox(height: 12),
+        const Divider(),
+        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          XpBtn(label: '‹ Эталон',
+              onPressed: () => _tabs.animateTo(0)),
+          Row(children: [
+            XpBtn(label: '💾',
+                onPressed: () => xpDlg(context, 'Сохранено',
+                    'Результат сохранён в историю')),
+            const SizedBox(width: 4),
+            XpBtn(label: 'Результат ›', primary: true,
+                onPressed: () => _tabs.animateTo(2)),
+          ]),
+        ]),
+      ]),
+    );
+  }
+
+  Widget _buildCompareView() {
+    if (_mode == 'd') {
+      // Рядом
+      return Transform(
+        transform: Matrix4.identity()
+          ..scale(_zoom)
+          ..rotateZ(_rotation * 3.14159 / 180),
+        alignment: Alignment.center,
+        child: Row(children: [
+          Expanded(child: _refImg != null
+              ? Image.file(_refImg!, fit: BoxFit.cover)
+              : const Center(child: Text('Эталон',
+                  style: TextStyle(color: Colors.white54)))),
+          Container(width: 2, color: Colors.white24),
+          Expanded(child: _cmpImg != null
+              ? Image.file(_cmpImg!, fit: BoxFit.cover)
+              : const Center(child: Text('Фото',
+                  style: TextStyle(color: Colors.white54)))),
+        ]),
+      );
+    }
+
+    if (_mode == 'o') {
+      return Stack(fit: StackFit.expand, children: [
+        if (_refImg != null) Image.file(_refImg!, fit: BoxFit.contain),
+        Opacity(opacity: _opacity,
+            child: _cmpImg != null
+                ? Image.file(_cmpImg!, fit: BoxFit.contain)
+                : const SizedBox()),
+      ]);
+    }
+
+    // Слайдер (default)
+    return GestureDetector(
+      onHorizontalDragUpdate: (d) {
+        final box = context.findRenderObject() as RenderBox?;
+        if (box == null) return;
+        setState(() => _sliderPos =
+            (d.localPosition.dx / box.size.width).clamp(0.0, 1.0));
+      },
+      child: LayoutBuilder(builder: (_, c) {
+        return Stack(fit: StackFit.expand, children: [
+          if (_refImg != null) Image.file(_refImg!, fit: BoxFit.contain),
+          if (_cmpImg != null) ClipRect(
+            clipper: _RightClipper(_sliderPos * c.maxWidth),
+            child: Image.file(_cmpImg!, fit: BoxFit.contain),
+          ),
+          Positioned(
+            left: _sliderPos * c.maxWidth - 1,
+            top: 0, bottom: 0,
+            child: Container(width: 2, color: Colors.white),
+          ),
+          Positioned(
+            left: _sliderPos * c.maxWidth - 14,
+            top: c.maxHeight / 2 - 14,
+            child: Container(
+              width: 28, height: 28,
+              decoration: const BoxDecoration(
+                  color: Colors.white, shape: BoxShape.circle,
+                  boxShadow: [BoxShadow(color: Colors.black38, blurRadius: 4)]),
+              child: const Icon(Icons.compare_arrows, size: 16, color: Colors.black87),
+            ),
+          ),
+          const Positioned(left: 8, top: 8,
+              child: _ImgLabel('Эталон')),
+          const Positioned(right: 8, top: 8,
+              child: _ImgLabel('Фото')),
+        ]);
+      }),
+    );
+  }
+
+  // ── Таб: Результат ────────────────────────────────
+  Widget _tabResult() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(12),
+      child: Column(children: [
+        const SizedBox(height: 10),
+        const Center(child: Text('РЕЗУЛЬТАТ СРАВНЕНИЯ',
+            style: TextStyle(fontSize: 10, color: Colors.grey))),
+        const SizedBox(height: 6),
+        const Center(child: SimBadge(value: 87.4, fontSize: 26)),
+        const SizedBox(height: 6),
+        const Center(child: Text('Высокая схожесть',
+            style: TextStyle(color: AppTheme.simHigh,
+                fontWeight: FontWeight.bold))),
+        const SizedBox(height: 12),
+
+        XpGroup(label: 'Детали', child: Table(
+          columnWidths: const {
+            0: IntrinsicColumnWidth(), 1: FlexColumnWidth()},
+          children: [
+            _tableRow('Эталон:', 'reference.jpg (2048×1536)'),
+            _tableRow('Фото:', 'photo_001.jpg (1920×1440)'),
+            _tableRow('Итераций:', '3'),
+            _tableRow('Отличий:', '~396,562 px (12.6%)'),
+            _tableRow('Дата:', '16.04.2026 14:22'),
+          ],
+        )),
+
+        XpGroup(label: 'AI Анализ', child: Column(children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(8),
+            color: Colors.white,
+            child: const Text(
+              '🤖 Основные отличия в правом нижнем углу — изменился цвет объекта. Освещение немного отличается.',
+              style: TextStyle(fontSize: 11, height: 1.6)),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(width: double.infinity, child: XpBtn(
+            label: '🤖 Обновить AI анализ',
+            onPressed: () => xpDlg(context, 'AI Анализ', 'Требуется Pro план'),
+          )),
+        ])),
+
+        const SizedBox(height: 12),
+        const Divider(),
+        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+          XpBtn(label: '‹ Назад',
+              onPressed: () => _tabs.animateTo(1)),
+          Row(children: [
+            XpBtn(label: '📤',
+                onPressed: () => xpDlg(context, 'Экспорт', 'PNG / PDF / CSV')),
+            const SizedBox(width: 4),
+            XpBtn(label: '💬 Поделиться', onPressed: () {}),
+            const SizedBox(width: 4),
+            XpBtn(label: '🆕 Новое', primary: true,
+                onPressed: () {
+              setState(() { _refImg=null; _cmpImg=null; });
+              _tabs.animateTo(0);
+            }),
+          ]),
+        ]),
+      ]),
+    );
+  }
+
+  // ── Таб: История ─────────────────────────────────
+  Widget _tabHistory() {
+    return Column(children: [
+      Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(children: [
+          Expanded(child: XpInput(placeholder: '🔍 Поиск...')),
+          const SizedBox(width: 6),
+          XpBtn(label: 'Фильтр ▼', onPressed: () {}),
+        ]),
+      ),
+      // Заголовок
+      Container(
+        margin: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: BoxDecoration(border: Border.all(color: AppTheme.border)),
+        child: Column(children: [
+          Container(
+            color: AppTheme.silver,
+            child: Row(children: [
+              _histCell('Файл', flex: 3, bold: true),
+              _histCell('Схожесть', flex: 2, bold: true),
+              _histCell('Дата', flex: 2, bold: true),
+            ]),
+          ),
+          ...(_history.asMap().entries.map((e) {
+            final i = e.key;
+            final item = e.value;
+            final sim = item['sim'] as double;
+            return GestureDetector(
+              onTap: () => _tabs.animateTo(2),
+              child: Container(
+                color: i.isEven ? Colors.white : const Color(0xFFF5F3EE),
+                child: Row(children: [
+                  _histCell(item['file'] as String, flex: 3),
+                  Expanded(flex: 2, child: Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: SimBadge(value: sim, fontSize: 10),
+                  )),
+                  _histCell(item['date'] as String, flex: 2),
+                ]),
+              ),
+            );
+          })),
+        ]),
+      ),
+      const SizedBox(height: 8),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: Row(children: [
+          XpBtn(label: '🗑️ Удалить',
+              onPressed: () => xpDlg(context, 'Удалить', 'Удалить выбранное?')),
+          const SizedBox(width: 4),
+          XpBtn(label: '📤 Экспорт',
+              onPressed: () => xpDlg(context, 'Экспорт', 'Экспорт в CSV')),
+          const Spacer(),
+          XpBtn(label: '+ Новое', primary: true,
+              onPressed: () => _tabs.animateTo(0)),
+        ]),
+      ),
+      const Spacer(),
+      XpStatusBar(
+        left: 'Записей: ${_history.length}',
+        right: 'Выбрано: 0',
+      ),
+    ]);
+  }
+
+  // ── Helpers ───────────────────────────────────────
+  Widget _modeBtn(String mode, String label) {
+    return GestureDetector(
+      onTap: () => setState(() => _mode = mode),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          gradient: AppTheme.btnGrad,
+          border: Border(
+            top:    BorderSide(color: _mode==mode ? AppTheme.blue : Colors.white),
+            left:   BorderSide(color: _mode==mode ? AppTheme.blue : Colors.white),
+            right:  BorderSide(color: _mode==mode ? AppTheme.blue : AppTheme.border),
+            bottom: BorderSide(color: _mode==mode ? AppTheme.blue : AppTheme.border),
+          ),
+        ),
+        child: Text(label, style: const TextStyle(fontSize: 11)),
+      ),
+    );
+  }
+
+  Widget _toolBtn(String label, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.only(right: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          gradient: AppTheme.btnGrad,
+          border: const Border(
+            top: BorderSide(color: Colors.white),
+            left: BorderSide(color: Colors.white),
+            right: BorderSide(color: AppTheme.border),
+            bottom: BorderSide(color: AppTheme.border),
+          ),
+        ),
+        child: Text(label, style: const TextStyle(fontSize: 11)),
+      ),
+    );
+  }
+
+  Widget _check(String label, bool val) {
+    return Row(children: [
+      Checkbox(value: val, onChanged: (_) {},
+          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap),
+      Text(label, style: const TextStyle(fontSize: 11)),
+    ]);
+  }
+
+  TableRow _tableRow(String key, String val) => TableRow(children: [
+    Padding(padding: const EdgeInsets.symmetric(vertical: 3, horizontal: 4),
+        child: Text(key, style: const TextStyle(fontSize: 11, color: Colors.grey))),
+    Padding(padding: const EdgeInsets.symmetric(vertical: 3, horizontal: 4),
+        child: Text(val, style: const TextStyle(fontSize: 11))),
+  ]);
+
+  Widget _histCell(String text, {int flex = 1, bool bold = false}) =>
+      Expanded(flex: flex, child: Container(
+        padding: const EdgeInsets.all(4),
+        decoration: const BoxDecoration(
+            border: Border(right: BorderSide(color: AppTheme.border))),
+        child: Text(text,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 11,
+                fontWeight: bold ? FontWeight.bold : FontWeight.normal)),
+      ));
+}
+
+class _RightClipper extends CustomClipper<Rect> {
+  final double x;
+  _RightClipper(this.x);
+  @override Rect getClip(Size s) => Rect.fromLTWH(x, 0, s.width, s.height);
+  @override bool shouldReclip(_RightClipper o) => o.x != x;
+}
+
+class _ImgLabel extends StatelessWidget {
+  final String text;
+  const _ImgLabel(this.text);
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+    color: Colors.black54,
+    child: Text(text, style: const TextStyle(
+        color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+  );
+}
