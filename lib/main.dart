@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'config/app_config.dart';
 import 'config/app_theme.dart';
 import 'screens/start_screen.dart';
 import 'screens/compare_screen.dart';
@@ -7,13 +9,20 @@ import 'screens/chat_screen.dart';
 import 'screens/shop_screen.dart';
 import 'screens/settings_screen.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  await Supabase.initialize(
+    url: AppConfig.supabaseUrl,
+    anonKey: AppConfig.supabaseAnonKey,
+  );
+
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.landscapeLeft,
     DeviceOrientation.landscapeRight,
   ]);
+
   runApp(const PhotoCompareApp());
 }
 
@@ -53,32 +62,27 @@ class _MainShellState extends State<MainShell> {
   void _onTab(int i) {
     setState(() {
       _tab = i;
-      if (i == 2) _chatBadge = 0; // сбросить бейдж чата
+      if (i == 2) _chatBadge = 0;
     });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // Убираем AppBar — менюбар внутри каждого экрана
       body: SafeArea(
-        child: Column(
-          children: [
-            // Контент текущего экрана
-            Expanded(child: _screens[_tab]),
-          ],
-        ),
+        child: Column(children: [
+          Expanded(child: _screens[_tab]),
+        ]),
       ),
-      // Bottom Navigation
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
           color: AppTheme.silver,
           border: const Border(top: BorderSide(color: AppTheme.blue, width: 2)),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.15),
-              blurRadius: 8, offset: const Offset(0, -2),
-            ),
+                color: Colors.black.withOpacity(0.15),
+                blurRadius: 8,
+                offset: const Offset(0, -2)),
           ],
         ),
         child: SafeArea(
@@ -106,32 +110,24 @@ class _MainShellState extends State<MainShell> {
         behavior: HitTestBehavior.opaque,
         child: Container(
           decoration: BoxDecoration(
-            color: active
-                ? AppTheme.blue.withOpacity(0.1)
-                : Colors.transparent,
+            color: active ? AppTheme.blue.withOpacity(0.1) : Colors.transparent,
             border: Border(
               top: BorderSide(
-                color: active ? AppTheme.blue : Colors.transparent,
-                width: 3,
-              ),
+                  color: active ? AppTheme.blue : Colors.transparent, width: 3),
               right: idx < 4
                   ? const BorderSide(color: AppTheme.silverDark)
                   : BorderSide.none,
             ),
           ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(icon, style: const TextStyle(fontSize: 22)),
-              const SizedBox(height: 2),
-              Text(label,
-                  style: TextStyle(
+          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+            Text(icon, style: const TextStyle(fontSize: 22)),
+            const SizedBox(height: 2),
+            Text(label,
+                style: TextStyle(
                     fontSize: 10,
                     fontWeight: FontWeight.bold,
-                    color: active ? AppTheme.blue : Colors.black54,
-                  )),
-            ],
-          ),
+                    color: active ? AppTheme.blue : Colors.black54)),
+          ]),
         ),
       ),
     );
@@ -139,30 +135,24 @@ class _MainShellState extends State<MainShell> {
 
   Widget _navBtnBadge(int idx, String icon, String label, int badge) {
     return Expanded(
-      child: Stack(
-        children: [
-          _navBtn(idx, icon, label),
-          if (badge > 0)
-            Positioned(
-              top: 6,
-              right: 12,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                decoration: BoxDecoration(
-                  color: Colors.red,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  '$badge',
+      child: Stack(children: [
+        _navBtn(idx, icon, label),
+        if (badge > 0)
+          Positioned(
+            top: 6,
+            right: 12,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+              decoration: BoxDecoration(
+                  color: Colors.red, borderRadius: BorderRadius.circular(8)),
+              child: Text('$badge',
                   style: const TextStyle(
                       color: Colors.white,
                       fontSize: 9,
-                      fontWeight: FontWeight.bold),
-                ),
-              ),
+                      fontWeight: FontWeight.bold)),
             ),
-        ],
-      ),
+          ),
+      ]),
     );
   }
 }
