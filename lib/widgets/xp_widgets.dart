@@ -374,12 +374,11 @@ class _MenuItem extends StatelessWidget {
                         padding: const EdgeInsets.fromLTRB(30, 7, 16, 7),
                         color: Colors.transparent,
                         child: Row(children: [
-                          if (item.icon != null)
-                            Positioned(
-                              left: 0,
-                              child: Text(item.icon!,
-                                  style: const TextStyle(fontSize: 12)),
-                            ),
+                          if (item.icon != null) ...[
+                            Text(item.icon!,
+                                style: const TextStyle(fontSize: 12)),
+                            const SizedBox(width: 6),
+                          ],
                           Text(item.label,
                               style: TextStyle(
                                   fontSize: 11,
