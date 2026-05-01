@@ -252,11 +252,23 @@ class XpMenuBar extends StatefulWidget {
 class _XpMenuBarState extends State<XpMenuBar> {
   int? _open;
   OverlayEntry? _barrier;
+  OverlayEntry? _dropdown;
+  late final List<LayerLink> _links;
+
+  @override
+  void initState() {
+    super.initState();
+    _links = List.generate(widget.menus.length, (_) => LayerLink());
+  }
 
   void _openMenu(int i) {
     if (_open == i) { _closeMenu(); return; }
     _closeMenu();
     setState(() => _open = i);
+
+    final items = widget.menus[i].items;
+    final overlay = Overlay.of(context);
+
     _barrier = OverlayEntry(
       builder: (_) => GestureDetector(
         onTap: _closeMenu,
@@ -264,18 +276,77 @@ class _XpMenuBarState extends State<XpMenuBar> {
         child: const SizedBox.expand(),
       ),
     );
-    Overlay.of(context).insert(_barrier!);
+
+    _dropdown = OverlayEntry(
+      builder: (_) => Positioned(
+        width: 210,
+        child: CompositedTransformFollower(
+          link: _links[i],
+          showWhenUnlinked: false,
+          offset: const Offset(0, 26),
+          child: Material(
+            elevation: 8,
+            child: Container(
+              color: AppTheme.silver,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: items.map((item) {
+                  if (item.separator) {
+                    return const Column(children: [
+                      Divider(height: 1, color: Color(0xFFACA899)),
+                      Divider(height: 1, color: Colors.white),
+                    ]);
+                  }
+                  return GestureDetector(
+                    onTap: item.disabled ? null : () {
+                      _closeMenu();
+                      item.onTap?.call();
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.fromLTRB(10, 7, 16, 7),
+                      color: Colors.transparent,
+                      child: Row(children: [
+                        if (item.icon != null) ...[
+                          Text(item.icon!, style: const TextStyle(fontSize: 12)),
+                          const SizedBox(width: 6),
+                        ],
+                        Text(item.label,
+                            style: TextStyle(
+                                fontSize: 11,
+                                color: item.disabled ? Colors.grey : Colors.black)),
+                        if (item.shortcut != null) ...[
+                          const Spacer(),
+                          Text(item.shortcut!,
+                              style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                        ],
+                      ]),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    overlay.insert(_barrier!);
+    overlay.insert(_dropdown!);
   }
 
   void _closeMenu() {
     _barrier?.remove();
+    _dropdown?.remove();
     _barrier = null;
+    _dropdown = null;
     if (mounted) setState(() => _open = null);
   }
 
   @override
   void dispose() {
     _barrier?.remove();
+    _dropdown?.remove();
     super.dispose();
   }
 
@@ -299,12 +370,19 @@ class _XpMenuBarState extends State<XpMenuBar> {
               ...widget.menus.asMap().entries.map((e) {
                 final i = e.key;
                 final menu = e.value;
-                return _MenuItem(
-                  label: menu.label,
-                  items: menu.items,
-                  isOpen: _open == i,
-                  onTap: () => _openMenu(i),
-                  onClose: _closeMenu,
+                return CompositedTransformTarget(
+                  link: _links[i],
+                  child: GestureDetector(
+                    onTap: () => _openMenu(i),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      color: _open == i ? AppTheme.blue : Colors.transparent,
+                      child: Text(menu.label,
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: _open == i ? Colors.white : Colors.black)),
+                    ),
+                  ),
                 );
               }),
             ],
@@ -342,92 +420,6 @@ class XpMenuItem {
   static const XpMenuItem sep = XpMenuItem(label: '', separator: true);
 }
 
-class _MenuItem extends StatelessWidget {
-  final String label;
-  final List<XpMenuItem> items;
-  final bool isOpen;
-  final VoidCallback onTap;
-  final VoidCallback onClose;
-
-  const _MenuItem({
-    required this.label,
-    required this.items,
-    required this.isOpen,
-    required this.onTap,
-    required this.onClose,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        GestureDetector(
-          onTap: onTap,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            color: isOpen ? AppTheme.blue : Colors.transparent,
-            child: Text(label,
-                style: TextStyle(
-                    fontSize: 11,
-                    color: isOpen ? Colors.white : Colors.black)),
-          ),
-        ),
-        if (isOpen)
-          Positioned(
-            top: 26, left: 0,
-            child: Material(
-              elevation: 8,
-              child: Container(
-                color: AppTheme.silver,
-                constraints: const BoxConstraints(minWidth: 190),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: items.map((item) {
-                    if (item.separator) {
-                      return const Column(children: [
-                        Divider(height: 1, color: Color(0xFFACA899)),
-                        Divider(height: 1, color: Colors.white),
-                      ]);
-                    }
-                    return GestureDetector(
-                      onTap: item.disabled ? null : () {
-                        onClose();
-                        item.onTap?.call();
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.fromLTRB(30, 7, 16, 7),
-                        color: Colors.transparent,
-                        child: Row(children: [
-                          if (item.icon != null) ...[
-                            Text(item.icon!,
-                                style: const TextStyle(fontSize: 12)),
-                            const SizedBox(width: 6),
-                          ],
-                          Text(item.label,
-                              style: TextStyle(
-                                  fontSize: 11,
-                                  color: item.disabled
-                                      ? Colors.grey
-                                      : Colors.black)),
-                          if (item.shortcut != null) ...[
-                            const Spacer(),
-                            Text(item.shortcut!,
-                                style: const TextStyle(
-                                    fontSize: 10, color: Colors.grey)),
-                          ],
-                        ]),
-                      ),
-                    );
-                  }).toList(),
-                ),
-              ),
-            ),
-          ),
-      ],
-    );
-  }
-}
 
 // ── Схожесть бейдж ───────────────────────────────────
 class SimBadge extends StatelessWidget {
