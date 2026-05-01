@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../config/app_theme.dart';
@@ -14,8 +14,8 @@ class CompareScreen extends StatefulWidget {
 class _CompareScreenState extends State<CompareScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabs;
-  File? _refImg;
-  File? _cmpImg;
+  Uint8List? _refImg;
+  Uint8List? _cmpImg;
   final _picker = ImagePicker();
   double _sliderPos = 0.5;
   double _opacity   = 0.5;
@@ -68,9 +68,10 @@ class _CompareScreenState extends State<CompareScreen>
     final x = await _picker.pickImage(source: source, imageQuality: 92);
     if (x == null) return;
 
+    final bytes = await x.readAsBytes();
     setState(() {
-      if (isRef) _refImg = File(x.path);
-      else _cmpImg = File(x.path);
+      if (isRef) _refImg = bytes;
+      else _cmpImg = bytes;
     });
   }
 
@@ -202,7 +203,7 @@ class _CompareScreenState extends State<CompareScreen>
                 color: Colors.white,
               ),
               child: _refImg != null
-                  ? Image.file(_refImg!, fit: BoxFit.cover)
+                  ? Image.memory(_refImg!, fit: BoxFit.cover)
                   : const Column(mainAxisAlignment: MainAxisAlignment.center, children: [
                       Text('🖼️', style: TextStyle(fontSize: 40)),
                       SizedBox(height: 8),
@@ -258,7 +259,7 @@ class _CompareScreenState extends State<CompareScreen>
                 color: const Color(0xFFF0FFF0),
               ),
               child: _refImg != null
-                  ? Image.file(_refImg!, fit: BoxFit.cover)
+                  ? Image.memory(_refImg!, fit: BoxFit.cover)
                   : const Center(child: Text('🖼️',
                       style: TextStyle(fontSize: 28))),
             ),
@@ -281,7 +282,7 @@ class _CompareScreenState extends State<CompareScreen>
                   color: Colors.white,
                 ),
                 child: _cmpImg != null
-                    ? Image.file(_cmpImg!, fit: BoxFit.cover)
+                    ? Image.memory(_cmpImg!, fit: BoxFit.cover)
                     : const Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
@@ -405,12 +406,12 @@ class _CompareScreenState extends State<CompareScreen>
         alignment: Alignment.center,
         child: Row(children: [
           Expanded(child: _refImg != null
-              ? Image.file(_refImg!, fit: BoxFit.cover)
+              ? Image.memory(_refImg!, fit: BoxFit.cover)
               : const Center(child: Text('Эталон',
                   style: TextStyle(color: Colors.white54)))),
           Container(width: 2, color: Colors.white24),
           Expanded(child: _cmpImg != null
-              ? Image.file(_cmpImg!, fit: BoxFit.cover)
+              ? Image.memory(_cmpImg!, fit: BoxFit.cover)
               : const Center(child: Text('Фото',
                   style: TextStyle(color: Colors.white54)))),
         ]),
@@ -419,10 +420,10 @@ class _CompareScreenState extends State<CompareScreen>
 
     if (_mode == 'o') {
       return Stack(fit: StackFit.expand, children: [
-        if (_refImg != null) Image.file(_refImg!, fit: BoxFit.contain),
+        if (_refImg != null) Image.memory(_refImg!, fit: BoxFit.contain),
         Opacity(opacity: _opacity,
             child: _cmpImg != null
-                ? Image.file(_cmpImg!, fit: BoxFit.contain)
+                ? Image.memory(_cmpImg!, fit: BoxFit.contain)
                 : const SizedBox()),
       ]);
     }
@@ -437,10 +438,10 @@ class _CompareScreenState extends State<CompareScreen>
       },
       child: LayoutBuilder(builder: (_, c) {
         return Stack(fit: StackFit.expand, children: [
-          if (_refImg != null) Image.file(_refImg!, fit: BoxFit.contain),
+          if (_refImg != null) Image.memory(_refImg!, fit: BoxFit.contain),
           if (_cmpImg != null) ClipRect(
             clipper: _RightClipper(_sliderPos * c.maxWidth),
-            child: Image.file(_cmpImg!, fit: BoxFit.contain),
+            child: Image.memory(_cmpImg!, fit: BoxFit.contain),
           ),
           Positioned(
             left: _sliderPos * c.maxWidth - 1,
