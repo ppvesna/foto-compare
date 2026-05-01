@@ -251,6 +251,33 @@ class XpMenuBar extends StatefulWidget {
 
 class _XpMenuBarState extends State<XpMenuBar> {
   int? _open;
+  OverlayEntry? _barrier;
+
+  void _openMenu(int i) {
+    if (_open == i) { _closeMenu(); return; }
+    _closeMenu();
+    setState(() => _open = i);
+    _barrier = OverlayEntry(
+      builder: (_) => GestureDetector(
+        onTap: _closeMenu,
+        behavior: HitTestBehavior.translucent,
+        child: const SizedBox.expand(),
+      ),
+    );
+    Overlay.of(context).insert(_barrier!);
+  }
+
+  void _closeMenu() {
+    _barrier?.remove();
+    _barrier = null;
+    if (mounted) setState(() => _open = null);
+  }
+
+  @override
+  void dispose() {
+    _barrier?.remove();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -261,7 +288,6 @@ class _XpMenuBarState extends State<XpMenuBar> {
         children: [
           Row(
             children: [
-              // Иконка раздела
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: const BoxDecoration(
@@ -270,7 +296,6 @@ class _XpMenuBarState extends State<XpMenuBar> {
                 child: Text(widget.icon, style: const TextStyle(fontSize: 15)),
               ),
               const SizedBox(width: 4),
-              // Пункты меню
               ...widget.menus.asMap().entries.map((e) {
                 final i = e.key;
                 final menu = e.value;
@@ -278,8 +303,8 @@ class _XpMenuBarState extends State<XpMenuBar> {
                   label: menu.label,
                   items: menu.items,
                   isOpen: _open == i,
-                  onTap: () => setState(() => _open = _open == i ? null : i),
-                  onClose: () => setState(() => _open = null),
+                  onTap: () => _openMenu(i),
+                  onClose: _closeMenu,
                 );
               }),
             ],
