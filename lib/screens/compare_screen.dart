@@ -27,6 +27,11 @@ class _CompareScreenState extends State<CompareScreen>
   bool   _comparing = false;
   CompareResult? _result;
 
+  // Параметры обработки
+  bool _autoScale    = true;
+  bool _normBright   = true;
+  bool _autoRotate   = false;
+
   // Заглушки истории
   final _history = [
     {'file': 'photo_001.jpg', 'sim': 87.4, 'date': '16.04.2026'},
@@ -140,22 +145,15 @@ class _CompareScreenState extends State<CompareScreen>
       // Табы
       Container(
         color: AppTheme.silver,
-        padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
-        child: TabBar(
-          controller: _tabs,
-          isScrollable: true,
-          labelPadding: EdgeInsets.zero,
-          indicatorColor: Colors.transparent,
-          dividerColor: AppTheme.blue,
-          dividerHeight: 2,
-          tabs: [
-            _xpTab('🖼️ Эталон',   0),
-            _xpTab('🔍 Сравнение', 1),
-            _xpTab('📊 Результат', 2),
-            _xpTab('📋 История',   3),
-          ],
-        ),
+        padding: const EdgeInsets.fromLTRB(4, 6, 4, 0),
+        child: Row(children: [
+          _xpTab('🖼️ Эталон',   0),
+          _xpTab('🔍 Сравн.',   1),
+          _xpTab('📊 Результат', 2),
+          _xpTab('📋 История',  3),
+        ]),
       ),
+      Container(height: 2, color: AppTheme.blue),
 
       // Контент табов
       Expanded(
@@ -174,34 +172,37 @@ class _CompareScreenState extends State<CompareScreen>
   }
 
   Widget _xpTab(String label, int idx) {
-    return AnimatedBuilder(
-      animation: _tabs,
-      builder: (_, __) {
-        final active = _tabs.index == idx;
-        return GestureDetector(
-          onTap: () => _tabs.animateTo(idx),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-            margin: const EdgeInsets.only(right: 2),
-            decoration: BoxDecoration(
-              color: active ? AppTheme.silver : AppTheme.silverDark,
-              border: Border(
-                top:   BorderSide(color: active ? AppTheme.blue : AppTheme.silverDark),
-                left:  BorderSide(color: active ? AppTheme.blue : AppTheme.silverDark),
-                right: BorderSide(color: active ? AppTheme.blue : AppTheme.silverDark),
-                bottom: BorderSide(color: active ? AppTheme.silver : AppTheme.silverDark),
+    return Expanded(
+      child: AnimatedBuilder(
+        animation: _tabs,
+        builder: (_, __) {
+          final active = _tabs.index == idx;
+          return GestureDetector(
+            onTap: () => _tabs.animateTo(idx),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+              margin: const EdgeInsets.only(right: 2),
+              decoration: BoxDecoration(
+                color: active ? AppTheme.silver : AppTheme.silverDark,
+                border: Border(
+                  top:   BorderSide(color: active ? AppTheme.blue : AppTheme.silverDark),
+                  left:  BorderSide(color: active ? AppTheme.blue : AppTheme.silverDark),
+                  right: BorderSide(color: active ? AppTheme.blue : AppTheme.silverDark),
+                  bottom: BorderSide(color: active ? AppTheme.silver : AppTheme.silverDark),
+                ),
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(3), topRight: Radius.circular(3)),
               ),
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(3), topRight: Radius.circular(3)),
+              child: Text(label,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: active ? FontWeight.bold : FontWeight.normal,
+                      color: active ? Colors.black : Colors.black54)),
             ),
-            child: Text(label,
-                style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: active ? FontWeight.bold : FontWeight.normal,
-                    color: active ? Colors.black : Colors.black54)),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 
@@ -248,9 +249,12 @@ class _CompareScreenState extends State<CompareScreen>
           ]),
         ])),
         XpGroup(label: 'Параметры', child: Column(children: [
-          _check('Автомасштабирование', true),
-          _check('Нормализация яркости', true),
-          _check('Автоповорот по EXIF', false),
+          _check('Автомасштабирование', _autoScale,
+              (v) => setState(() => _autoScale = v)),
+          _check('Нормализация яркости', _normBright,
+              (v) => setState(() => _normBright = v)),
+          _check('Автоповорот по EXIF', _autoRotate,
+              (v) => setState(() => _autoRotate = v)),
         ])),
         const SizedBox(height: 12),
         const Divider(),
@@ -433,14 +437,22 @@ class _CompareScreenState extends State<CompareScreen>
       );
     }
 
+    final transform = Matrix4.identity()
+      ..scale(_zoom)
+      ..rotateZ(_rotation * 3.14159 / 180);
+
     if (_mode == 'o') {
-      return Stack(fit: StackFit.expand, children: [
-        if (_refImg != null) Image.memory(_refImg!, fit: BoxFit.contain),
-        Opacity(opacity: _opacity,
-            child: _cmpImg != null
-                ? Image.memory(_cmpImg!, fit: BoxFit.contain)
-                : const SizedBox()),
-      ]);
+      return Transform(
+        transform: transform,
+        alignment: Alignment.center,
+        child: Stack(fit: StackFit.expand, children: [
+          if (_refImg != null) Image.memory(_refImg!, fit: BoxFit.contain),
+          Opacity(opacity: _opacity,
+              child: _cmpImg != null
+                  ? Image.memory(_cmpImg!, fit: BoxFit.contain)
+                  : const SizedBox()),
+        ]),
+      );
     }
 
     // Слайдер (default)
@@ -452,7 +464,10 @@ class _CompareScreenState extends State<CompareScreen>
             (d.localPosition.dx / box.size.width).clamp(0.0, 1.0));
       },
       child: LayoutBuilder(builder: (_, c) {
-        return Stack(fit: StackFit.expand, children: [
+        return Transform(
+          transform: transform,
+          alignment: Alignment.center,
+          child: Stack(fit: StackFit.expand, children: [
           if (_refImg != null) Image.memory(_refImg!, fit: BoxFit.contain),
           if (_cmpImg != null) ClipRect(
             clipper: _RightClipper(_sliderPos * c.maxWidth),
@@ -478,7 +493,7 @@ class _CompareScreenState extends State<CompareScreen>
               child: _ImgLabel('Эталон')),
           const Positioned(right: 8, top: 8,
               child: _ImgLabel('Фото')),
-        ]);
+        ]));
       }),
     );
   }
@@ -678,9 +693,10 @@ class _CompareScreenState extends State<CompareScreen>
     );
   }
 
-  Widget _check(String label, bool val) {
+  Widget _check(String label, bool val, ValueChanged<bool> onChange) {
     return Row(children: [
-      Checkbox(value: val, onChanged: (_) {},
+      Checkbox(value: val, onChanged: (v) => onChange(v ?? val),
+          activeColor: AppTheme.blue,
           materialTapTargetSize: MaterialTapTargetSize.shrinkWrap),
       Text(label, style: const TextStyle(fontSize: 11)),
     ]);
