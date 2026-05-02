@@ -16,7 +16,7 @@ class AppTheme {
 
   // Градиенты
   static const LinearGradient blueGrad = LinearGradient(
-    colors: [Color(0xFF6AADFF), Color(0xFF245EDC), Color(0xFF0A246A)],
+    colors: [Color(0xFF3A7FD5), Color(0xFF245EDC), Color(0xFF1A4DB8)],
     begin: Alignment.topCenter, end: Alignment.bottomCenter,
   );
   static const LinearGradient btnGrad = LinearGradient(
