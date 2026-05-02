@@ -17,10 +17,12 @@ CompareResult _run(List<Uint8List> args) {
     throw Exception('Не удалось декодировать изображение');
   }
 
-  double totalSim = 0;
-  final iters = AppConfig.comparisonIter;
-  final sizes = [128, 256, 512].take(iters).toList();
+  // На вебе используем меньший размер — JS медленнее нативного
+  final maxSize = kIsWeb ? 128 : 256;
+  final iters = kIsWeb ? 1 : AppConfig.comparisonIter;
+  final sizes = [64, 128, maxSize].take(iters).toList();
 
+  double totalSim = 0;
   for (final size in sizes) {
     final r = img.copyResize(imgRef, width: size, height: size,
         interpolation: img.Interpolation.average);
@@ -43,15 +45,15 @@ CompareResult _run(List<Uint8List> args) {
 
   final similarity = (totalSim / iters).clamp(0.0, 100.0);
 
-  // Считаем диффпиксели на среднем масштабе
-  const ds = 256;
-  final r256 = img.copyResize(imgRef, width: ds, height: ds);
-  final c256 = img.copyResize(imgCmp, width: ds, height: ds);
+  // Диффпиксели на рабочем масштабе
+  final ds = maxSize;
+  final r2 = img.copyResize(imgRef, width: ds, height: ds);
+  final c2 = img.copyResize(imgCmp, width: ds, height: ds);
   int diffPx = 0;
   for (int y = 0; y < ds; y++) {
     for (int x = 0; x < ds; x++) {
-      final pr = r256.getPixel(x, y);
-      final pc = c256.getPixel(x, y);
+      final pr = r2.getPixel(x, y);
+      final pc = c2.getPixel(x, y);
       final d = ((pr.r - pc.r).abs() + (pr.g - pc.g).abs() +
                  (pr.b - pc.b).abs()) / (3 * 255);
       if (d > 0.08) diffPx++;
