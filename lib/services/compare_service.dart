@@ -40,7 +40,10 @@ CompareResult _run(List<Uint8List> args) {
                 (3 * 255);
       }
     }
-    totalSim += (1 - diff / (size * size)) * 100;
+    // Усиливаем чувствительность: 30% среднего отличия = 0% схожесть
+    final avgDiff = diff / (size * size);
+    final scaled = (avgDiff * 3.5).clamp(0.0, 1.0);
+    totalSim += (1 - scaled) * 100;
   }
 
   final similarity = (totalSim / iters).clamp(0.0, 100.0);
