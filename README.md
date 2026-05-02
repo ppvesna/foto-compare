@@ -1,16 +1,33 @@
 # 📸 Photo Compare — Dev Assistant Instruction v3
 
 ## 🧠 Контекст проекта
-Photo Compare — инструмент для сравнения изображений с эталоном (визуально и метриками).
+Photo Compare — Flutter-приложение для сравнения изображений с эталоном (визуально и метриками).
 
 Платформы:
-- HTML/CSS/JS — прототип (source of truth)
-- Flutter — мобильное приложение (Android → iOS)
+- Flutter Web (текущая, работает в браузере)
+- Flutter Android / iOS (следующий этап)
+
+UI стиль: Windows XP (намеренно, как фирменный стиль)
+
+Бэкенд: Supabase (Auth + БД), SQLite локально
 
 Стратегия:
-1. MVP (локально, быстро)
+1. MVP (локально, быстро) ← текущий этап
 2. Расширение (метрики, AI)
 3. Масштабирование (облако, синхронизация)
+
+---
+
+## ✅ Что уже реализовано
+
+- Авторизация через Supabase (email/password)
+- Загрузка фото (галерея / камера)
+- Сравнение: MAE алгоритм, 1–3 итерации
+- Режимы: slider, overlay, side-by-side
+- Экраны: Старт, Сравнение, Чат, Магазин, Настройки
+- Локальная SQLite БД (история, настройки, пользователи)
+- Синхронизация с сервером (заготовка, выключена)
+- UI компоненты XP: XpBtn, XpInput, XpGroup, XpMenuBar, XpStatusBar
 
 ---
 
@@ -21,94 +38,57 @@ Photo Compare — инструмент для сравнения изображ�
 - test (сравниваемое)
 
 Режимы:
-- swipe (MVP)
-- overlay
-- side-by-side
-- diff (подсветка различий)
+- slider / swipe ✅
+- overlay ✅
+- side-by-side ✅
+- diff (подсветка различий) ⬜
 
 ---
 
 ## 📊 Метрики
 
-Поддержка объективного сравнения:
-- SSIM
-- PSNR
+Текущее:
+- MAE (Mean Absolute Error) → % схожести ✅
+
+Планируется:
+- SSIM (структурное сходство)
+- PSNR (отношение сигнал/шум)
 - MSE
 
+```dart
 class MetricResult {
-  final double ssim;
-  final double psnr;
-  final double mse;
+  final double similarity; // MAE-based, уже есть
+  final double? ssim;      // планируется
+  final double? psnr;      // планируется
+  final double? mse;       // планируется
 }
+```
 
 Отображение:
 - числовые значения
-- интерпретация (good / medium / bad)
+- интерпретация (высокая / средняя / низкая схожесть)
 
 ---
 
-## 🤖 AI-блок
+## 💾 Реальная модель данных
 
-Функции:
-- enhance()
-- normalize()
-- align(reference, test)
-- detectArtifacts()
+```dart
+// Текущая (lib/services/compare_service.dart)
+class CompareResult {
+  final double similarity;
+  final int diffPixels;
+  final int totalPixels;
+  final String refSize;
+  final String cmpSize;
+}
 
-Правила:
-- включается через feature flags
-- сначала простые алгоритмы / заглушки
-- потом подключение моделей или API
-
----
-
-## 🧭 User flow
-
-1. Загрузка reference  
-2. Загрузка test  
-3. (опционально) AI обработка  
-4. Выбор режима  
-5. Просмотр  
-6. Просмотр метрик  
-7. Сохранение  
-
----
-
-## 🧱 Этапы развития
-
-MVP:
-- swipe
-- локальные файлы
-- history
-- без AI и метрик
-
-v2:
-- overlay / side-by-side
-- базовые метрики
-
-v3:
-- все режимы
-- метрики + UI
-- базовый AI
-- подготовка к облаку
-
-v4:
-- облако
-- аккаунты
-- синхронизация
-- API
-
----
-
-## 💾 Модель данных
-
+// Планируемая (расширение)
 class Comparison {
   final String id;
   final String referenceImagePath;
   final String testImagePath;
   final String mode;
   final DateTime createdAt;
-
   final MetricResult? metrics;
   final AIResult? aiResult;
 }
@@ -118,56 +98,95 @@ class AIResult {
   final bool aligned;
   final bool normalized;
 }
+```
+
+---
+
+## 🤖 AI-блок
+
+Текущее: `featureAI = false` (выключено, заготовка через Claude API)
+
+Планируемые функции:
+- `enhance()` — улучшение качества
+- `normalize()` — нормализация яркости/цвета
+- `align(reference, test)` — выравнивание
+- `detectArtifacts()` — обнаружение артефактов
+
+Правила:
+- включается через feature flags (`AppConfig.featureAI`)
+- сначала простые алгоритмы / заглушки
+- потом Claude API или локальные модели
+
+---
+
+## 🧭 User flow
+
+1. Загрузка reference ✅
+2. Загрузка test ✅
+3. Выбор режима ✅
+4. (опционально) AI обработка ⬜
+5. Просмотр сравнения ✅
+6. Просмотр метрик ✅ (MAE) / ⬜ (SSIM, PSNR)
+7. Сохранение ⬜
+
+---
+
+## 🧱 Этапы развития
+
+MVP (текущий):
+- ✅ загрузка фото
+- ✅ slider / overlay / side-by-side
+- ✅ MAE метрика
+- ✅ авторизация
+- ⬜ история (mock данные, нужна реальная БД)
+- ⬜ сохранение результатов
+
+v2:
+- SSIM / PSNR / MSE метрики
+- diff-режим (подсветка различий)
+- реальная история из БД
+- экспорт результатов
+
+v3:
+- базовый AI (Claude API)
+- Android / iOS сборка
+- подготовка к облаку
+
+v4:
+- облако
+- синхронизация
+- API для внешних клиентов
 
 ---
 
 ## 🧩 Архитектура
 
 Слои:
-- UI
-- Domain
-- Data
+- UI (screens/, widgets/)
+- Domain (services/, models/)
+- Data (database/)
 
-Сервисы:
-- ImageService
-- ComparisonService
-- MetricsService
-- AIService
-- StorageService
+Реальные сервисы:
+- `CompareService` — сравнение изображений ✅
+- `AiApiService` — Claude API ⬜ (выключен)
+- `AuthApiService` — авторизация (Supabase) ✅
+- `ChatApiService` — чат ⬜ (mock)
+- `PaymentApiService` — платежи ⬜ (выключен)
+- `SyncService` — синхронизация ⬜ (выключена)
 
----
-
-## 🔌 Масштабирование
-
-Правила:
-- сервисы через интерфейсы
-- не хардкодить источники данных
-- async-first подход
+Планируемые сервисы:
+- `MetricsService` — SSIM/PSNR/MSE
+- `StorageService` — локальное сохранение результатов
 
 ---
 
-## ☁️ API (заготовка)
+## 📱 Структура приложения (5 экранов)
 
-POST /compare  
-POST /metrics  
-POST /ai/enhance  
-GET /history  
-
----
-
-## 📱 Структура приложения
-
-Main:
-- reference
-- test
-- compare
-- metrics
-
-Editor:
-- tools
-- AI
-- before/after
-- export
+- **Старт** — авторизация (Supabase email/password)
+- **Сравнение** — загрузка фото, режимы, результат, история
+- **Чат** — мессенджер (mock, заготовка)
+- **Магазин** — покупки / подписки (заготовка)
+- **Настройки** — параметры, аккаунт
 
 ---
 
@@ -175,6 +194,7 @@ Editor:
 
 - не использовать тяжёлые AI модели на раннем этапе
 - сначала локальные вычисления
+- на вебе ограничен размер изображений для обработки (JS медленнее native)
 - избегать преждевременного масштабирования
 - минимум зависимостей
 
@@ -182,30 +202,32 @@ Editor:
 
 ## 🎯 Приоритеты
 
-1. Core UX сравнения  
-2. Метрики  
-3. AI (базовый)  
-4. Архитектура  
-5. Облако  
+1. ✅ Core UX сравнения
+2. ⬜ История (реальная, из БД)
+3. ⬜ Метрики SSIM/PSNR
+4. ⬜ AI (базовый, Claude API)
+5. ⬜ Android сборка
+6. ⬜ Облако
 
 ---
 
 ## 🧪 Правила работы
 
-- MVP-first  
-- упрощать решения  
-- новые фичи через feature flags  
-- изолировать логику  
-- код сразу готов к вставке  
+- MVP-first
+- упрощать решения
+- новые фичи через feature flags (`AppConfig`)
+- изолировать логику в сервисах
+- код сразу готов к вставке
 
 ---
 
 ## 🚫 Антипаттерны
 
-- сложный AI на старте  
-- микросервисы слишком рано  
-- перегруженный UI  
-- смешивание слоёв  
+- сложный AI на старте
+- микросервисы слишком рано
+- перегруженный UI
+- смешивание слоёв
+- хардкодить данные (mock в production)
 
 ---
 
