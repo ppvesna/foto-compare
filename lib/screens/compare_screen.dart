@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../config/app_theme.dart';
 import '../widgets/xp_widgets.dart';
+import '../services/compare_service.dart';
+import '../config/app_config.dart';
 
 class CompareScreen extends StatefulWidget {
   const CompareScreen({super.key});
@@ -21,7 +23,9 @@ class _CompareScreenState extends State<CompareScreen>
   double _opacity   = 0.5;
   double _zoom      = 1.0;
   int    _rotation  = 0;
-  String _mode      = 's'; // s=slider, d=side, o=overlay, f=diff
+  String _mode      = 's'; // s=slider, d=side, o=overlay
+  bool   _comparing = false;
+  CompareResult? _result;
 
   // Заглушки истории
   final _history = [
@@ -41,6 +45,23 @@ class _CompareScreenState extends State<CompareScreen>
   void dispose() {
     _tabs.dispose();
     super.dispose();
+  }
+
+  Future<void> _runCompare() async {
+    if (_refImg == null || _cmpImg == null) {
+      xpDlg(context, 'Ошибка', 'Загрузите оба изображения');
+      return;
+    }
+    setState(() => _comparing = true);
+    try {
+      final result = await CompareService.compare(_refImg!, _cmpImg!);
+      setState(() => _result = result);
+      _tabs.animateTo(2);
+    } catch (e) {
+      if (mounted) xpDlg(context, 'Ошибка сравнения', e.toString());
+    } finally {
+      if (mounted) setState(() => _comparing = false);
+    }
   }
 
   Future<void> _pickImage(bool isRef) async {
@@ -388,8 +409,12 @@ class _CompareScreenState extends State<CompareScreen>
                 onPressed: () => xpDlg(context, 'Сохранено',
                     'Результат сохранён в историю')),
             const SizedBox(width: 4),
-            XpBtn(label: 'Результат ›', primary: true,
-                onPressed: () => _tabs.animateTo(2)),
+            _comparing
+                ? const SizedBox(width: 80, height: 24,
+                    child: Center(child: SizedBox(width: 16, height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2))))
+                : XpBtn(label: 'Результат ›', primary: true,
+                    onPressed: _runCompare),
           ]),
         ]),
       ]),
@@ -470,6 +495,27 @@ class _CompareScreenState extends State<CompareScreen>
 
   // ── Таб: Результат ────────────────────────────────
   Widget _tabResult() {
+    if (_result == null) {
+      return Center(child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Text('📊', style: TextStyle(fontSize: 40)),
+          const SizedBox(height: 12),
+          const Text('Загрузите оба фото и нажмите\n«Результат ›» на вкладке Сравнение',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12, color: Colors.grey)),
+          const SizedBox(height: 16),
+          XpBtn(label: '‹ К сравнению', onPressed: () => _tabs.animateTo(1)),
+        ],
+      ));
+    }
+
+    final r = _result!;
+    final now = DateTime.now();
+    final dateStr =
+        '${now.day.toString().padLeft(2,'0')}.${now.month.toString().padLeft(2,'0')}.${now.year} '
+        '${now.hour.toString().padLeft(2,'0')}:${now.minute.toString().padLeft(2,'0')}';
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(12),
       child: Column(children: [
@@ -477,22 +523,26 @@ class _CompareScreenState extends State<CompareScreen>
         const Center(child: Text('РЕЗУЛЬТАТ СРАВНЕНИЯ',
             style: TextStyle(fontSize: 10, color: Colors.grey))),
         const SizedBox(height: 6),
-        const Center(child: SimBadge(value: 87.4, fontSize: 26)),
+        Center(child: SimBadge(value: r.similarity, fontSize: 26)),
         const SizedBox(height: 6),
-        const Center(child: Text('Высокая схожесть',
-            style: TextStyle(color: AppTheme.simHigh,
-                fontWeight: FontWeight.bold))),
+        Center(child: Text(
+          r.similarity >= 80 ? 'Высокая схожесть'
+              : r.similarity >= 70 ? 'Средняя схожесть'
+              : 'Низкая схожесть',
+          style: TextStyle(
+              color: AppTheme.simColor(r.similarity),
+              fontWeight: FontWeight.bold))),
         const SizedBox(height: 12),
 
         XpGroup(label: 'Детали', child: Table(
           columnWidths: const {
             0: IntrinsicColumnWidth(), 1: FlexColumnWidth()},
           children: [
-            _tableRow('Эталон:', 'reference.jpg (2048×1536)'),
-            _tableRow('Фото:', 'photo_001.jpg (1920×1440)'),
-            _tableRow('Итераций:', '3'),
-            _tableRow('Отличий:', '~396,562 px (12.6%)'),
-            _tableRow('Дата:', '16.04.2026 14:22'),
+            _tableRow('Эталон:', r.refSize),
+            _tableRow('Фото:', r.cmpSize),
+            _tableRow('Итераций:', '${AppConfig.comparisonIter}'),
+            _tableRow('Отличий:', '${r.diffPixels} px (${r.diffPercent.toStringAsFixed(1)}%)'),
+            _tableRow('Дата:', dateStr),
           ],
         )),
 
@@ -502,31 +552,27 @@ class _CompareScreenState extends State<CompareScreen>
             padding: const EdgeInsets.all(8),
             color: Colors.white,
             child: const Text(
-              '🤖 Основные отличия в правом нижнем углу — изменился цвет объекта. Освещение немного отличается.',
-              style: TextStyle(fontSize: 11, height: 1.6)),
+              '🤖 AI анализ доступен в Pro версии.',
+              style: TextStyle(fontSize: 11, height: 1.6, color: Colors.grey)),
           ),
           const SizedBox(height: 8),
           SizedBox(width: double.infinity, child: XpBtn(
-            label: '🤖 Обновить AI анализ',
+            label: '🤖 AI Анализ (Pro)',
             onPressed: () => xpDlg(context, 'AI Анализ', 'Требуется Pro план'),
           )),
         ])),
 
         const SizedBox(height: 12),
         const Divider(),
-        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-          XpBtn(label: '‹ Назад',
-              onPressed: () => _tabs.animateTo(1)),
+        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          XpBtn(label: '‹ Назад', onPressed: () => _tabs.animateTo(1)),
           Row(children: [
             XpBtn(label: '📤',
                 onPressed: () => xpDlg(context, 'Экспорт', 'PNG / PDF / CSV')),
             const SizedBox(width: 4),
-            XpBtn(label: '💬 Поделиться', onPressed: () {}),
-            const SizedBox(width: 4),
             XpBtn(label: '🆕 Новое', primary: true,
                 onPressed: () {
-              setState(() { _refImg=null; _cmpImg=null; });
+              setState(() { _refImg=null; _cmpImg=null; _result=null; });
               _tabs.animateTo(0);
             }),
           ]),
