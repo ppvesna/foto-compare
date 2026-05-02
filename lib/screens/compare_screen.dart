@@ -371,33 +371,23 @@ class _CompareScreenState extends State<CompareScreen>
           ]),
         ])),
 
-        // Прогресс анализа (заглушка)
-        XpGroup(label: 'Анализ', child: Column(children: [
-          const Row(children: [
-            Text('Итерации: 3/3', style: TextStyle(fontSize: 10)),
-          ]),
-          const SizedBox(height: 4),
-          Container(
-            height: 16,
-            decoration: BoxDecoration(
-              border: Border.all(color: AppTheme.border),
-              color: Colors.white,
-            ),
-            child: const FractionallySizedBox(
-              widthFactor: 1.0,
-              alignment: Alignment.centerLeft,
-              child: DecoratedBox(decoration: BoxDecoration(
-                gradient: LinearGradient(
-                    colors: [Color(0xFF6AB0F5), AppTheme.blue]),
-              )),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            const Text('Схожесть:', style: TextStyle(fontSize: 11)),
-            SimBadge(value: 87.4),
-          ]),
-        ])),
+        // Анализ
+        XpGroup(label: 'Анализ', child: _result != null
+          ? Column(children: [
+              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                const Text('Схожесть:', style: TextStyle(fontSize: 11)),
+                SimBadge(value: _result!.similarity),
+              ]),
+              const SizedBox(height: 4),
+              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                const Text('Отличий:', style: TextStyle(fontSize: 11)),
+                Text('${_result!.diffPercent.toStringAsFixed(1)}%',
+                    style: const TextStyle(fontSize: 11)),
+              ]),
+            ])
+          : const Text('Нажмите «Результат ›» для анализа',
+              style: TextStyle(fontSize: 11, color: Colors.grey)),
+        ),
 
         const SizedBox(height: 12),
         const Divider(),
