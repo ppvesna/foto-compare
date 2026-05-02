@@ -90,11 +90,11 @@ class _MainShellState extends State<MainShell> {
           child: SizedBox(
             height: 56,
             child: Row(children: [
-              _navBtn(0, '🌈', 'Старт'),
-              _navBtn(1, '🔍', 'Сравнение'),
+              Expanded(child: _navBtn(0, '🌈', 'Старт')),
+              Expanded(child: _navBtn(1, '🔍', 'Сравнение')),
               _navBtnBadge(2, '💬', 'Чат', _chatBadge),
-              _navBtn(3, '🛒', 'Магазин'),
-              _navBtn(4, '⚙️', 'Настройки'),
+              Expanded(child: _navBtn(3, '🛒', 'Магазин')),
+              Expanded(child: _navBtn(4, '⚙️', 'Настройки')),
             ]),
           ),
         ),
@@ -104,31 +104,29 @@ class _MainShellState extends State<MainShell> {
 
   Widget _navBtn(int idx, String icon, String label) {
     final active = _tab == idx;
-    return Expanded(
-      child: GestureDetector(
-        onTap: () => _onTab(idx),
-        behavior: HitTestBehavior.opaque,
-        child: Container(
-          decoration: BoxDecoration(
-            color: active ? AppTheme.blue.withOpacity(0.1) : Colors.transparent,
-            border: Border(
-              top: BorderSide(
-                  color: active ? AppTheme.blue : Colors.transparent, width: 3),
-              right: idx < 4
-                  ? const BorderSide(color: AppTheme.silverDark)
-                  : BorderSide.none,
-            ),
+    return GestureDetector(
+      onTap: () => _onTab(idx),
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        decoration: BoxDecoration(
+          color: active ? AppTheme.blue.withOpacity(0.1) : Colors.transparent,
+          border: Border(
+            top: BorderSide(
+                color: active ? AppTheme.blue : Colors.transparent, width: 3),
+            right: idx < 4
+                ? const BorderSide(color: AppTheme.silverDark)
+                : BorderSide.none,
           ),
-          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-            Text(icon, style: const TextStyle(fontSize: 22)),
-            const SizedBox(height: 2),
-            Text(label,
-                style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                    color: active ? AppTheme.blue : Colors.black54)),
-          ]),
         ),
+        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Text(icon, style: const TextStyle(fontSize: 20)),
+          const SizedBox(height: 1),
+          Text(label,
+              style: TextStyle(
+                  fontSize: 9,
+                  fontWeight: FontWeight.bold,
+                  color: active ? AppTheme.blue : Colors.black54)),
+        ]),
       ),
     );
   }
@@ -136,7 +134,7 @@ class _MainShellState extends State<MainShell> {
   Widget _navBtnBadge(int idx, String icon, String label, int badge) {
     return Expanded(
       child: Stack(children: [
-        _navBtn(idx, icon, label),
+        SizedBox.expand(child: _navBtn(idx, icon, label)),
         if (badge > 0)
           Positioned(
             top: 6,
