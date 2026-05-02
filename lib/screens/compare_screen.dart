@@ -1,5 +1,7 @@
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:image_picker/image_picker.dart';
 import '../config/app_theme.dart';
 import '../widgets/xp_widgets.dart';
@@ -21,8 +23,6 @@ class _CompareScreenState extends State<CompareScreen>
   final _picker = ImagePicker();
   double _sliderPos = 0.5;
   double _opacity   = 0.5;
-  double _zoom      = 1.0;
-  int    _rotation  = 0;
   String _mode      = 's'; // s=slider, d=side, o=overlay
   bool   _comparing = false;
   CompareResult? _result;
@@ -31,6 +31,14 @@ class _CompareScreenState extends State<CompareScreen>
   bool _autoScale    = true;
   bool _normBright   = true;
   bool _autoRotate   = false;
+
+  // Выравнивание — независимые контроллеры и ключи захвата
+  final _refCtrl = TransformationController();
+  final _cmpCtrl = TransformationController();
+  final _refKey  = GlobalKey();
+  final _cmpKey  = GlobalKey();
+  Uint8List? _refAligned;
+  Uint8List? _cmpAligned;
 
   // Заглушки истории
   final _history = [
@@ -49,17 +57,48 @@ class _CompareScreenState extends State<CompareScreen>
   @override
   void dispose() {
     _tabs.dispose();
+    _refCtrl.dispose();
+    _cmpCtrl.dispose();
     super.dispose();
   }
 
-  Future<void> _runCompare() async {
+  Future<Uint8List?> _captureView(GlobalKey key) async {
+    try {
+      final boundary = key.currentContext?.findRenderObject()
+          as RenderRepaintBoundary?;
+      if (boundary == null) return null;
+      final image = await boundary.toImage(pixelRatio: 2.0);
+      final data = await image.toByteData(format: ui.ImageByteFormat.png);
+      return data?.buffer.asUint8List();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _captureAligned() async {
     if (_refImg == null || _cmpImg == null) {
+      xpDlg(context, 'Ошибка', 'Загрузите оба изображения');
+      return;
+    }
+    final ref = await _captureView(_refKey);
+    final cmp = await _captureView(_cmpKey);
+    setState(() {
+      _refAligned = ref ?? _refImg;
+      _cmpAligned = cmp ?? _cmpImg;
+    });
+    xpDlg(context, 'Готово', 'Область захвачена.\nНажмите «Результат ›» для сравнения.');
+  }
+
+  Future<void> _runCompare() async {
+    final ref = _refAligned ?? _refImg;
+    final cmp = _cmpAligned ?? _cmpImg;
+    if (ref == null || cmp == null) {
       xpDlg(context, 'Ошибка', 'Загрузите оба изображения');
       return;
     }
     setState(() => _comparing = true);
     try {
-      final result = await CompareService.compare(_refImg!, _cmpImg!);
+      final result = await CompareService.compare(ref, cmp);
       setState(() => _result = result);
       _tabs.animateTo(2);
     } catch (e) {
@@ -126,12 +165,12 @@ class _CompareScreenState extends State<CompareScreen>
               onTap: () => _tabs.animateTo(3)),
         ]),
         XpMenu(label: 'Инструменты', items: [
-          XpMenuItem(label: 'Увеличить', icon: '🔍', shortcut: 'Ctrl++',
-              onTap: () => setState(() => _zoom = (_zoom * 1.25).clamp(0.25, 4))),
-          XpMenuItem(label: 'Уменьшить', icon: '🔎', shortcut: 'Ctrl+-',
-              onTap: () => setState(() => _zoom = (_zoom * 0.8).clamp(0.25, 4))),
-          XpMenuItem(label: 'Повернуть', icon: '↺', shortcut: 'Ctrl+R',
-              onTap: () => setState(() => _rotation = (_rotation + 90) % 360)),
+          XpMenuItem(label: 'Сброс эталона', icon: '🔄', shortcut: 'Ctrl+1',
+              onTap: () => _refCtrl.value = Matrix4.identity()),
+          XpMenuItem(label: 'Сброс фото', icon: '🔄', shortcut: 'Ctrl+2',
+              onTap: () => _cmpCtrl.value = Matrix4.identity()),
+          XpMenuItem(label: 'Захватить область', icon: '📐', shortcut: 'Ctrl+R',
+              onTap: _captureAligned),
           XpMenuItem.sep,
           XpMenuItem(label: 'AI Анализ (Pro)', icon: '🤖', disabled: true),
         ]),
@@ -268,233 +307,148 @@ class _CompareScreenState extends State<CompareScreen>
 
   // ── Таб: Сравнение ────────────────────────────────
   Widget _tabCmp() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(12),
-      child: Column(children: [
-        // Превью двух фото
-        Row(children: [
+    return Column(children: [
+      // Два интерактивных вьювера
+      Expanded(
+        child: Row(children: [
+          // Эталон
           Expanded(child: Column(children: [
-            const Text('Эталон ✓',
-                style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 4),
-            Container(
-              height: 110,
-              decoration: BoxDecoration(
-                border: Border.all(color: AppTheme.simHigh, width: 2),
-                color: const Color(0xFFF0FFF0),
-              ),
-              child: _refImg != null
-                  ? Image.memory(_refImg!, fit: BoxFit.cover)
-                  : const Center(child: Text('🖼️',
-                      style: TextStyle(fontSize: 28))),
-            ),
+            _viewerHeader('Эталон', AppTheme.simHigh,
+                _refAligned != null ? '✅ захвачен' : 'масштабируй'),
+            Expanded(child: _photoViewer(_refImg, _refCtrl, _refKey)),
           ])),
-          const Padding(
-            padding: EdgeInsets.only(top: 20),
-            child: Text(' → ',
-                style: TextStyle(fontSize: 20, color: Colors.grey)),
-          ),
-          Expanded(child: GestureDetector(
-            onTap: () => _pickImage(false),
-            child: Column(children: [
-              const Text('Для сравнения',
-                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 4),
-              Container(
-                height: 110,
-                decoration: BoxDecoration(
-                  border: Border.all(color: AppTheme.border),
-                  color: Colors.white,
-                ),
-                child: _cmpImg != null
-                    ? Image.memory(_cmpImg!, fit: BoxFit.cover)
-                    : const Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text('📷', style: TextStyle(fontSize: 28)),
-                          Text('не выбрано',
-                              style: TextStyle(fontSize: 10, color: Colors.grey)),
-                        ]),
-              ),
-            ]),
-          )),
+          Container(width: 1, color: AppTheme.silverDark),
+          // Сравниваемое
+          Expanded(child: Column(children: [
+            _viewerHeader('Сравниваемое', AppTheme.blue,
+                _cmpAligned != null ? '✅ захвачен' : 'масштабируй'),
+            Expanded(child: GestureDetector(
+              onDoubleTap: _cmpImg == null ? () => _pickImage(false) : null,
+              child: _photoViewer(_cmpImg, _cmpCtrl, _cmpKey,
+                  onEmpty: () => _pickImage(false)),
+            )),
+          ])),
         ]),
-        const SizedBox(height: 8),
+      ),
 
-        // Режимы
-        XpGroup(label: 'Режим', child: Wrap(spacing: 4, runSpacing: 4, children: [
-          _modeBtn('s', '🔄 Слайдер'),
-          _modeBtn('d', '◀▶ Рядом'),
-          _modeBtn('o', '🔲 Наложение'),
-          _modeBtn('f', '🔴 Отличия'),
-        ])),
-
-        // Область сравнения
-        Container(
-          margin: const EdgeInsets.symmetric(vertical: 8),
-          height: 200,
-          decoration: BoxDecoration(
-            color: Colors.black,
-            border: Border.all(color: AppTheme.border),
-          ),
-          child: _buildCompareView(),
-        ),
-
-        // Контролы
-        XpGroup(label: 'Управление', child: Column(children: [
-          if (_mode == 's') Row(children: [
-            const Text('◀', style: TextStyle(fontSize: 10)),
-            Expanded(
-              child: Slider(
-                value: _sliderPos,
-                onChanged: (v) => setState(() => _sliderPos = v),
-                activeColor: AppTheme.blue,
-                inactiveColor: AppTheme.silverDark,
-              ),
+      // Панель управления
+      Container(
+        color: AppTheme.silver,
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Column(children: [
+          // Кнопки сброса масштаба
+          Row(children: [
+            _toolBtn('⟳ Эталон', () => _refCtrl.value = Matrix4.identity()),
+            const SizedBox(width: 4),
+            _toolBtn('⟳ Фото', () => _cmpCtrl.value = Matrix4.identity()),
+            const Spacer(),
+            XpBtn(
+              label: '📐 Захватить область',
+              onPressed: _captureAligned,
             ),
-            const Text('▶', style: TextStyle(fontSize: 10)),
           ]),
-          if (_mode == 'o') Row(children: [
-            const Text('Эталон', style: TextStyle(fontSize: 10)),
-            Expanded(
-              child: Slider(
+          const SizedBox(height: 6),
+
+          // Режим просмотра результата
+          Row(children: [
+            const Text('Режим:', style: TextStyle(fontSize: 11)),
+            const SizedBox(width: 6),
+            _modeBtn('s', '🔄 Слайдер'),
+            const SizedBox(width: 4),
+            _modeBtn('d', '◀▶ Рядом'),
+            const SizedBox(width: 4),
+            _modeBtn('o', '🔲 Наложение'),
+          ]),
+          if (_mode == 'o') ...[
+            const SizedBox(height: 4),
+            Row(children: [
+              const Text('Прозрачность:', style: TextStyle(fontSize: 10)),
+              Expanded(child: Slider(
                 value: _opacity,
                 onChanged: (v) => setState(() => _opacity = v),
                 activeColor: AppTheme.blue,
                 inactiveColor: AppTheme.silverDark,
-              ),
-            ),
-            const Text('Фото', style: TextStyle(fontSize: 10)),
-          ]),
-          const SizedBox(height: 4),
-          Row(children: [
-            _toolBtn('🔍+', () => setState(() => _zoom = (_zoom*1.25).clamp(0.25,4))),
-            _toolBtn('🔍-', () => setState(() => _zoom = (_zoom*0.8).clamp(0.25,4))),
-            _toolBtn('↺ 90°', () => setState(() => _rotation=(_rotation+90)%360)),
-            _toolBtn('⟳ Сброс', () => setState((){_zoom=1;_rotation=0;_sliderPos=0.5;})),
-          ]),
-        ])),
+              )),
+            ]),
+          ],
+          if (_mode == 's') ...[
+            const SizedBox(height: 4),
+            Row(children: [
+              const Text('◀', style: TextStyle(fontSize: 10)),
+              Expanded(child: Slider(
+                value: _sliderPos,
+                onChanged: (v) => setState(() => _sliderPos = v),
+                activeColor: AppTheme.blue,
+                inactiveColor: AppTheme.silverDark,
+              )),
+              const Text('▶', style: TextStyle(fontSize: 10)),
+            ]),
+          ],
 
-        // Анализ
-        XpGroup(label: 'Анализ', child: _result != null
-          ? Column(children: [
-              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                const Text('Схожесть:', style: TextStyle(fontSize: 11)),
+          const Divider(height: 10),
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            XpBtn(label: '‹ Эталон', onPressed: () => _tabs.animateTo(0)),
+            Row(children: [
+              if (_result != null) ...[
                 SimBadge(value: _result!.similarity),
-              ]),
-              const SizedBox(height: 4),
-              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                const Text('Отличий:', style: TextStyle(fontSize: 11)),
-                Text('${_result!.diffPercent.toStringAsFixed(1)}%',
-                    style: const TextStyle(fontSize: 11)),
-              ]),
-            ])
-          : const Text('Нажмите «Результат ›» для анализа',
-              style: TextStyle(fontSize: 11, color: Colors.grey)),
-        ),
-
-        const SizedBox(height: 12),
-        const Divider(),
-        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          XpBtn(label: '‹ Эталон',
-              onPressed: () => _tabs.animateTo(0)),
-          Row(children: [
-            XpBtn(label: '💾',
-                onPressed: () => xpDlg(context, 'Сохранено',
-                    'Результат сохранён в историю')),
-            const SizedBox(width: 4),
-            _comparing
-                ? const SizedBox(width: 80, height: 24,
-                    child: Center(child: SizedBox(width: 16, height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2))))
-                : XpBtn(label: 'Результат ›', primary: true,
-                    onPressed: _runCompare),
+                const SizedBox(width: 8),
+              ],
+              _comparing
+                  ? const SizedBox(width: 24, height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : XpBtn(label: 'Сравнить ›', primary: true,
+                      onPressed: _runCompare),
+            ]),
           ]),
         ]),
+      ),
+    ]);
+  }
+
+  Widget _viewerHeader(String title, Color color, String hint) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      color: color.withOpacity(0.1),
+      child: Row(children: [
+        Text(title, style: TextStyle(
+            fontSize: 11, fontWeight: FontWeight.bold, color: color)),
+        const SizedBox(width: 6),
+        Text(hint, style: const TextStyle(fontSize: 9, color: Colors.grey)),
       ]),
     );
   }
 
-  Widget _buildCompareView() {
-    if (_mode == 'd') {
-      // Рядом
-      return Transform(
-        transform: Matrix4.identity()
-          ..scale(_zoom)
-          ..rotateZ(_rotation * 3.14159 / 180),
-        alignment: Alignment.center,
-        child: Row(children: [
-          Expanded(child: _refImg != null
-              ? Image.memory(_refImg!, fit: BoxFit.cover)
-              : const Center(child: Text('Эталон',
-                  style: TextStyle(color: Colors.white54)))),
-          Container(width: 2, color: Colors.white24),
-          Expanded(child: _cmpImg != null
-              ? Image.memory(_cmpImg!, fit: BoxFit.cover)
-              : const Center(child: Text('Фото',
-                  style: TextStyle(color: Colors.white54)))),
-        ]),
+  Widget _photoViewer(Uint8List? img, TransformationController ctrl,
+      GlobalKey key, {VoidCallback? onEmpty}) {
+    if (img == null) {
+      return GestureDetector(
+        onTap: onEmpty,
+        child: Container(
+          color: Colors.black87,
+          child: Center(child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('📷', style: TextStyle(fontSize: 32)),
+              const SizedBox(height: 6),
+              if (onEmpty != null)
+                const Text('Нажмите для выбора',
+                    style: TextStyle(color: Colors.white54, fontSize: 10)),
+            ],
+          )),
+        ),
       );
     }
-
-    final transform = Matrix4.identity()
-      ..scale(_zoom)
-      ..rotateZ(_rotation * 3.14159 / 180);
-
-    if (_mode == 'o') {
-      return Transform(
-        transform: transform,
-        alignment: Alignment.center,
-        child: Stack(fit: StackFit.expand, children: [
-          if (_refImg != null) Image.memory(_refImg!, fit: BoxFit.contain),
-          Opacity(opacity: _opacity,
-              child: _cmpImg != null
-                  ? Image.memory(_cmpImg!, fit: BoxFit.contain)
-                  : const SizedBox()),
-        ]),
-      );
-    }
-
-    // Слайдер (default)
-    return GestureDetector(
-      onHorizontalDragUpdate: (d) {
-        final box = context.findRenderObject() as RenderBox?;
-        if (box == null) return;
-        setState(() => _sliderPos =
-            (d.localPosition.dx / box.size.width).clamp(0.0, 1.0));
-      },
-      child: LayoutBuilder(builder: (_, c) {
-        return Transform(
-          transform: transform,
-          alignment: Alignment.center,
-          child: Stack(fit: StackFit.expand, children: [
-          if (_refImg != null) Image.memory(_refImg!, fit: BoxFit.contain),
-          if (_cmpImg != null) ClipRect(
-            clipper: _RightClipper(_sliderPos * c.maxWidth),
-            child: Image.memory(_cmpImg!, fit: BoxFit.contain),
-          ),
-          Positioned(
-            left: _sliderPos * c.maxWidth - 1,
-            top: 0, bottom: 0,
-            child: Container(width: 2, color: Colors.white),
-          ),
-          Positioned(
-            left: _sliderPos * c.maxWidth - 14,
-            top: c.maxHeight / 2 - 14,
-            child: Container(
-              width: 28, height: 28,
-              decoration: const BoxDecoration(
-                  color: Colors.white, shape: BoxShape.circle,
-                  boxShadow: [BoxShadow(color: Colors.black38, blurRadius: 4)]),
-              child: const Icon(Icons.compare_arrows, size: 16, color: Colors.black87),
-            ),
-          ),
-          const Positioned(left: 8, top: 8,
-              child: _ImgLabel('Эталон')),
-          const Positioned(right: 8, top: 8,
-              child: _ImgLabel('Фото')),
-        ]));
-      }),
+    return RepaintBoundary(
+      key: key,
+      child: Container(
+        color: Colors.black,
+        child: InteractiveViewer(
+          transformationController: ctrl,
+          minScale: 0.2,
+          maxScale: 8.0,
+          child: Image.memory(img, fit: BoxFit.contain),
+        ),
+      ),
     );
   }
 
@@ -721,21 +675,3 @@ class _CompareScreenState extends State<CompareScreen>
       ));
 }
 
-class _RightClipper extends CustomClipper<Rect> {
-  final double x;
-  _RightClipper(this.x);
-  @override Rect getClip(Size s) => Rect.fromLTWH(x, 0, s.width, s.height);
-  @override bool shouldReclip(_RightClipper o) => o.x != x;
-}
-
-class _ImgLabel extends StatelessWidget {
-  final String text;
-  const _ImgLabel(this.text);
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-    color: Colors.black54,
-    child: Text(text, style: const TextStyle(
-        color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
-  );
-}
