@@ -47,15 +47,20 @@ class XpBtn extends StatelessWidget {
       onTap: onPressed,
       child: Container(
         width: width,
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
         decoration: BoxDecoration(
           gradient: gradient,
           borderRadius: BorderRadius.circular(3),
+          boxShadow: onPressed != null
+              ? (primary || danger)
+                  ? AppTheme.shadowRaised
+                  : AppTheme.shadowSubtle
+              : null,
           border: Border(
-            top:    BorderSide(color: (primary||danger) ? AppTheme.blueDark : Colors.white),
-            left:   BorderSide(color: (primary||danger) ? AppTheme.blueDark : Colors.white),
-            right:  BorderSide(color: (primary||danger) ? AppTheme.blueDark : AppTheme.border),
-            bottom: BorderSide(color: (primary||danger) ? AppTheme.blueDark : AppTheme.border),
+            top:    BorderSide(color: (primary||danger) ? AppTheme.blueLight : AppTheme.silverLight, width: 1.5),
+            left:   BorderSide(color: (primary||danger) ? AppTheme.blueLight : AppTheme.silverLight, width: 1.5),
+            right:  BorderSide(color: (primary||danger) ? AppTheme.blueDark  : AppTheme.border),
+            bottom: BorderSide(color: (primary||danger) ? AppTheme.blueDark  : AppTheme.border, width: 1.5),
           ),
         ),
         child: child,
@@ -84,13 +89,16 @@ class XpInput extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: Colors.white,
-        border: Border(
-          top:    BorderSide(color: Color(0xFF404040)),
-          left:   BorderSide(color: Color(0xFF404040)),
-          right:  BorderSide(color: Color(0xFFDFDFDF)),
-          bottom: BorderSide(color: Color(0xFFDFDFDF)),
+        boxShadow: const [
+          BoxShadow(color: Color(0x18000000), blurRadius: 2, offset: Offset(1, 1)),
+        ],
+        border: const Border(
+          top:    BorderSide(color: Color(0xFF555555), width: 1.5),
+          left:   BorderSide(color: Color(0xFF555555), width: 1.5),
+          right:  BorderSide(color: Color(0xFFEEEEEE)),
+          bottom: BorderSide(color: Color(0xFFEEEEEE)),
         ),
       ),
       child: TextField(
@@ -122,20 +130,29 @@ class XpGroup extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.only(top: 14),
       decoration: BoxDecoration(
-        border: Border.all(color: AppTheme.silverDark),
+        gradient: AppTheme.silverGrad,
+        boxShadow: AppTheme.shadowSubtle,
+        border: Border(
+          top:    const BorderSide(color: AppTheme.silverLight, width: 1.5),
+          left:   const BorderSide(color: AppTheme.silverLight, width: 1.5),
+          right:  BorderSide(color: AppTheme.silverDark),
+          bottom: BorderSide(color: AppTheme.silverDark),
+        ),
       ),
       child: Stack(
         clipBehavior: Clip.none,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(10, 12, 10, 10),
+            padding: const EdgeInsets.fromLTRB(10, 14, 10, 10),
             child: child,
           ),
           Positioned(
             top: -8, left: 8,
             child: Container(
-              color: AppTheme.silver,
-              padding: const EdgeInsets.symmetric(horizontal: 4),
+              decoration: const BoxDecoration(
+                gradient: AppTheme.silverGrad,
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
               child: Text(label,
                   style: const TextStyle(
                       fontSize: 11, fontWeight: FontWeight.bold)),
@@ -353,16 +370,21 @@ class _XpMenuBarState extends State<XpMenuBar> {
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: AppTheme.silver,
+      decoration: const BoxDecoration(
+        gradient: AppTheme.silverGrad,
+        boxShadow: [
+          BoxShadow(color: Color(0x20000000), blurRadius: 3, offset: Offset(0, 2)),
+        ],
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Row(
             children: [
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: const BoxDecoration(
-                  border: Border(right: BorderSide(color: AppTheme.silverDark)),
+                  border: Border(right: BorderSide(color: AppTheme.silverDark, width: 1.5)),
                 ),
                 child: Text(widget.icon, style: const TextStyle(fontSize: 15)),
               ),

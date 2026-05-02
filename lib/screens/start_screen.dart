@@ -46,7 +46,7 @@ class _StartScreenState extends State<StartScreen>
   Widget build(BuildContext context) {
     return Column(children: [
       XpMenuBar(
-        icon: '🌈',
+        icon: '🔭',
         menus: [
           XpMenu(label: 'Файл', items: [
             XpMenuItem(

@@ -76,13 +76,15 @@ class _MainShellState extends State<MainShell> {
       ),
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
-          color: AppTheme.silver,
-          border: const Border(top: BorderSide(color: AppTheme.blue, width: 2)),
+          gradient: AppTheme.silverGrad,
+          border: const Border(
+            top: BorderSide(color: AppTheme.blue, width: 2),
+          ),
           boxShadow: [
-            BoxShadow(
-                color: Colors.black.withOpacity(0.15),
-                blurRadius: 8,
-                offset: const Offset(0, -2)),
+            BoxShadow(color: Colors.black.withOpacity(0.25),
+                blurRadius: 8, offset: const Offset(0, -3)),
+            BoxShadow(color: Colors.white.withOpacity(0.6),
+                blurRadius: 2, offset: const Offset(0, -1)),
           ],
         ),
         child: SafeArea(
@@ -90,7 +92,7 @@ class _MainShellState extends State<MainShell> {
           child: SizedBox(
             height: 56,
             child: Row(children: [
-              Expanded(child: _navBtn(0, '🌈', 'Старт')),
+              Expanded(child: _navBtn(0, '🔭', 'Старт')),
               Expanded(child: _navBtn(1, '🔍', 'Сравнение')),
               _navBtnBadge(2, '💬', 'Чат', _chatBadge),
               Expanded(child: _navBtn(3, '🛒', 'Магазин')),
@@ -109,7 +111,11 @@ class _MainShellState extends State<MainShell> {
       behavior: HitTestBehavior.opaque,
       child: Container(
         decoration: BoxDecoration(
-          color: active ? AppTheme.blue.withOpacity(0.1) : Colors.transparent,
+          gradient: active
+              ? LinearGradient(
+                  colors: [AppTheme.blue.withOpacity(0.18), AppTheme.blue.withOpacity(0.04)],
+                  begin: Alignment.topCenter, end: Alignment.bottomCenter)
+              : null,
           border: Border(
             top: BorderSide(
                 color: active ? AppTheme.blue : Colors.transparent, width: 3),
