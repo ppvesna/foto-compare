@@ -290,45 +290,32 @@ class _CompareScreenState extends State<CompareScreen>
         animation: _tabs,
         builder: (_, __) {
           final active = _tabs.index == idx;
-          return GestureDetector(
-            onTap: () => _tabs.animateTo(idx),
-            child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
-              margin: const EdgeInsets.only(right: 2),
-              decoration: BoxDecoration(
-                color: active ? AppTheme.silver : AppTheme.silverDark,
-                border: Border(
-                  top: BorderSide(
-                      color: active
-                          ? AppTheme.blue
-                          : AppTheme.silverDark),
-                  left: BorderSide(
-                      color: active
-                          ? AppTheme.blue
-                          : AppTheme.silverDark),
-                  right: BorderSide(
-                      color: active
-                          ? AppTheme.blue
-                          : AppTheme.silverDark),
-                  bottom: BorderSide(
-                      color: active
-                          ? AppTheme.silver
-                          : AppTheme.silverDark),
+          return SizedBox(
+            height: 34,
+            child: ElevatedButton(
+              onPressed: () => _tabs.animateTo(idx),
+              style: ElevatedButton.styleFrom(
+                backgroundColor:
+                    active ? Colors.white : const Color(0xFFB8B4A8),
+                foregroundColor:
+                    active ? Colors.black : Colors.black54,
+                elevation: 0,
+                padding: const EdgeInsets.symmetric(horizontal: 2),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                textStyle: TextStyle(
+                  fontSize: 10,
+                  fontWeight:
+                      active ? FontWeight.bold : FontWeight.normal,
                 ),
-                borderRadius: const BorderRadius.only(
+                shape: const RoundedRectangleBorder(
+                  borderRadius: BorderRadius.only(
                     topLeft: Radius.circular(3),
-                    topRight: Radius.circular(3)),
+                    topRight: Radius.circular(3),
+                  ),
+                ),
               ),
-              child: Text(label,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: active
-                          ? FontWeight.bold
-                          : FontWeight.normal,
-                      color:
-                          active ? Colors.black : Colors.black54)),
+              child: Text(label, textAlign: TextAlign.center),
             ),
           );
         },
@@ -915,114 +902,62 @@ class _CompareScreenState extends State<CompareScreen>
   }
 
   Widget _toggleBtn(String label, bool active, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-        decoration: BoxDecoration(
-          gradient: active ? AppTheme.blueGrad : AppTheme.btnGrad,
-          borderRadius: BorderRadius.circular(2),
-          border: Border(
-            top: BorderSide(
-                color: active
-                    ? AppTheme.blueLight
-                    : AppTheme.silverLight),
-            left: BorderSide(
-                color: active
-                    ? AppTheme.blueLight
-                    : AppTheme.silverLight),
-            right: BorderSide(
-                color: active
-                    ? AppTheme.blueDark
-                    : AppTheme.border),
-            bottom: BorderSide(
-                color: active
-                    ? AppTheme.blueDark
-                    : AppTheme.border),
-          ),
+    return ElevatedButton(
+      onPressed: onTap,
+      style: ElevatedButton.styleFrom(
+        backgroundColor:
+            active ? const Color(0xFF003388) : const Color(0xFFE0DDD4),
+        foregroundColor: active ? Colors.white : Colors.black87,
+        elevation: active ? 2 : 1,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        textStyle: TextStyle(
+          fontSize: 12,
+          fontWeight: active ? FontWeight.bold : FontWeight.normal,
         ),
-        child: Text(label,
-            style: TextStyle(
-              fontSize: 11,
-              color: active ? Colors.white : Colors.black,
-              fontWeight:
-                  active ? FontWeight.bold : FontWeight.normal,
-              shadows: active
-                  ? const [
-                      Shadow(
-                          color: Colors.black38,
-                          offset: Offset(0, 1))
-                    ]
-                  : null,
-            )),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(3)),
       ),
+      child: Text(label),
     );
   }
 
   Widget _modeBtn(String mode, String label) {
-    return GestureDetector(
-      onTap: () => setState(() => _mode = mode),
-      child: Container(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(
-          gradient: _mode == mode ? AppTheme.blueGrad : AppTheme.btnGrad,
-          border: Border(
-            top: BorderSide(
-                color: _mode == mode
-                    ? AppTheme.blueLight
-                    : Colors.white),
-            left: BorderSide(
-                color: _mode == mode
-                    ? AppTheme.blueLight
-                    : Colors.white),
-            right: BorderSide(
-                color: _mode == mode
-                    ? AppTheme.blueDark
-                    : AppTheme.border),
-            bottom: BorderSide(
-                color: _mode == mode
-                    ? AppTheme.blueDark
-                    : AppTheme.border),
-          ),
-        ),
-        child: Text(label,
-            style: TextStyle(
-              fontSize: 11,
-              color: _mode == mode ? Colors.white : Colors.black,
-              shadows: _mode == mode
-                  ? const [
-                      Shadow(
-                          color: Colors.black38,
-                          offset: Offset(0, 1))
-                    ]
-                  : null,
-            )),
+    final active = _mode == mode;
+    return ElevatedButton(
+      onPressed: () => setState(() => _mode = mode),
+      style: ElevatedButton.styleFrom(
+        backgroundColor:
+            active ? const Color(0xFF003388) : const Color(0xFFE0DDD4),
+        foregroundColor: active ? Colors.white : Colors.black87,
+        elevation: active ? 2 : 1,
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        textStyle: const TextStyle(fontSize: 11),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(3)),
       ),
+      child: Text(label),
     );
   }
 
   Widget _toolBtn(String label, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        margin: const EdgeInsets.only(right: 2),
-        padding:
-            const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(
-          gradient: AppTheme.btnGrad,
-          border: const Border(
-            top: BorderSide(color: Colors.white),
-            left: BorderSide(color: Colors.white),
-            right: BorderSide(color: AppTheme.border),
-            bottom: BorderSide(color: AppTheme.border),
-          ),
+    return ElevatedButton(
+      onPressed: onTap,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: const Color(0xFFE0DDD4),
+        foregroundColor: Colors.black87,
+        elevation: 1,
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        textStyle: const TextStyle(fontSize: 11),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(3),
+          side: BorderSide(color: Colors.grey.shade400),
         ),
-        child: Text(label,
-            style: const TextStyle(
-                fontSize: 11, color: Colors.black)),
       ),
+      child: Text(label),
     );
   }
 
