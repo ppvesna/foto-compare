@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import '../config/app_theme.dart';
 import '../widgets/xp_widgets.dart';
@@ -41,6 +42,9 @@ class _CompareScreenState extends State<CompareScreen>
   Uint8List? _refAligned;
   Uint8List? _cmpAligned;
 
+  // Отступ рамки (10% с каждой стороны = 80% центральная зона)
+  static const double _framePad = 0.10;
+
   // Режим просмотра: true = выравнивание, false = сравнение
   bool   _alignMode  = true;
   double _rotation   = 0;
@@ -77,26 +81,40 @@ class _CompareScreenState extends State<CompareScreen>
       if (boundary == null) return null;
       final image = await boundary.toImage(pixelRatio: 2.0);
       final data = await image.toByteData(format: ui.ImageByteFormat.png);
-      return data?.buffer.asUint8List();
+      final bytes = data?.buffer.asUint8List();
+      if (bytes == null) return null;
+
+      // Кропаем по рамке
+      final decoded = img.decodeImage(bytes);
+      if (decoded == null) return bytes;
+      final w = decoded.width;
+      final h = decoded.height;
+      final cropped = img.copyCrop(decoded,
+        x: (w * _framePad).toInt(),
+        y: (h * _framePad).toInt(),
+        width: (w * (1 - 2 * _framePad)).toInt(),
+        height: (h * (1 - 2 * _framePad)).toInt(),
+      );
+      return Uint8List.fromList(img.encodePng(cropped));
     } catch (_) {
       return null;
     }
   }
 
-  Future<void> _captureAligned() async {
+  Future<void> _captureAligned({bool silent = false}) async {
     if (_refImg == null || _cmpImg == null) {
-      xpDlg(context, 'Ошибка', 'Загрузите оба изображения');
+      if (!silent) xpDlg(context, 'Ошибка', 'Загрузите оба изображения');
       return;
     }
     final ref = await _captureView(_refKey);
     final cmp = await _captureView(_cmpKey);
+    if (!mounted) return;
     setState(() {
       _refAligned = ref ?? _refImg;
       _cmpAligned = cmp ?? _cmpImg;
     });
-    if (mounted) {
-      xpDlg(context, 'Готово',
-          'Область захвачена.\nНажмите «Сравнить ›» или перейдите в Просмотр.');
+    if (!silent) {
+      xpDlg(context, 'Готово', 'Область захвачена.');
     }
   }
 
@@ -419,7 +437,11 @@ class _CompareScreenState extends State<CompareScreen>
           _toggleBtn(
               '👁 Просмотр',
               !_alignMode,
-              () => setState(() => _alignMode = false)),
+              () async {
+                // Захватываем рамку перед показом сравнения
+                await _captureAligned(silent: true);
+                if (mounted) setState(() => _alignMode = false);
+              }),
           const SizedBox(width: 8),
           if (_refAligned != null)
             const Text('✅ захвачено',
@@ -887,17 +909,26 @@ class _CompareScreenState extends State<CompareScreen>
         ),
       );
     }
-    return RepaintBoundary(
-      key: key,
-      child: Container(
-        color: Colors.black,
-        child: InteractiveViewer(
-          transformationController: ctrl,
-          minScale: 0.2,
-          maxScale: 8.0,
-          child: Image.memory(img, fit: BoxFit.contain),
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        RepaintBoundary(
+          key: key,
+          child: Container(
+            color: Colors.black,
+            child: InteractiveViewer(
+              transformationController: ctrl,
+              minScale: 0.2,
+              maxScale: 8.0,
+              child: Image.memory(img, fit: BoxFit.contain),
+            ),
+          ),
         ),
-      ),
+        // Рамка захвата — IgnorePointer чтобы жесты проходили к фото
+        IgnorePointer(
+          child: CustomPaint(painter: _FrameOverlayPainter(_framePad)),
+        ),
+      ],
     );
   }
 
@@ -1011,6 +1042,55 @@ class _RightClipper extends CustomClipper<Rect> {
   Rect getClip(Size s) => Rect.fromLTWH(x, 0, s.width, s.height);
   @override
   bool shouldReclip(_RightClipper o) => o.x != x;
+}
+
+// Рамка захвата — тёмный оверлей снаружи + белая рамка внутри
+class _FrameOverlayPainter extends CustomPainter {
+  final double pad;
+  const _FrameOverlayPainter(this.pad);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+    final frame = Rect.fromLTRB(w * pad, h * pad, w * (1 - pad), h * (1 - pad));
+
+    // Затемнение за рамкой
+    final outside = Path()
+      ..addRect(Rect.fromLTWH(0, 0, w, h))
+      ..addRect(frame)
+      ..fillType = PathFillType.evenOdd;
+    canvas.drawPath(outside, Paint()..color = Colors.black.withOpacity(0.50));
+
+    // Белая рамка
+    canvas.drawRect(frame,
+        Paint()
+          ..color = Colors.white
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5);
+
+    // Угловые маркеры
+    const cl = 14.0;
+    final cp = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3;
+    void corner(Offset a, Offset b, Offset c) {
+      canvas.drawLine(a, b, cp);
+      canvas.drawLine(b, c, cp);
+    }
+    corner(Offset(frame.left, frame.top + cl), frame.topLeft,
+        Offset(frame.left + cl, frame.top));
+    corner(Offset(frame.right - cl, frame.top), frame.topRight,
+        Offset(frame.right, frame.top + cl));
+    corner(Offset(frame.left, frame.bottom - cl), frame.bottomLeft,
+        Offset(frame.left + cl, frame.bottom));
+    corner(Offset(frame.right - cl, frame.bottom), frame.bottomRight,
+        Offset(frame.right, frame.bottom - cl));
+  }
+
+  @override
+  bool shouldRepaint(_FrameOverlayPainter old) => old.pad != pad;
 }
 
 class _ImgLabel extends StatelessWidget {
