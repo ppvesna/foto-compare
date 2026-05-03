@@ -44,6 +44,7 @@ class _CompareScreenState extends State<CompareScreen>
   // Режим просмотра: true = выравнивание, false = сравнение
   bool   _alignMode  = true;
   double _rotation   = 0;
+  double _zoom       = 1.0;
   final  _previewCtrl = TransformationController();
 
   final _history = [
@@ -125,7 +126,7 @@ class _CompareScreenState extends State<CompareScreen>
       _refCtrl.value = _refCtrl.value.clone()..scale(factor, factor);
       _cmpCtrl.value = _cmpCtrl.value.clone()..scale(factor, factor);
     } else {
-      _previewCtrl.value = _previewCtrl.value.clone()..scale(factor, factor);
+      setState(() => _zoom = (_zoom * factor).clamp(0.2, 8.0));
     }
   }
 
@@ -472,8 +473,7 @@ class _CompareScreenState extends State<CompareScreen>
                   () => setState(() => _rotation = (_rotation + 90) % 360)),
               const SizedBox(width: 4),
               _toolBtn('⟳', () {
-                _previewCtrl.value = Matrix4.identity();
-                setState(() => _rotation = 0);
+                setState(() { _rotation = 0; _zoom = 1.0; });
               }),
               const Spacer(),
               const Text('Режим:',
@@ -576,57 +576,41 @@ class _CompareScreenState extends State<CompareScreen>
   Widget _comparisonView() {
     final ref = _refAligned ?? _refImg;
     final cmp = _cmpAligned ?? _cmpImg;
-    // LayoutBuilder даёт ограниченные размеры — нужно для Stack(expand)
-    return LayoutBuilder(builder: (_, constraints) {
-      final w = constraints.maxWidth;
-      final h = constraints.maxHeight;
-      return Container(
-        color: Colors.black,
-        child: InteractiveViewer(
-          transformationController: _previewCtrl,
-          minScale: 0.2,
-          maxScale: 8.0,
-          child: SizedBox(
-            width: w,
-            height: h,
-            child: Transform.rotate(
-              angle: _rotation * pi / 180,
-              child: _buildModeView(ref, cmp, w, h),
-            ),
-          ),
-        ),
-      );
-    });
+    final transform = Matrix4.identity()
+      ..scale(_zoom)
+      ..rotateZ(_rotation * pi / 180);
+    return Container(
+      color: Colors.black,
+      child: LayoutBuilder(builder: (_, c) {
+        return _buildModeView(ref, cmp, transform, c.maxWidth, c.maxHeight);
+      }),
+    );
   }
 
-  Widget _buildModeView(
-      Uint8List? ref, Uint8List? cmp, double w, double h) {
+  Widget _buildModeView(Uint8List? ref, Uint8List? cmp,
+      Matrix4 transform, double w, double h) {
     if (_mode == 'd') {
-      return SizedBox(
-        width: w,
-        height: h,
+      return Transform(
+        transform: transform,
+        alignment: Alignment.center,
         child: Row(children: [
-          Expanded(
-              child: ref != null
-                  ? Image.memory(ref, fit: BoxFit.cover)
-                  : const Center(
-                      child: Text('Эталон',
-                          style: TextStyle(color: Colors.white54)))),
+          Expanded(child: ref != null
+              ? Image.memory(ref, fit: BoxFit.cover)
+              : const Center(child: Text('Эталон',
+                  style: TextStyle(color: Colors.white54)))),
           Container(width: 2, color: Colors.white24),
-          Expanded(
-              child: cmp != null
-                  ? Image.memory(cmp, fit: BoxFit.cover)
-                  : const Center(
-                      child: Text('Фото',
-                          style: TextStyle(color: Colors.white54)))),
+          Expanded(child: cmp != null
+              ? Image.memory(cmp, fit: BoxFit.cover)
+              : const Center(child: Text('Фото',
+                  style: TextStyle(color: Colors.white54)))),
         ]),
       );
     }
 
     if (_mode == 'o') {
-      return SizedBox(
-        width: w,
-        height: h,
+      return Transform(
+        transform: transform,
+        alignment: Alignment.center,
         child: Stack(fit: StackFit.expand, children: [
           if (ref != null) Image.memory(ref, fit: BoxFit.contain),
           Opacity(
@@ -645,9 +629,9 @@ class _CompareScreenState extends State<CompareScreen>
         setState(() =>
             _sliderPos = (d.localPosition.dx / w).clamp(0.0, 1.0));
       },
-      child: SizedBox(
-        width: w,
-        height: h,
+      child: Transform(
+        transform: transform,
+        alignment: Alignment.center,
         child: Stack(fit: StackFit.expand, children: [
           if (ref != null) Image.memory(ref, fit: BoxFit.contain),
           if (cmp != null)
@@ -656,30 +640,22 @@ class _CompareScreenState extends State<CompareScreen>
               child: Image.memory(cmp, fit: BoxFit.contain),
             ),
           Positioned(
-              left: divX - 1,
-              top: 0,
-              bottom: 0,
+              left: divX - 1, top: 0, bottom: 0,
               child: Container(width: 2, color: Colors.white)),
           Positioned(
             left: (divX - 14).clamp(0.0, w - 28),
             top: h / 2 - 14,
             child: Container(
-              width: 28,
-              height: 28,
+              width: 28, height: 28,
               decoration: const BoxDecoration(
-                  color: Colors.white,
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(color: Colors.black38, blurRadius: 4)
-                  ]),
+                  color: Colors.white, shape: BoxShape.circle,
+                  boxShadow: [BoxShadow(color: Colors.black38, blurRadius: 4)]),
               child: const Icon(Icons.compare_arrows,
                   size: 16, color: Colors.black87),
             ),
           ),
-          const Positioned(
-              left: 8, top: 8, child: _ImgLabel('Эталон')),
-          const Positioned(
-              right: 8, top: 8, child: _ImgLabel('Фото')),
+          const Positioned(left: 8, top: 8, child: _ImgLabel('Эталон')),
+          const Positioned(right: 8, top: 8, child: _ImgLabel('Фото')),
         ]),
       ),
     );

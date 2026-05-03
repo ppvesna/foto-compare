@@ -22,55 +22,47 @@ class XpBtn extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final gradient = danger
-        ? const LinearGradient(colors: [Color(0xFFF56060), Color(0xFFC82020)],
-            begin: Alignment.topCenter, end: Alignment.bottomCenter)
-        : primary ? AppTheme.blueGrad : AppTheme.btnGrad;
-
-    final textColor = (primary || danger) ? Colors.white : Colors.black;
-
-    final textStyle = TextStyle(
-      fontSize: 11,
-      color: textColor,
-      fontWeight: primary ? FontWeight.bold : FontWeight.normal,
-      shadows: (primary || danger)
-          ? const [Shadow(color: Colors.black45, offset: Offset(0, 1), blurRadius: 2)]
-          : null,
-    );
-
-    Widget child = Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (icon != null) ...[
-          Icon(icon, size: 13, color: textColor),
-          const SizedBox(width: 4),
-        ],
-        // RichText bypasses DefaultTextStyle — colour is always explicit
-        RichText(text: TextSpan(text: label, style: textStyle)),
-      ],
-    );
+    // Solid colours for primary/danger — gradients caused invisible text on some devices
+    final Color bgColor = danger
+        ? const Color(0xFFB01010)
+        : primary
+            ? const Color(0xFF1A4DB8)
+            : Colors.transparent;
 
     return GestureDetector(
       onTap: onPressed,
       child: Container(
         width: width,
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
         decoration: BoxDecoration(
-          gradient: gradient,
+          color: (primary || danger) ? bgColor : null,
+          gradient: (primary || danger) ? null : AppTheme.btnGrad,
           borderRadius: BorderRadius.circular(3),
-          boxShadow: onPressed != null
-              ? (primary || danger)
-                  ? AppTheme.shadowRaised
-                  : AppTheme.shadowSubtle
-              : null,
+          boxShadow: onPressed != null ? AppTheme.shadowSubtle : null,
           border: Border(
-            top:    BorderSide(color: (primary||danger) ? AppTheme.blueLight : AppTheme.silverLight, width: 1.5),
-            left:   BorderSide(color: (primary||danger) ? AppTheme.blueLight : AppTheme.silverLight, width: 1.5),
-            right:  BorderSide(color: (primary||danger) ? AppTheme.blueDark  : AppTheme.border),
-            bottom: BorderSide(color: (primary||danger) ? AppTheme.blueDark  : AppTheme.border, width: 1.5),
+            top:    BorderSide(color: (primary||danger) ? const Color(0xFF5588EE) : AppTheme.silverLight, width: 1.5),
+            left:   BorderSide(color: (primary||danger) ? const Color(0xFF5588EE) : AppTheme.silverLight, width: 1.5),
+            right:  BorderSide(color: (primary||danger) ? const Color(0xFF0A2060) : AppTheme.border),
+            bottom: BorderSide(color: (primary||danger) ? const Color(0xFF0A2060) : AppTheme.border, width: 1.5),
           ),
         ),
-        child: child,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (icon != null) ...[
+              Icon(icon, size: 14, color: (primary || danger) ? Colors.white : Colors.black87),
+              const SizedBox(width: 4),
+            ],
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                color: (primary || danger) ? Colors.white : Colors.black87,
+                fontWeight: primary ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -113,10 +105,10 @@ class XpInput extends StatelessWidget {
         obscureText: obscure,
         keyboardType: keyboardType,
         onChanged: onChanged,
-        style: const TextStyle(fontSize: 11),
+        style: const TextStyle(fontSize: 12),
         decoration: InputDecoration(
           hintText: placeholder,
-          hintStyle: const TextStyle(fontSize: 11, color: Colors.grey),
+          hintStyle: const TextStyle(fontSize: 12, color: Colors.grey),
           contentPadding: const EdgeInsets.symmetric(horizontal: 7, vertical: 5),
           border: InputBorder.none,
         ),
@@ -156,13 +148,10 @@ class XpGroup extends StatelessWidget {
           Positioned(
             top: -8, left: 8,
             child: Container(
-              decoration: const BoxDecoration(
-                gradient: AppTheme.silverGrad,
-              ),
+              decoration: const BoxDecoration(gradient: AppTheme.silverGrad),
               padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
               child: Text(label,
-                  style: const TextStyle(
-                      fontSize: 11, fontWeight: FontWeight.bold)),
+                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
             ),
           ),
         ],
@@ -178,8 +167,7 @@ Future<void> xpDlg(BuildContext context, String title, String msg) {
     barrierColor: Colors.black45,
     builder: (_) => Dialog(
       backgroundColor: AppTheme.silver,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.zero),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.zero),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -199,16 +187,13 @@ Future<void> xpDlg(BuildContext context, String title, String msg) {
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
-            child: Text(msg,
-                style: const TextStyle(fontSize: 11, height: 1.7)),
+            child: Text(msg, style: const TextStyle(fontSize: 12, height: 1.7)),
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
             child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-              XpBtn(
-                label: 'ОК', primary: true,
-                onPressed: () => Navigator.pop(context),
-              ),
+              XpBtn(label: 'ОК', primary: true,
+                  onPressed: () => Navigator.pop(context)),
             ]),
           ),
         ],
@@ -243,7 +228,7 @@ Future<bool> xpConfirm(BuildContext context, String title, String msg) async {
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
-            child: Text(msg, style: const TextStyle(fontSize: 11, height: 1.7)),
+            child: Text(msg, style: const TextStyle(fontSize: 12, height: 1.7)),
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
@@ -337,7 +322,7 @@ class _XpMenuBarState extends State<XpMenuBar> {
                         ],
                         Text(item.label,
                             style: TextStyle(
-                                fontSize: 11,
+                                fontSize: 12,
                                 color: item.disabled ? Colors.grey : Colors.black)),
                         if (item.shortcut != null) ...[
                           const Spacer(),
@@ -408,7 +393,7 @@ class _XpMenuBarState extends State<XpMenuBar> {
                       color: _open == i ? AppTheme.blue : Colors.transparent,
                       child: Text(menu.label,
                           style: TextStyle(
-                              fontSize: 11,
+                              fontSize: 12,
                               color: _open == i ? Colors.white : Colors.black)),
                     ),
                   ),
