@@ -29,6 +29,15 @@ class XpBtn extends StatelessWidget {
 
     final textColor = (primary || danger) ? Colors.white : Colors.black;
 
+    final textStyle = TextStyle(
+      fontSize: 11,
+      color: textColor,
+      fontWeight: primary ? FontWeight.bold : FontWeight.normal,
+      shadows: (primary || danger)
+          ? const [Shadow(color: Colors.black45, offset: Offset(0, 1), blurRadius: 2)]
+          : null,
+    );
+
     Widget child = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -36,14 +45,8 @@ class XpBtn extends StatelessWidget {
           Icon(icon, size: 13, color: textColor),
           const SizedBox(width: 4),
         ],
-        Text(label, style: TextStyle(
-          fontSize: 11,
-          color: textColor,
-          fontWeight: primary ? FontWeight.bold : FontWeight.normal,
-          shadows: (primary || danger) ? const [
-            Shadow(color: Colors.black45, offset: Offset(0, 1), blurRadius: 2),
-          ] : null,
-        )),
+        // RichText bypasses DefaultTextStyle — colour is always explicit
+        RichText(text: TextSpan(text: label, style: textStyle)),
       ],
     );
 

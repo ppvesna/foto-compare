@@ -576,61 +576,78 @@ class _CompareScreenState extends State<CompareScreen>
   Widget _comparisonView() {
     final ref = _refAligned ?? _refImg;
     final cmp = _cmpAligned ?? _cmpImg;
-    return Container(
-      color: Colors.black,
-      child: InteractiveViewer(
-        transformationController: _previewCtrl,
-        minScale: 0.2,
-        maxScale: 8.0,
-        child: Transform.rotate(
-          angle: _rotation * pi / 180,
-          child: _buildModeView(ref, cmp),
+    // LayoutBuilder даёт ограниченные размеры — нужно для Stack(expand)
+    return LayoutBuilder(builder: (_, constraints) {
+      final w = constraints.maxWidth;
+      final h = constraints.maxHeight;
+      return Container(
+        color: Colors.black,
+        child: InteractiveViewer(
+          transformationController: _previewCtrl,
+          minScale: 0.2,
+          maxScale: 8.0,
+          child: SizedBox(
+            width: w,
+            height: h,
+            child: Transform.rotate(
+              angle: _rotation * pi / 180,
+              child: _buildModeView(ref, cmp, w, h),
+            ),
+          ),
         ),
-      ),
-    );
+      );
+    });
   }
 
-  Widget _buildModeView(Uint8List? ref, Uint8List? cmp) {
+  Widget _buildModeView(
+      Uint8List? ref, Uint8List? cmp, double w, double h) {
     if (_mode == 'd') {
-      return Row(children: [
-        Expanded(
-            child: ref != null
-                ? Image.memory(ref, fit: BoxFit.cover)
-                : const Center(
-                    child: Text('Эталон',
-                        style:
-                            TextStyle(color: Colors.white54)))),
-        Container(width: 2, color: Colors.white24),
-        Expanded(
-            child: cmp != null
-                ? Image.memory(cmp, fit: BoxFit.cover)
-                : const Center(
-                    child: Text('Фото',
-                        style:
-                            TextStyle(color: Colors.white54)))),
-      ]);
+      return SizedBox(
+        width: w,
+        height: h,
+        child: Row(children: [
+          Expanded(
+              child: ref != null
+                  ? Image.memory(ref, fit: BoxFit.cover)
+                  : const Center(
+                      child: Text('Эталон',
+                          style: TextStyle(color: Colors.white54)))),
+          Container(width: 2, color: Colors.white24),
+          Expanded(
+              child: cmp != null
+                  ? Image.memory(cmp, fit: BoxFit.cover)
+                  : const Center(
+                      child: Text('Фото',
+                          style: TextStyle(color: Colors.white54)))),
+        ]),
+      );
     }
 
     if (_mode == 'o') {
-      return Stack(fit: StackFit.expand, children: [
-        if (ref != null)
-          Image.memory(ref, fit: BoxFit.contain),
-        Opacity(
-            opacity: _opacity,
-            child: cmp != null
-                ? Image.memory(cmp, fit: BoxFit.contain)
-                : const SizedBox()),
-      ]);
+      return SizedBox(
+        width: w,
+        height: h,
+        child: Stack(fit: StackFit.expand, children: [
+          if (ref != null) Image.memory(ref, fit: BoxFit.contain),
+          Opacity(
+              opacity: _opacity,
+              child: cmp != null
+                  ? Image.memory(cmp, fit: BoxFit.contain)
+                  : const SizedBox()),
+        ]),
+      );
     }
 
     // Слайдер (default)
-    return LayoutBuilder(builder: (_, c) {
-      final divX = (_sliderPos * c.maxWidth).clamp(0.0, c.maxWidth);
-      return GestureDetector(
-        onHorizontalDragUpdate: (d) {
-          setState(() => _sliderPos =
-              (d.localPosition.dx / c.maxWidth).clamp(0.0, 1.0));
-        },
+    final divX = (_sliderPos * w).clamp(0.0, w);
+    return GestureDetector(
+      onHorizontalDragUpdate: (d) {
+        setState(() =>
+            _sliderPos = (d.localPosition.dx / w).clamp(0.0, 1.0));
+      },
+      child: SizedBox(
+        width: w,
+        height: h,
         child: Stack(fit: StackFit.expand, children: [
           if (ref != null) Image.memory(ref, fit: BoxFit.contain),
           if (cmp != null)
@@ -644,8 +661,8 @@ class _CompareScreenState extends State<CompareScreen>
               bottom: 0,
               child: Container(width: 2, color: Colors.white)),
           Positioned(
-            left: (divX - 14).clamp(0.0, c.maxWidth - 28),
-            top: c.maxHeight / 2 - 14,
+            left: (divX - 14).clamp(0.0, w - 28),
+            top: h / 2 - 14,
             child: Container(
               width: 28,
               height: 28,
@@ -653,24 +670,19 @@ class _CompareScreenState extends State<CompareScreen>
                   color: Colors.white,
                   shape: BoxShape.circle,
                   boxShadow: [
-                    BoxShadow(
-                        color: Colors.black38, blurRadius: 4)
+                    BoxShadow(color: Colors.black38, blurRadius: 4)
                   ]),
               child: const Icon(Icons.compare_arrows,
                   size: 16, color: Colors.black87),
             ),
           ),
           const Positioned(
-              left: 8,
-              top: 8,
-              child: _ImgLabel('Эталон')),
+              left: 8, top: 8, child: _ImgLabel('Эталон')),
           const Positioned(
-              right: 8,
-              top: 8,
-              child: _ImgLabel('Фото')),
+              right: 8, top: 8, child: _ImgLabel('Фото')),
         ]),
-      );
-    });
+      ),
+    );
   }
 
   // ── Таб: Результат ────────────────────────────────
