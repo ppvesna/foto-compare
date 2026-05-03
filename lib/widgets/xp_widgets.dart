@@ -26,49 +26,37 @@ class XpBtn extends StatelessWidget {
         ? const Color(0xFF880000)
         : primary
             ? const Color(0xFF003388)
-            : const Color(0xFFDDDDDD);
-    final Color fg =
-        (primary || danger) ? Colors.white : Colors.black87;
+            : const Color(0xFFE0DDD4);
+    final Color fg = (primary || danger) ? Colors.white : Colors.black87;
 
-    return GestureDetector(
-      onTap: onPressed,
-      child: Container(
-        width: width,
-        padding:
-            const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: bg,
-          borderRadius: BorderRadius.circular(3),
-          border: Border.all(
-              color: (primary || danger)
-                  ? Colors.white30
-                  : Colors.grey.shade500),
-          boxShadow: const [
-            BoxShadow(
-                color: Color(0x33000000),
-                blurRadius: 3,
-                offset: Offset(1, 2)),
-          ],
+    return SizedBox(
+      width: width,
+      child: ElevatedButton(
+        onPressed: onPressed,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: bg,
+          foregroundColor: fg,
+          elevation: 2,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          minimumSize: Size.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          textStyle: const TextStyle(
+              fontSize: 13, fontWeight: FontWeight.w600),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(3),
+            side: BorderSide(
+                color: (primary || danger)
+                    ? Colors.white38
+                    : Colors.grey.shade500),
+          ),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            if (icon != null) ...[
-              Icon(icon, size: 15, color: fg),
-              const SizedBox(width: 5),
-            ],
-            Text(
-              label,
-              style: TextStyle(
-                color: fg,
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                decoration: TextDecoration.none,
-              ),
-            ),
-          ],
-        ),
+        child: icon != null
+            ? Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(icon, size: 14),
+                const SizedBox(width: 5),
+                Text(label),
+              ])
+            : Text(label),
       ),
     );
   }
