@@ -37,8 +37,12 @@ class XpBtn extends StatelessWidget {
           const SizedBox(width: 4),
         ],
         Text(label, style: TextStyle(
-          fontSize: 11, color: textColor,
+          fontSize: 11,
+          color: textColor,
           fontWeight: primary ? FontWeight.bold : FontWeight.normal,
+          shadows: (primary || danger) ? const [
+            Shadow(color: Colors.black45, offset: Offset(0, 1), blurRadius: 2),
+          ] : null,
         )),
       ],
     );

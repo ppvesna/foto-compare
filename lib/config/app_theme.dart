@@ -46,7 +46,6 @@ class AppTheme {
   static ThemeData get theme => ThemeData(
     colorScheme: ColorScheme.fromSeed(seedColor: blue),
     scaffoldBackgroundColor: silver,
-    fontFamily: 'Arial',
     useMaterial3: true,
   );
 }
