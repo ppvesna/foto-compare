@@ -1,6 +1,5 @@
 import 'dart:math';
 import 'dart:typed_data';
-import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:image/image.dart' as img;
@@ -37,8 +36,8 @@ class _CompareScreenState extends State<CompareScreen>
   // Выравнивание — независимые контроллеры для каждого фото
   final _refCtrl = TransformationController();
   final _cmpCtrl = TransformationController();
-  final _refKey  = GlobalKey();
-  final _cmpKey  = GlobalKey();
+  Size _refViewerSize = Size.zero;
+  Size _cmpViewerSize = Size.zero;
   Uint8List? _refAligned;
   Uint8List? _cmpAligned;
 
@@ -75,32 +74,46 @@ class _CompareScreenState extends State<CompareScreen>
     super.dispose();
   }
 
-  // ── Захват выровненных областей ───────────────────
-  Future<Uint8List?> _captureView(GlobalKey key) async {
-    try {
-      final boundary =
-          key.currentContext?.findRenderObject() as RenderRepaintBoundary?;
-      if (boundary == null) return null;
-      final image = await boundary.toImage(pixelRatio: 2.0);
-      final data = await image.toByteData(format: ui.ImageByteFormat.png);
-      final bytes = data?.buffer.asUint8List();
-      if (bytes == null) return null;
+  // ── Захват выровненных областей (матричный метод) ─
+  Future<Uint8List?> _extractRegion(
+      Uint8List imageBytes, Matrix4 transform, Size viewerSize) async {
+    if (viewerSize == Size.zero) return null;
+    final decoded = img.decodeImage(imageBytes);
+    if (decoded == null) return null;
 
-      // Кропаем по рамке
-      final decoded = img.decodeImage(bytes);
-      if (decoded == null) return bytes;
-      final w = decoded.width;
-      final h = decoded.height;
-      final cropped = img.copyCrop(decoded,
-        x: (w * _framePad).toInt(),
-        y: (h * _framePad).toInt(),
-        width: (w * (1 - 2 * _framePad)).toInt(),
-        height: (h * (1 - 2 * _framePad)).toInt(),
-      );
-      return Uint8List.fromList(img.encodePng(cropped));
-    } catch (_) {
-      return null;
-    }
+    final imgW = decoded.width.toDouble();
+    final imgH = decoded.height.toDouble();
+    final vw = viewerSize.width;
+    final vh = viewerSize.height;
+
+    // BoxFit.contain масштаб и смещение
+    final scale = min(vw / imgW, vh / imgH);
+    final leftOff = (vw - imgW * scale) / 2;
+    final topOff  = (vh - imgH * scale) / 2;
+
+    // Углы рамки в координатах вьювера
+    final frameTL = Offset(vw * _framePad, vh * _framePad);
+    final frameBR = Offset(vw * (1 - _framePad), vh * (1 - _framePad));
+
+    // Инверсный трансформ: вьювер → дочерний виджет (Image)
+    Matrix4 inv;
+    try { inv = Matrix4.inverted(transform); }
+    catch (_) { inv = Matrix4.identity(); }
+
+    final tl = MatrixUtils.transformPoint(inv, frameTL);
+    final br = MatrixUtils.transformPoint(inv, frameBR);
+
+    // Координаты виджета → пиксели изображения
+    int px1 = ((tl.dx - leftOff) / scale).round().clamp(0, decoded.width);
+    int py1 = ((tl.dy - topOff)  / scale).round().clamp(0, decoded.height);
+    int px2 = ((br.dx - leftOff) / scale).round().clamp(0, decoded.width);
+    int py2 = ((br.dy - topOff)  / scale).round().clamp(0, decoded.height);
+
+    if (px2 <= px1 || py2 <= py1) return null;
+
+    final cropped = img.copyCrop(decoded,
+        x: px1, y: py1, width: px2 - px1, height: py2 - py1);
+    return Uint8List.fromList(img.encodePng(cropped));
   }
 
   Future<void> _captureAligned({bool silent = false}) async {
@@ -108,8 +121,8 @@ class _CompareScreenState extends State<CompareScreen>
       if (!silent) xpDlg(context, 'Ошибка', 'Загрузите оба изображения');
       return;
     }
-    final ref = await _captureView(_refKey);
-    final cmp = await _captureView(_cmpKey);
+    final ref = await _extractRegion(_refImg!, _refCtrl.value, _refViewerSize);
+    final cmp = await _extractRegion(_cmpImg!, _cmpCtrl.value, _cmpViewerSize);
     if (!mounted) return;
     setState(() {
       _refAligned = ref ?? _refImg;
@@ -503,7 +516,7 @@ class _CompareScreenState extends State<CompareScreen>
                         width: 2),
                     color: Colors.white,
                   ),
-                  child: _stacking && isRef
+                  child: _stacking
                       ? const Center(child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
@@ -714,9 +727,9 @@ class _CompareScreenState extends State<CompareScreen>
         _viewerHeader('Эталон', AppTheme.simHigh,
             _refAligned != null ? '✅' : 'масштабируй'),
         Expanded(
-            child: _photoViewer(
-                _refImg, _refCtrl, _refKey,
-                onEmpty: () => _pickImage(true))),
+            child: _photoViewer(_refImg, _refCtrl,
+                onEmpty: () => _pickImage(true),
+                onSizeChanged: (s) => _refViewerSize = s)),
       ])),
       Container(width: 1, color: AppTheme.silverDark),
       Expanded(
@@ -724,9 +737,9 @@ class _CompareScreenState extends State<CompareScreen>
         _viewerHeader('Сравниваемое', AppTheme.blue,
             _cmpAligned != null ? '✅' : 'масштабируй'),
         Expanded(
-            child: _photoViewer(
-                _cmpImg, _cmpCtrl, _cmpKey,
-                onEmpty: () => _pickImage(false))),
+            child: _photoViewer(_cmpImg, _cmpCtrl,
+                onEmpty: () => _pickImage(false),
+                onSizeChanged: (s) => _cmpViewerSize = s)),
       ])),
     ]);
   }
@@ -885,6 +898,29 @@ class _CompareScreenState extends State<CompareScreen>
                 _tableRow('Дата:', dateStr),
               ],
             )),
+        if (r.diffImage != null)
+          XpGroup(
+              label: 'Карта различий',
+              child: Column(children: [
+                Container(
+                  height: 200,
+                  color: Colors.black,
+                  child: Stack(fit: StackFit.expand, children: [
+                    if (_refAligned != null || _refImg != null)
+                      Image.memory(
+                          _refAligned ?? _refImg!, fit: BoxFit.contain),
+                    Image.memory(r.diffImage!, fit: BoxFit.contain),
+                  ]),
+                ),
+                const SizedBox(height: 8),
+                Row(children: [
+                  _legendItem(const Color(0xFF1ED21E), 'Небольшие (4–20%)'),
+                  const SizedBox(width: 8),
+                  _legendItem(const Color(0xFFFFAA00), 'Средние (20–45%)'),
+                  const SizedBox(width: 8),
+                  _legendItem(const Color(0xFFF01414), 'Сильные (>45%)'),
+                ]),
+              ])),
         XpGroup(
             label: 'AI Анализ',
             child: Column(children: [
@@ -1036,9 +1072,9 @@ class _CompareScreenState extends State<CompareScreen>
     );
   }
 
-  Widget _photoViewer(Uint8List? img, TransformationController ctrl,
-      GlobalKey key, {VoidCallback? onEmpty}) {
-    if (img == null) {
+  Widget _photoViewer(Uint8List? imageData, TransformationController ctrl,
+      {VoidCallback? onEmpty, required ValueChanged<Size> onSizeChanged}) {
+    if (imageData == null) {
       return GestureDetector(
         onTap: onEmpty,
         child: Container(
@@ -1059,27 +1095,28 @@ class _CompareScreenState extends State<CompareScreen>
         ),
       );
     }
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        RepaintBoundary(
-          key: key,
-          child: Container(
+    return LayoutBuilder(builder: (context, constraints) {
+      final size = Size(constraints.maxWidth, constraints.maxHeight);
+      WidgetsBinding.instance.addPostFrameCallback((_) => onSizeChanged(size));
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          Container(
             color: Colors.black,
             child: InteractiveViewer(
               transformationController: ctrl,
               minScale: 0.2,
               maxScale: 8.0,
-              child: Image.memory(img, fit: BoxFit.contain),
+              child: Image.memory(imageData, fit: BoxFit.contain),
             ),
           ),
-        ),
-        // Рамка захвата — IgnorePointer чтобы жесты проходили к фото
-        IgnorePointer(
-          child: CustomPaint(painter: _FrameOverlayPainter(_framePad)),
-        ),
-      ],
-    );
+          // Рамка захвата — IgnorePointer чтобы жесты проходили к фото
+          IgnorePointer(
+            child: CustomPaint(painter: _FrameOverlayPainter(_framePad)),
+          ),
+        ],
+      );
+    });
   }
 
   Widget _toggleBtn(String label, bool active, VoidCallback onTap) {
@@ -1165,6 +1202,15 @@ class _CompareScreenState extends State<CompareScreen>
                 vertical: 3, horizontal: 4),
             child: Text(val,
                 style: const TextStyle(fontSize: 11))),
+      ]);
+
+  Widget _legendItem(Color color, String label) => Row(children: [
+        Container(
+          width: 12, height: 12,
+          color: color,
+        ),
+        const SizedBox(width: 4),
+        Text(label, style: const TextStyle(fontSize: 10)),
       ]);
 
   Widget _histCell(String text, {int flex = 1, bool bold = false}) =>
