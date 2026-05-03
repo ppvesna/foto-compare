@@ -606,10 +606,17 @@ class _CompareScreenState extends State<CompareScreen>
                 if (mounted) setState(() => _alignMode = false);
               }),
           const SizedBox(width: 8),
-          if (_refAligned != null)
-            const Text('✅ захвачено',
-                style: TextStyle(
-                    fontSize: 9, color: AppTheme.simHigh)),
+          const Spacer(),
+          Text(
+            _refAligned != null
+                ? '✅ область захвачена'
+                : 'вписать объект в рамку → захватить',
+            style: TextStyle(
+                fontSize: 9,
+                color: _refAligned != null
+                    ? AppTheme.simHigh
+                    : Colors.grey),
+          ),
         ]),
       ),
 
@@ -632,7 +639,7 @@ class _CompareScreenState extends State<CompareScreen>
                   () => _cmpCtrl.value = Matrix4.identity()),
               const Spacer(),
               XpBtn(
-                  label: '📐 Захватить область',
+                  label: '📐 Захватить (фон отброшен)',
                   onPressed: _captureAligned),
             ]),
           ] else ...[
@@ -725,7 +732,7 @@ class _CompareScreenState extends State<CompareScreen>
       Expanded(
           child: Column(children: [
         _viewerHeader('Эталон', AppTheme.simHigh,
-            _refAligned != null ? '✅' : 'масштабируй'),
+            _refAligned != null ? '✅ захвачено' : 'вписать объект в рамку'),
         Expanded(
             child: _photoViewer(_refImg, _refCtrl,
                 onEmpty: () => _pickImage(true),
@@ -735,7 +742,7 @@ class _CompareScreenState extends State<CompareScreen>
       Expanded(
           child: Column(children: [
         _viewerHeader('Сравниваемое', AppTheme.blue,
-            _cmpAligned != null ? '✅' : 'масштабируй'),
+            _cmpAligned != null ? '✅ захвачено' : 'вписать объект в рамку'),
         Expanded(
             child: _photoViewer(_cmpImg, _cmpCtrl,
                 onEmpty: () => _pickImage(false),
@@ -1086,10 +1093,15 @@ class _CompareScreenState extends State<CompareScreen>
               const Text('📷',
                   style: TextStyle(fontSize: 32)),
               const SizedBox(height: 6),
-              if (onEmpty != null)
+              if (onEmpty != null) ...[
                 const Text('Нажмите для выбора',
                     style: TextStyle(
                         color: Colors.white54, fontSize: 10)),
+                const SizedBox(height: 4),
+                const Text('Вписать объект в рамку → Захватить',
+                    style: TextStyle(
+                        color: Colors.white30, fontSize: 9)),
+              ],
             ],
           )),
         ),
