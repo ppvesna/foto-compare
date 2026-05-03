@@ -71,7 +71,9 @@ class _MainShellState extends State<MainShell> {
     return Scaffold(
       body: SafeArea(
         child: Column(children: [
-          Expanded(child: _screens[_tab]),
+          Expanded(
+            child: IndexedStack(index: _tab, children: _screens),
+          ),
         ]),
       ),
       bottomNavigationBar: Container(
