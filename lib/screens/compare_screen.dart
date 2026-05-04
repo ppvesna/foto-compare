@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import '../config/app_theme.dart';
 import '../widgets/xp_widgets.dart';
 import '../services/compare_service.dart';
+import '../services/reference_storage.dart';
 import '../config/app_config.dart';
 
 class CompareScreen extends StatefulWidget {
@@ -60,10 +61,41 @@ class _CompareScreenState extends State<CompareScreen>
     {'file': 'photo_004.jpg', 'sim': 93.1, 'date': '13.04.2026'},
   ];
 
+  String? _savedRefLabel;
+
   @override
   void initState() {
     super.initState();
     _tabs = TabController(length: 4, vsync: this);
+    _loadSavedReference();
+  }
+
+  Future<void> _loadSavedReference() async {
+    final bytes = await ReferenceStorage.load();
+    final label = await ReferenceStorage.loadLabel();
+    if (bytes != null && mounted) {
+      setState(() { _refImg = bytes; _savedRefLabel = label; });
+    }
+  }
+
+  Future<void> _saveReference() async {
+    if (_refImg == null) return;
+    final now = DateTime.now();
+    final label =
+        '${now.day.toString().padLeft(2,'0')}.${now.month.toString().padLeft(2,'0')}.${now.year}';
+    await ReferenceStorage.save(_refImg!, label: label);
+    if (mounted) {
+      setState(() => _savedRefLabel = label);
+      xpDlg(context, 'Эталон сохранён', 'Будет загружаться автоматически при следующем запуске.');
+    }
+  }
+
+  Future<void> _clearReference() async {
+    final ok = await xpConfirm(context, 'Сбросить эталон',
+        'Удалить сохранённый эталон с устройства?');
+    if (!ok) return;
+    await ReferenceStorage.clear();
+    if (mounted) setState(() { _refImg = null; _savedRefLabel = null; _refAligned = null; });
   }
 
   @override
@@ -563,6 +595,29 @@ class _CompareScreenState extends State<CompareScreen>
                         onPressed: () => _pickImage(true))),
               ]),
             ])),
+        if (_savedRefLabel != null)
+          Container(
+            margin: const EdgeInsets.only(top: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: AppTheme.simHigh.withOpacity(0.08),
+              border: Border.all(color: AppTheme.simHigh.withOpacity(0.4)),
+            ),
+            child: Row(children: [
+              const Text('💾', style: TextStyle(fontSize: 14)),
+              const SizedBox(width: 6),
+              Expanded(child: Text('Эталон сохранён: $_savedRefLabel',
+                  style: const TextStyle(fontSize: 11, color: AppTheme.simHigh))),
+              XpBtn(label: '🗑 Сбросить', danger: true, onPressed: _clearReference),
+            ]),
+          ),
+        const SizedBox(height: 8),
+        Row(children: [
+          Expanded(child: XpBtn(
+              label: '💾 Сохранить эталон',
+              primary: true,
+              onPressed: _refImg != null ? _saveReference : null)),
+        ]),
         XpGroup(
             label: 'Параметры',
             child: Column(children: [

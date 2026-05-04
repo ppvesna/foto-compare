@@ -57,7 +57,47 @@ Uint8List _buildDiffImage(img.Image r, img.Image c) {
   return Uint8List.fromList(img.encodePng(out));
 }
 
-CompareResult _run(List<Uint8List> args) {
+// Нормализация яркости: приводит среднюю яркость src к targetMean эталона
+img.Image _normalizeLuminance(img.Image src, double targetMean) {
+  if (targetMean < 1) return src;
+  double sum = 0;
+  final total = src.width * src.height;
+  for (int y = 0; y < src.height; y++) {
+    for (int x = 0; x < src.width; x++) {
+      final p = src.getPixel(x, y);
+      sum += p.r * 0.299 + p.g * 0.587 + p.b * 0.114;
+    }
+  }
+  final srcMean = sum / total;
+  if (srcMean < 1) return src;
+  final scale = targetMean / srcMean;
+  final out = img.Image(width: src.width, height: src.height);
+  for (int y = 0; y < src.height; y++) {
+    for (int x = 0; x < src.width; x++) {
+      final p = src.getPixel(x, y);
+      out.setPixelRgb(x, y,
+        (p.r * scale).clamp(0, 255).toInt(),
+        (p.g * scale).clamp(0, 255).toInt(),
+        (p.b * scale).clamp(0, 255).toInt(),
+      );
+    }
+  }
+  return out;
+}
+
+double _meanLuminance(img.Image src) {
+  double sum = 0;
+  final total = src.width * src.height;
+  for (int y = 0; y < src.height; y++) {
+    for (int x = 0; x < src.width; x++) {
+      final p = src.getPixel(x, y);
+      sum += p.r * 0.299 + p.g * 0.587 + p.b * 0.114;
+    }
+  }
+  return sum / total;
+}
+
+
   final imgRef = img.decodeImage(args[0]);
   final imgCmp = img.decodeImage(args[1]);
   if (imgRef == null || imgCmp == null) {
@@ -68,10 +108,15 @@ CompareResult _run(List<Uint8List> args) {
   final iters   = kIsWeb ? 1   : AppConfig.comparisonIter;
   final sizes   = [64, 128, maxSize].take(iters).toList();
 
+  // Нормализация: приводим яркость сравниваемого к яркости эталона
+  final refThumb = _fitCrop(imgRef, maxSize);
+  final refMean  = _meanLuminance(refThumb);
+  final imgCmpNorm = _normalizeLuminance(imgCmp, refMean);
+
   double totalSim = 0;
   for (final size in sizes) {
     final r = _fitCrop(imgRef, size);
-    final c = _fitCrop(imgCmp, size);
+    final c = _fitCrop(imgCmpNorm, size);
     double diff = 0;
     for (int y = 0; y < size; y++) {
       for (int x = 0; x < size; x++) {
@@ -88,9 +133,9 @@ CompareResult _run(List<Uint8List> args) {
   }
   final similarity = (totalSim / iters).clamp(0.0, 100.0);
 
-  // Диффпиксели + карта на рабочем масштабе
-  final r2 = _fitCrop(imgRef, maxSize);
-  final c2 = _fitCrop(imgCmp, maxSize);
+  // Диффпиксели + карта на рабочем масштабе (используем нормализованное)
+  final r2 = refThumb;
+  final c2 = _fitCrop(imgCmpNorm, maxSize);
   int diffPx = 0;
   for (int y = 0; y < maxSize; y++) {
     for (int x = 0; x < maxSize; x++) {
