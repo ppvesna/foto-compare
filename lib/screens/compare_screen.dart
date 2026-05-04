@@ -1270,7 +1270,6 @@ Uint8List _stackImages(List<Uint8List> images) {
 
   final frames = decoded.map((d) => img.copyResize(d, width: w, height: h)).toList();
 
-  // Смещение (dx, dy) для каждого кадра: src.getPixel(x+dx, y+dy) ≈ ref.getPixel(x, y)
   final offsets = <(int, int)>[(0, 0)];
   for (int i = 1; i < frames.length; i++) {
     offsets.add(_findOffset(frames[0], frames[i]));
@@ -1294,43 +1293,62 @@ Uint8List _stackImages(List<Uint8List> images) {
   return Uint8List.fromList(img.encodePng(out));
 }
 
-// Поиск трансляционного смещения через SAD на миниатюре
+// Двухпроходный поиск трансляционного смещения: грубо → точно
 (int, int) _findOffset(img.Image ref, img.Image src) {
-  const thumbSize = 128;
-  const searchRange = 20;
-
-  final refT = img.copyResize(ref, width: thumbSize, height: thumbSize);
-  final srcT = img.copyResize(src, width: thumbSize, height: thumbSize);
-
-  double bestSad = double.infinity;
-  int bestDx = 0, bestDy = 0;
-
-  for (int dy = -searchRange; dy <= searchRange; dy++) {
-    for (int dx = -searchRange; dx <= searchRange; dx++) {
-      double sad = 0;
-      int count = 0;
-      for (int y = searchRange; y < thumbSize - searchRange; y += 2) {
-        for (int x = searchRange; x < thumbSize - searchRange; x += 2) {
-          final nx = x + dx;
-          final ny = y + dy;
-          if (nx < 0 || nx >= thumbSize || ny < 0 || ny >= thumbSize) continue;
-          final pr = refT.getPixel(x, y);
-          final pc = srcT.getPixel(nx, ny);
-          sad += (pr.r - pc.r).abs() + (pr.g - pc.g).abs() + (pr.b - pc.b).abs();
-          count++;
+  // Проход 1: грубый — 128×128, диапазон ±40px (~31% ширины)
+  const s1 = 128, r1 = 40;
+  final refC = img.copyResize(ref, width: s1, height: s1);
+  final srcC = img.copyResize(src, width: s1, height: s1);
+  int cx = 0, cy = 0;
+  {
+    double best = double.infinity;
+    for (int dy = -r1; dy <= r1; dy++) {
+      for (int dx = -r1; dx <= r1; dx++) {
+        double sad = 0; int n = 0;
+        for (int y = r1; y < s1 - r1; y += 2) {
+          for (int x = r1; x < s1 - r1; x += 2) {
+            final nx = x + dx; final ny = y + dy;
+            if (nx < 0 || nx >= s1 || ny < 0 || ny >= s1) continue;
+            final pr = refC.getPixel(x, y); final pc = srcC.getPixel(nx, ny);
+            sad += (pr.r-pc.r).abs() + (pr.g-pc.g).abs() + (pr.b-pc.b).abs();
+            n++;
+          }
         }
-      }
-      if (count > 0) {
-        final avg = sad / count;
-        if (avg < bestSad) { bestSad = avg; bestDx = dx; bestDy = dy; }
+        if (n > 0 && sad / n < best) { best = sad / n; cx = dx; cy = dy; }
       }
     }
   }
 
-  // Масштабируем смещение миниатюры до полного разрешения
-  final scaleX = ref.width / thumbSize;
-  final scaleY = ref.height / thumbSize;
-  return ((bestDx * scaleX).round(), (bestDy * scaleY).round());
+  // Проход 2: точный — 256×256, ±8px вокруг грубой оценки
+  const s2 = 256, r2 = 8;
+  final refF = img.copyResize(ref, width: s2, height: s2);
+  final srcF = img.copyResize(src, width: s2, height: s2);
+  final baseDx = (cx * s2 / s1).round();
+  final baseDy = (cy * s2 / s1).round();
+  int fx = baseDx, fy = baseDy;
+  {
+    double best = double.infinity;
+    const m = 40;
+    for (int dy = baseDy - r2; dy <= baseDy + r2; dy++) {
+      for (int dx = baseDx - r2; dx <= baseDx + r2; dx++) {
+        double sad = 0; int n = 0;
+        for (int y = m; y < s2 - m; y += 2) {
+          for (int x = m; x < s2 - m; x += 2) {
+            final nx = x + dx; final ny = y + dy;
+            if (nx < m || nx >= s2 - m || ny < m || ny >= s2 - m) continue;
+            final pr = refF.getPixel(x, y); final pc = srcF.getPixel(nx, ny);
+            sad += (pr.r-pc.r).abs() + (pr.g-pc.g).abs() + (pr.b-pc.b).abs();
+            n++;
+          }
+        }
+        if (n > 0 && sad / n < best) { best = sad / n; fx = dx; fy = dy; }
+      }
+    }
+  }
+
+  final scaleX = ref.width / s2;
+  final scaleY = ref.height / s2;
+  return ((fx * scaleX).round(), (fy * scaleY).round());
 }
 
 // Рамка захвата — тёмный оверлей снаружи + белая рамка внутри
