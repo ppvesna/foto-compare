@@ -1253,7 +1253,7 @@ class _RightClipper extends CustomClipper<Rect> {
   bool shouldReclip(_RightClipper o) => o.x != x;
 }
 
-// ── Усреднение серии снимков (запускается в isolate) ─
+// Усреднение серии снимков с выравниванием по первому кадру (isolate)
 Uint8List _stackImages(List<Uint8List> images) {
   final decoded = <img.Image>[];
   for (final b in images) {
@@ -1263,32 +1263,74 @@ Uint8List _stackImages(List<Uint8List> images) {
   if (decoded.isEmpty) return images.first;
   if (decoded.length == 1) return images.first;
 
-  // Resize всех к размеру первого (max 1024px)
   int w = decoded[0].width;
   int h = decoded[0].height;
   if (w > 1024) { h = (h * 1024 / w).round(); w = 1024; }
   if (h > 1024) { w = (w * 1024 / h).round(); h = 1024; }
 
-  final frames = decoded
-      .map((d) => img.copyResize(d, width: w, height: h))
-      .toList();
+  final frames = decoded.map((d) => img.copyResize(d, width: w, height: h)).toList();
+
+  // Смещение (dx, dy) для каждого кадра: src.getPixel(x+dx, y+dy) ≈ ref.getPixel(x, y)
+  final offsets = <(int, int)>[(0, 0)];
+  for (int i = 1; i < frames.length; i++) {
+    offsets.add(_findOffset(frames[0], frames[i]));
+  }
 
   final out = img.Image(width: w, height: h);
-  final n = frames.length;
-
   for (int y = 0; y < h; y++) {
     for (int x = 0; x < w; x++) {
-      int r = 0, g = 0, b = 0;
-      for (final f in frames) {
-        final p = f.getPixel(x, y);
-        r += p.r.toInt();
-        g += p.g.toInt();
-        b += p.b.toInt();
+      int r = 0, g = 0, b = 0, count = 0;
+      for (int i = 0; i < frames.length; i++) {
+        final sx = x + offsets[i].$1;
+        final sy = y + offsets[i].$2;
+        if (sx >= 0 && sx < w && sy >= 0 && sy < h) {
+          final p = frames[i].getPixel(sx, sy);
+          r += p.r.toInt(); g += p.g.toInt(); b += p.b.toInt(); count++;
+        }
       }
-      out.setPixelRgb(x, y, r ~/ n, g ~/ n, b ~/ n);
+      if (count > 0) out.setPixelRgb(x, y, r ~/ count, g ~/ count, b ~/ count);
     }
   }
   return Uint8List.fromList(img.encodePng(out));
+}
+
+// Поиск трансляционного смещения через SAD на миниатюре
+(int, int) _findOffset(img.Image ref, img.Image src) {
+  const thumbSize = 128;
+  const searchRange = 20;
+
+  final refT = img.copyResize(ref, width: thumbSize, height: thumbSize);
+  final srcT = img.copyResize(src, width: thumbSize, height: thumbSize);
+
+  double bestSad = double.infinity;
+  int bestDx = 0, bestDy = 0;
+
+  for (int dy = -searchRange; dy <= searchRange; dy++) {
+    for (int dx = -searchRange; dx <= searchRange; dx++) {
+      double sad = 0;
+      int count = 0;
+      for (int y = searchRange; y < thumbSize - searchRange; y += 2) {
+        for (int x = searchRange; x < thumbSize - searchRange; x += 2) {
+          final nx = x + dx;
+          final ny = y + dy;
+          if (nx < 0 || nx >= thumbSize || ny < 0 || ny >= thumbSize) continue;
+          final pr = refT.getPixel(x, y);
+          final pc = srcT.getPixel(nx, ny);
+          sad += (pr.r - pc.r).abs() + (pr.g - pc.g).abs() + (pr.b - pc.b).abs();
+          count++;
+        }
+      }
+      if (count > 0) {
+        final avg = sad / count;
+        if (avg < bestSad) { bestSad = avg; bestDx = dx; bestDy = dy; }
+      }
+    }
+  }
+
+  // Масштабируем смещение миниатюры до полного разрешения
+  final scaleX = ref.width / thumbSize;
+  final scaleY = ref.height / thumbSize;
+  return ((bestDx * scaleX).round(), (bestDy * scaleY).round());
 }
 
 // Рамка захвата — тёмный оверлей снаружи + белая рамка внутри
