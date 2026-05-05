@@ -9,6 +9,7 @@ import '../config/app_theme.dart';
 import '../widgets/xp_widgets.dart';
 import '../services/compare_service.dart';
 import '../services/reference_storage.dart';
+import '../services/opencv_service.dart';
 import '../config/app_config.dart';
 
 class CompareScreen extends StatefulWidget {
@@ -163,6 +164,21 @@ class _CompareScreenState extends State<CompareScreen>
     });
     if (!silent) {
       xpDlg(context, 'Готово', 'Область захвачена.');
+    }
+  }
+
+  // ── Коррекция перспективы через OpenCV ───────────
+  Future<void> _fixPerspective() async {
+    if (_cmpImg == null) {
+      xpDlg(context, 'Ошибка', 'Загрузите сравниваемое фото');
+      return;
+    }
+    final fixed = await OpenCvService.perspectiveCorrect(_cmpImg!);
+    if (!mounted) return;
+    setState(() { _cmpImg = fixed; _cmpAligned = null; });
+    if (!OpenCvService.isAvailable) {
+      xpDlg(context, 'OpenCV недоступен',
+          'Добавьте нативный плагин по инструкции в opencv_android/');
     }
   }
 
@@ -693,6 +709,8 @@ class _CompareScreenState extends State<CompareScreen>
               const SizedBox(width: 4),
               _toolBtn('⟳ Фото',
                   () => _cmpCtrl.value = Matrix4.identity()),
+              const SizedBox(width: 4),
+              _toolBtn('📐 Перспектива', _fixPerspective),
               const Spacer(),
               XpBtn(
                   label: '📐 Захватить (фон отброшен)',
@@ -930,17 +948,23 @@ class _CompareScreenState extends State<CompareScreen>
             child: Text('РЕЗУЛЬТАТ СРАВНЕНИЯ',
                 style: TextStyle(fontSize: 10, color: Colors.grey))),
         const SizedBox(height: 6),
-        Center(child: SimBadge(value: r.similarity, fontSize: 26)),
+        Center(child: SimBadge(value: r.score, fontSize: 26)),
+        if (r.ssim != null)
+          Center(child: Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text('SSIM: ${r.ssim!.toStringAsFixed(1)}%  ·  MAE: ${r.similarity.toStringAsFixed(1)}%',
+                style: const TextStyle(fontSize: 10, color: Colors.grey)),
+          )),
         const SizedBox(height: 6),
         Center(
             child: Text(
-          r.similarity >= 80
+          r.score >= 80
               ? 'Высокая схожесть'
-              : r.similarity >= 70
+              : r.score >= 70
                   ? 'Средняя схожесть'
                   : 'Низкая схожесть',
           style: TextStyle(
-              color: AppTheme.simColor(r.similarity),
+              color: AppTheme.simColor(r.score),
               fontWeight: FontWeight.bold),
         )),
         const SizedBox(height: 12),

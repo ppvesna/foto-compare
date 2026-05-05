@@ -160,6 +160,7 @@ double _meanLuminance(img.Image src) {
 
 class CompareResult {
   final double    similarity;
+  final double?   ssim;        // OpenCV SSIM (null если недоступен)
   final int       diffPixels;
   final int       totalPixels;
   final String    refSize;
@@ -168,6 +169,7 @@ class CompareResult {
 
   const CompareResult({
     required this.similarity,
+    this.ssim,
     required this.diffPixels,
     required this.totalPixels,
     required this.refSize,
@@ -176,4 +178,7 @@ class CompareResult {
   });
 
   double get diffPercent => diffPixels / totalPixels * 100;
+
+  // Итоговая метрика: SSIM если есть, иначе MAE
+  double get score => ssim ?? similarity;
 }
