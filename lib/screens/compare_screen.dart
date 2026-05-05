@@ -10,6 +10,7 @@ import '../widgets/xp_widgets.dart';
 import '../services/compare_service.dart';
 import '../services/reference_storage.dart';
 import '../services/opencv_service.dart';
+import '../services/ai_compare_service.dart';
 import '../config/app_config.dart';
 
 class CompareScreen extends StatefulWidget {
@@ -28,8 +29,10 @@ class _CompareScreenState extends State<CompareScreen>
   double _sliderPos = 0.5;
   double _opacity   = 0.5;
   String _mode      = 's'; // s=slider, d=side, o=overlay
-  bool   _comparing = false;
+  bool   _comparing  = false;
+  bool   _aiLoading  = false;
   CompareResult? _result;
+  AiAnalysis?    _aiResult;
 
   // Параметры обработки
   bool _autoScale  = true;
@@ -167,6 +170,22 @@ class _CompareScreenState extends State<CompareScreen>
     }
   }
 
+  // ── AI анализ через Claude Vision ─────────────────
+  Future<void> _runAiAnalysis() async {
+    final ref = _refAligned ?? _refImg;
+    final cmp = _cmpAligned ?? _cmpImg;
+    if (ref == null || cmp == null) return;
+    setState(() => _aiLoading = true);
+    try {
+      final analysis = await AiCompareService.analyze(ref, cmp);
+      if (mounted) setState(() => _aiResult = analysis);
+    } catch (e) {
+      if (mounted) xpDlg(context, 'Ошибка AI', e.toString());
+    } finally {
+      if (mounted) setState(() => _aiLoading = false);
+    }
+  }
+
   // ── Коррекция перспективы через OpenCV ───────────
   Future<void> _fixPerspective() async {
     if (_cmpImg == null) {
@@ -190,7 +209,7 @@ class _CompareScreenState extends State<CompareScreen>
       xpDlg(context, 'Ошибка', 'Загрузите оба изображения');
       return;
     }
-    setState(() => _comparing = true);
+    setState(() { _comparing = true; _aiResult = null; });
     try {
       final result = await CompareService.compare(ref, cmp);
       setState(() => _result = result);
@@ -1011,25 +1030,55 @@ class _CompareScreenState extends State<CompareScreen>
         XpGroup(
             label: 'AI Анализ',
             child: Column(children: [
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(8),
-                color: Colors.white,
-                child: const Text(
-                    '🤖 AI анализ доступен в Pro версии.',
-                    style: TextStyle(
-                        fontSize: 11,
-                        height: 1.6,
-                        color: Colors.grey)),
-              ),
-              const SizedBox(height: 8),
-              SizedBox(
-                  width: double.infinity,
-                  child: XpBtn(
-                    label: '🤖 AI Анализ (Pro)',
-                    onPressed: () => xpDlg(context, 'AI Анализ',
-                        'Требуется Pro план'),
-                  )),
+              if (_aiResult == null && !_aiLoading) ...[
+                const Text(
+                    'Claude Vision анализирует оба изображения и находит конкретные проблемы печати.',
+                    style: TextStyle(fontSize: 11, height: 1.6, color: Colors.grey)),
+                const SizedBox(height: 8),
+                SizedBox(
+                    width: double.infinity,
+                    child: XpBtn(
+                        label: '🤖 Запустить AI анализ',
+                        primary: true,
+                        onPressed: _runAiAnalysis)),
+              ],
+              if (_aiLoading)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    SizedBox(width: 18, height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2)),
+                    SizedBox(width: 10),
+                    Text('Claude анализирует...', style: TextStyle(fontSize: 12)),
+                  ]),
+                ),
+              if (_aiResult != null) ...[
+                _aiVerdictBadge(_aiResult!),
+                const SizedBox(height: 8),
+                if (_aiResult!.hasIssues) ...[
+                  ..._aiResult!.issues.map(_aiIssueTile),
+                  const SizedBox(height: 8),
+                ],
+                if (_aiResult!.recommendations.isNotEmpty) ...[
+                  const Text('Рекомендации:',
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 4),
+                  ..._aiResult!.recommendations.map((r) => Padding(
+                        padding: const EdgeInsets.only(bottom: 3),
+                        child: Row(crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                          const Text('• ', style: TextStyle(fontSize: 11)),
+                          Expanded(child: Text(r, style: const TextStyle(fontSize: 11, height: 1.5))),
+                        ]),
+                      )),
+                  const SizedBox(height: 8),
+                ],
+                SizedBox(
+                    width: double.infinity,
+                    child: XpBtn(
+                        label: '🔄 Повторить анализ',
+                        onPressed: _runAiAnalysis)),
+              ],
             ])),
         const SizedBox(height: 12),
         const Divider(),
@@ -1053,6 +1102,7 @@ class _CompareScreenState extends State<CompareScreen>
                         _refImg = null;
                         _cmpImg = null;
                         _result = null;
+                        _aiResult = null;
                         _refAligned = null;
                         _cmpAligned = null;
                       });
@@ -1295,6 +1345,60 @@ class _CompareScreenState extends State<CompareScreen>
             child: Text(val,
                 style: const TextStyle(fontSize: 11))),
       ]);
+
+  Widget _aiVerdictBadge(AiAnalysis ai) {
+    final colors = {
+      'отлично': AppTheme.simHigh,
+      'хорошо': AppTheme.simHigh,
+      'удовлетворительно': AppTheme.simMid,
+      'плохо': AppTheme.simLow,
+    };
+    final color = colors[ai.verdict] ?? AppTheme.simMid;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.08),
+        border: Border.all(color: color.withOpacity(0.4)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Text(ai.verdict.toUpperCase(),
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: color)),
+          const Spacer(),
+          Text('${ai.score.toStringAsFixed(0)}%',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: color)),
+        ]),
+        const SizedBox(height: 4),
+        Text(ai.summary, style: const TextStyle(fontSize: 11, height: 1.5)),
+      ]),
+    );
+  }
+
+  Widget _aiIssueTile(PrintIssue issue) {
+    final color = Color(issue.severityColor);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        border: Border(left: BorderSide(color: color, width: 3)),
+        color: color.withOpacity(0.05),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Text(issue.type, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: color)),
+          const SizedBox(width: 6),
+          Text('• ${issue.severity}', style: TextStyle(fontSize: 10, color: color)),
+          const SizedBox(width: 6),
+          Expanded(child: Text(issue.location,
+              style: const TextStyle(fontSize: 10, color: Colors.grey),
+              overflow: TextOverflow.ellipsis)),
+        ]),
+        const SizedBox(height: 3),
+        Text(issue.description, style: const TextStyle(fontSize: 11, height: 1.4)),
+      ]),
+    );
+  }
 
   Widget _legendItem(Color color, String label) => Row(children: [
         Container(
