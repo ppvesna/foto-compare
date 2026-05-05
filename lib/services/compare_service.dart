@@ -97,7 +97,7 @@ double _meanLuminance(img.Image src) {
   return sum / total;
 }
 
-
+CompareResult _run(List<Uint8List> args) {
   final imgRef = img.decodeImage(args[0]);
   final imgCmp = img.decodeImage(args[1]);
   if (imgRef == null || imgCmp == null) {
