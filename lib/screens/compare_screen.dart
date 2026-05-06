@@ -1441,29 +1441,118 @@ class _CompareScreenState extends State<CompareScreen>
   }
 
   Widget _barcodeMatchSummary() {
-    final refVals = _refBarcodes.map((b) => b.value).toSet();
-    final cmpVals = _cmpBarcodes.map((b) => b.value).toSet();
-    final matched = refVals.intersection(cmpVals).length;
-    final total   = refVals.union(cmpVals).length;
-    final allMatch = matched == total && total > 0;
-    final color = allMatch ? AppTheme.simHigh : AppTheme.simLow;
-    return Container(
-      margin: const EdgeInsets.only(top: 6),
-      padding: const EdgeInsets.all(8),
-      color: color.withOpacity(0.08),
-      child: Row(children: [
-        Icon(allMatch ? Icons.check_circle : Icons.warning,
-            size: 14, color: color),
-        const SizedBox(width: 6),
-        Text(
-          allMatch
-              ? 'Все коды совпадают ($matched/$total)'
-              : 'Совпадений: $matched из $total',
-          style: TextStyle(
-              fontSize: 11, fontWeight: FontWeight.bold, color: color),
+    final refVals = {for (final b in _refBarcodes) b.value: b};
+    final cmpVals = {for (final b in _cmpBarcodes) b.value: b};
+
+    final issues = <_BarcodeIssue>[];
+
+    // Коды есть в эталоне но нет в фото — ошибка
+    for (final v in refVals.keys) {
+      if (!cmpVals.containsKey(v)) {
+        issues.add(_BarcodeIssue.error(
+            'Код отсутствует на фото',
+            'Значение: $v (${refVals[v]!.displayFormat})'));
+      }
+    }
+
+    // Коды есть в фото но нет в эталоне — предупреждение
+    for (final v in cmpVals.keys) {
+      if (!refVals.containsKey(v)) {
+        issues.add(_BarcodeIssue.warning(
+            'Лишний код на фото',
+            'Значение: $v (${cmpVals[v]!.displayFormat})'));
+      }
+    }
+
+    // Масштаб вне нормы — предупреждение
+    for (final b in [..._refBarcodes, ..._cmpBarcodes]) {
+      if (b.scalePct > 0 && b.scalePct < b.minPct) {
+        issues.add(_BarcodeIssue.warning(
+            'Масштаб ниже минимума',
+            '${b.displayFormat}: ${b.scalePct.toStringAsFixed(0)}% '
+            '(мин. ${b.minPct.toInt()}%) — камера может не считать'));
+      }
+      if (b.scalePct > 0 && b.scalePct > b.maxPct) {
+        issues.add(_BarcodeIssue.warning(
+            'Масштаб выше максимума',
+            '${b.displayFormat}: ${b.scalePct.toStringAsFixed(0)}% '
+            '(макс. ${b.maxPct.toInt()}%)'));
+      }
+    }
+
+    final hasErrors   = issues.any((i) => i.isError);
+    final hasWarnings = issues.any((i) => !i.isError);
+    final allOk = issues.isEmpty;
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      const SizedBox(height: 6),
+      // Общий статус
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        color: allOk
+            ? AppTheme.simHigh.withOpacity(0.08)
+            : hasErrors
+                ? AppTheme.simLow.withOpacity(0.08)
+                : AppTheme.simMid.withOpacity(0.08),
+        child: Row(children: [
+          Icon(
+            allOk ? Icons.check_circle : hasErrors ? Icons.error : Icons.warning,
+            size: 16,
+            color: allOk ? AppTheme.simHigh : hasErrors ? AppTheme.simLow : AppTheme.simMid,
+          ),
+          const SizedBox(width: 8),
+          Expanded(child: Text(
+            allOk
+                ? '✅ Все коды совпадают, масштаб в норме'
+                : hasErrors
+                    ? '🔴 Обнаружены ошибки в кодах'
+                    : '🟡 Предупреждения',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+              color: allOk ? AppTheme.simHigh : hasErrors ? AppTheme.simLow : AppTheme.simMid,
+            ),
+          )),
+        ]),
+      ),
+      // Список проблем
+      ...issues.map((issue) => Container(
+        margin: const EdgeInsets.only(top: 4),
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          border: Border(left: BorderSide(
+            color: issue.isError ? AppTheme.simLow : AppTheme.simMid,
+            width: 3,
+          )),
+          color: (issue.isError ? AppTheme.simLow : AppTheme.simMid).withOpacity(0.05),
         ),
-      ]),
-    );
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Text(
+              issue.isError ? '🔴 ОШИБКА' : '🟡 ПРЕДУПРЕЖДЕНИЕ',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+                color: issue.isError ? AppTheme.simLow : AppTheme.simMid,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Expanded(child: Text(issue.title,
+                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold))),
+          ]),
+          const SizedBox(height: 2),
+          Text(issue.detail, style: const TextStyle(fontSize: 10, color: Colors.black54)),
+        ]),
+      )),
+      if (!allOk && !hasErrors && hasWarnings)
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Text(
+            'Коды совпадают, но есть предупреждения по масштабу.',
+            style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
+          ),
+        ),
+    ]);
   }
 
   Widget _aiVerdictBadge(AiAnalysis ai) {
@@ -1716,4 +1805,12 @@ class _ImgLabel extends StatelessWidget {
                 fontSize: 10,
                 fontWeight: FontWeight.bold)),
       );
+}
+
+class _BarcodeIssue {
+  final bool isError;
+  final String title;
+  final String detail;
+  const _BarcodeIssue.error(this.title, this.detail) : isError = true;
+  const _BarcodeIssue.warning(this.title, this.detail) : isError = false;
 }
