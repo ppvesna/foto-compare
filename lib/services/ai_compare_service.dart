@@ -63,9 +63,17 @@ class AiCompareService {
   // Максимальный размер base64 ~3MB (ограничение Edge Function)
   static const _maxBytes = 2 * 1024 * 1024;
 
+  static String _mediaType(Uint8List bytes) {
+    if (bytes.length >= 4 &&
+        bytes[0] == 0x89 && bytes[1] == 0x50 &&
+        bytes[2] == 0x4E && bytes[3] == 0x47) {
+      return 'image/png';
+    }
+    return 'image/jpeg';
+  }
+
   static Future<AiAnalysis> analyze(
       Uint8List ref, Uint8List cmp) async {
-    // Обрезаем если слишком большие
     final refData = ref.length > _maxBytes ? ref.sublist(0, _maxBytes) : ref;
     final cmpData = cmp.length > _maxBytes ? cmp.sublist(0, _maxBytes) : cmp;
 
@@ -74,8 +82,8 @@ class AiCompareService {
       body: {
         'refImage': base64Encode(refData),
         'cmpImage': base64Encode(cmpData),
-        'refMediaType': 'image/jpeg',
-        'cmpMediaType': 'image/jpeg',
+        'refMediaType': _mediaType(refData),
+        'cmpMediaType': _mediaType(cmpData),
       },
     );
 
