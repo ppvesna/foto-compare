@@ -1385,40 +1385,55 @@ class _CompareScreenState extends State<CompareScreen>
       ]);
 
   Widget _barcodeTile(BarcodeResult b) {
-    final pct = (b.confidence * 100).toStringAsFixed(0);
-    final color = b.confidence >= 0.95
-        ? AppTheme.simHigh
-        : b.confidence >= 0.85
-            ? AppTheme.simMid
-            : AppTheme.simLow;
+    final readColor = Color(b.readabilityColor);
+    final hasDims = b.widthPx > 0 && b.heightPx > 0;
     return Container(
-      margin: const EdgeInsets.only(bottom: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
         color: Colors.white,
         border: Border.all(color: Colors.grey.shade300),
       ),
-      child: Row(children: [
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(b.value,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // Значение + формат
+        Row(children: [
+          Expanded(
+            child: Text(b.value,
                 style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
                 overflow: TextOverflow.ellipsis),
-            Text(b.displayFormat,
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            color: AppTheme.silver,
+            child: Text(b.displayFormat,
+                style: const TextStyle(fontSize: 10, color: Colors.black54)),
+          ),
+        ]),
+        const SizedBox(height: 6),
+        // Размер + площадь
+        if (hasDims)
+          Row(children: [
+            const Icon(Icons.photo_size_select_large, size: 12, color: Colors.grey),
+            const SizedBox(width: 4),
+            Text('${b.widthPx}×${b.heightPx} px',
+                style: const TextStyle(fontSize: 10, color: Colors.grey)),
+            const SizedBox(width: 10),
+            const Icon(Icons.crop_free, size: 12, color: Colors.grey),
+            const SizedBox(width: 4),
+            Text('${b.areaPct.toStringAsFixed(1)}% площади',
                 style: const TextStyle(fontSize: 10, color: Colors.grey)),
           ]),
-        ),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-          decoration: BoxDecoration(
-            color: color.withOpacity(0.1),
-            border: Border.all(color: color),
-            borderRadius: BorderRadius.circular(3),
-          ),
-          child: Text('$pct%',
+        const SizedBox(height: 4),
+        // Считываемость камерой
+        Row(children: [
+          Icon(Icons.camera_alt, size: 12, color: readColor),
+          const SizedBox(width: 4),
+          Text('Камера: ${b.readability}',
               style: TextStyle(
-                  fontSize: 11, fontWeight: FontWeight.bold, color: color)),
-        ),
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                  color: readColor)),
+        ]),
       ]),
     );
   }
