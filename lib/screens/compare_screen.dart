@@ -11,6 +11,7 @@ import '../services/compare_service.dart';
 import '../services/reference_storage.dart';
 import '../services/opencv_service.dart';
 import '../services/ai_compare_service.dart';
+import '../services/barcode_service.dart';
 import '../config/app_config.dart';
 
 class CompareScreen extends StatefulWidget {
@@ -33,6 +34,8 @@ class _CompareScreenState extends State<CompareScreen>
   bool   _aiLoading  = false;
   CompareResult? _result;
   AiAnalysis?    _aiResult;
+  List<BarcodeResult> _refBarcodes = [];
+  List<BarcodeResult> _cmpBarcodes = [];
 
   // Параметры обработки
   bool _autoScale  = true;
@@ -214,10 +217,18 @@ class _CompareScreenState extends State<CompareScreen>
       xpDlg(context, 'Ошибка', 'Загрузите оба изображения');
       return;
     }
-    setState(() { _comparing = true; _aiResult = null; });
+    setState(() { _comparing = true; _aiResult = null; _refBarcodes = []; _cmpBarcodes = []; });
     try {
-      final result = await CompareService.compare(ref, cmp);
-      setState(() => _result = result);
+      final results = await Future.wait([
+        CompareService.compare(ref, cmp),
+        BarcodeService.scanImage(ref),
+        BarcodeService.scanImage(cmp),
+      ]);
+      setState(() {
+        _result       = results[0] as CompareResult;
+        _refBarcodes  = results[1] as List<BarcodeResult>;
+        _cmpBarcodes  = results[2] as List<BarcodeResult>;
+      });
       _tabs.animateTo(2);
     } catch (e) {
       if (mounted) xpDlg(context, 'Ошибка сравнения', e.toString());
@@ -1024,6 +1035,36 @@ class _CompareScreenState extends State<CompareScreen>
                   _legendItem(const Color(0xFFF01414), 'Сильные (>45%)'),
                 ]),
               ])),
+        if (_refBarcodes.isNotEmpty || _cmpBarcodes.isNotEmpty)
+          XpGroup(
+              label: 'Штрихкоды / QR',
+              child: Column(children: [
+                if (_refBarcodes.isNotEmpty) ...[
+                  const Text('Эталон:',
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 4),
+                  ..._refBarcodes.map(_barcodeTile),
+                  const SizedBox(height: 6),
+                ],
+                if (_cmpBarcodes.isNotEmpty) ...[
+                  const Text('Фото:',
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 4),
+                  ..._cmpBarcodes.map(_barcodeTile),
+                ],
+                if (_refBarcodes.isNotEmpty && _cmpBarcodes.isNotEmpty)
+                  _barcodeMatchSummary(),
+              ])),
+        if (_refBarcodes.isEmpty && _cmpBarcodes.isEmpty && _result != null)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(children: [
+              const Icon(Icons.qr_code, size: 14, color: Colors.grey),
+              const SizedBox(width: 6),
+              const Text('Штрихкоды не обнаружены',
+                  style: TextStyle(fontSize: 11, color: Colors.grey)),
+            ]),
+          ),
         XpGroup(
             label: 'AI Анализ',
             child: Column(children: [
@@ -1342,6 +1383,71 @@ class _CompareScreenState extends State<CompareScreen>
             child: Text(val,
                 style: const TextStyle(fontSize: 11))),
       ]);
+
+  Widget _barcodeTile(BarcodeResult b) {
+    final pct = (b.confidence * 100).toStringAsFixed(0);
+    final color = b.confidence >= 0.95
+        ? AppTheme.simHigh
+        : b.confidence >= 0.85
+            ? AppTheme.simMid
+            : AppTheme.simLow;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: Colors.grey.shade300),
+      ),
+      child: Row(children: [
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(b.value,
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                overflow: TextOverflow.ellipsis),
+            Text(b.displayFormat,
+                style: const TextStyle(fontSize: 10, color: Colors.grey)),
+          ]),
+        ),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.1),
+            border: Border.all(color: color),
+            borderRadius: BorderRadius.circular(3),
+          ),
+          child: Text('$pct%',
+              style: TextStyle(
+                  fontSize: 11, fontWeight: FontWeight.bold, color: color)),
+        ),
+      ]),
+    );
+  }
+
+  Widget _barcodeMatchSummary() {
+    final refVals = _refBarcodes.map((b) => b.value).toSet();
+    final cmpVals = _cmpBarcodes.map((b) => b.value).toSet();
+    final matched = refVals.intersection(cmpVals).length;
+    final total   = refVals.union(cmpVals).length;
+    final allMatch = matched == total && total > 0;
+    final color = allMatch ? AppTheme.simHigh : AppTheme.simLow;
+    return Container(
+      margin: const EdgeInsets.only(top: 6),
+      padding: const EdgeInsets.all(8),
+      color: color.withOpacity(0.08),
+      child: Row(children: [
+        Icon(allMatch ? Icons.check_circle : Icons.warning,
+            size: 14, color: color),
+        const SizedBox(width: 6),
+        Text(
+          allMatch
+              ? 'Все коды совпадают ($matched/$total)'
+              : 'Совпадений: $matched из $total',
+          style: TextStyle(
+              fontSize: 11, fontWeight: FontWeight.bold, color: color),
+        ),
+      ]),
+    );
+  }
 
   Widget _aiVerdictBadge(AiAnalysis ai) {
     final colors = {
