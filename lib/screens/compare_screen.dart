@@ -12,6 +12,7 @@ import '../services/reference_storage.dart';
 import '../services/opencv_service.dart';
 import '../services/ai_compare_service.dart';
 import '../services/barcode_service.dart';
+import '../services/ocr_service.dart';
 import '../config/app_config.dart';
 
 class CompareScreen extends StatefulWidget {
@@ -36,6 +37,9 @@ class _CompareScreenState extends State<CompareScreen>
   AiAnalysis?    _aiResult;
   List<BarcodeResult> _refBarcodes = [];
   List<BarcodeResult> _cmpBarcodes = [];
+  OcrResult? _refOcr;
+  OcrResult? _cmpOcr;
+  TextDiff?  _textDiff;
 
   // Параметры обработки
   bool _autoScale  = true;
@@ -217,17 +221,26 @@ class _CompareScreenState extends State<CompareScreen>
       xpDlg(context, 'Ошибка', 'Загрузите оба изображения');
       return;
     }
-    setState(() { _comparing = true; _aiResult = null; _refBarcodes = []; _cmpBarcodes = []; });
+    setState(() { _comparing = true; _aiResult = null; _refBarcodes = []; _cmpBarcodes = []; _refOcr = null; _cmpOcr = null; _textDiff = null; });
     try {
       final results = await Future.wait([
         CompareService.compare(ref, cmp),
         BarcodeService.scanImage(ref),
         BarcodeService.scanImage(cmp),
+        OcrService.recognize(ref),
+        OcrService.recognize(cmp),
       ]);
+      final refOcr = results[3] as OcrResult;
+      final cmpOcr = results[4] as OcrResult;
       setState(() {
         _result       = results[0] as CompareResult;
         _refBarcodes  = results[1] as List<BarcodeResult>;
         _cmpBarcodes  = results[2] as List<BarcodeResult>;
+        _refOcr       = refOcr;
+        _cmpOcr       = cmpOcr;
+        _textDiff     = (!refOcr.isEmpty || !cmpOcr.isEmpty)
+            ? OcrService.compareTexts(refOcr.fullText, cmpOcr.fullText)
+            : null;
       });
       _tabs.animateTo(2);
     } catch (e) {
@@ -1065,6 +1078,19 @@ class _CompareScreenState extends State<CompareScreen>
                   style: TextStyle(fontSize: 11, color: Colors.grey)),
             ]),
           ),
+        if (_textDiff != null || (_refOcr != null && !_refOcr!.isEmpty) || (_cmpOcr != null && !_cmpOcr!.isEmpty))
+          XpGroup(
+              label: 'Текст (OCR)',
+              child: _ocrSection()),
+        if (_result != null && (_refOcr == null || (_refOcr!.isEmpty && (_cmpOcr == null || _cmpOcr!.isEmpty))))
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(children: [
+              const Icon(Icons.text_fields, size: 14, color: Colors.grey),
+              const SizedBox(width: 6),
+              const Text('Текст не распознан', style: TextStyle(fontSize: 11, color: Colors.grey)),
+            ]),
+          ),
         XpGroup(
             label: 'AI Анализ',
             child: Column(children: [
@@ -1436,6 +1462,113 @@ class _CompareScreenState extends State<CompareScreen>
         // Вердикт
         Text('● ${b.scaleVerdict}',
             style: TextStyle(fontSize: 10, color: verdictColor)),
+      ]),
+    );
+  }
+
+  Widget _ocrSection() {
+    final diff = _textDiff;
+    final refText = _refOcr?.fullText.trim() ?? '';
+    final cmpText = _cmpOcr?.fullText.trim() ?? '';
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      // Совпадение
+      if (diff != null) ...[
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          color: diff.allOk
+              ? AppTheme.simHigh.withOpacity(0.08)
+              : diff.similarity >= 80
+                  ? AppTheme.simMid.withOpacity(0.08)
+                  : AppTheme.simLow.withOpacity(0.08),
+          child: Row(children: [
+            Icon(
+              diff.allOk ? Icons.check_circle : Icons.warning,
+              size: 16,
+              color: diff.allOk
+                  ? AppTheme.simHigh
+                  : diff.similarity >= 80 ? AppTheme.simMid : AppTheme.simLow,
+            ),
+            const SizedBox(width: 8),
+            Expanded(child: Text(
+              diff.allOk
+                  ? 'Текст совпадает полностью'
+                  : 'Совпадение текста: ${diff.similarity.toStringAsFixed(0)}%',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+                color: diff.allOk
+                    ? AppTheme.simHigh
+                    : diff.similarity >= 80 ? AppTheme.simMid : AppTheme.simLow,
+              ),
+            )),
+          ]),
+        ),
+        const SizedBox(height: 6),
+        // Отсутствующие слова
+        if (diff.missing.isNotEmpty)
+          _ocrDiffChips('🔴 Нет на фото', diff.missing, AppTheme.simLow),
+        // Лишние слова
+        if (diff.extra.isNotEmpty)
+          _ocrDiffChips('🟡 Лишнее на фото', diff.extra, AppTheme.simMid),
+        const SizedBox(height: 4),
+      ],
+      // Распознанный текст
+      if (refText.isNotEmpty)
+        _ocrTextBlock('Текст эталона', refText),
+      if (cmpText.isNotEmpty)
+        _ocrTextBlock('Текст фото', cmpText),
+    ]);
+  }
+
+  Widget _ocrDiffChips(String label, List<String> words, Color color) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(label, style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: color)),
+        const SizedBox(height: 4),
+        Wrap(
+          spacing: 4,
+          runSpacing: 4,
+          children: words.take(30).map((w) => Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: color.withOpacity(0.4)),
+            ),
+            child: Text(w, style: TextStyle(fontSize: 10, color: color)),
+          )).toList(),
+        ),
+        if (words.length > 30)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text('...и ещё ${words.length - 30}',
+                style: TextStyle(fontSize: 9, color: Colors.grey.shade500)),
+          ),
+      ]),
+    );
+  }
+
+  Widget _ocrTextBlock(String label, String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(label, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.black54)),
+        const SizedBox(height: 2),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: Colors.grey.shade50,
+            border: Border.all(color: Colors.grey.shade200),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(
+            text.length > 500 ? '${text.substring(0, 500)}…' : text,
+            style: const TextStyle(fontSize: 10, fontFamily: 'monospace'),
+          ),
+        ),
       ]),
     );
   }
