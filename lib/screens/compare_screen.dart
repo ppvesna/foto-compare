@@ -699,14 +699,10 @@ class _CompareScreenState extends State<CompareScreen>
           const SizedBox(width: 8),
           const Spacer(),
           Text(
-            _refAligned != null
-                ? '✅ область захвачена'
-                : 'вписать объект в рамку → захватить',
+            _refAligned != null ? '✅ захвачено' : 'вписать в рамку',
             style: TextStyle(
                 fontSize: 9,
-                color: _refAligned != null
-                    ? AppTheme.simHigh
-                    : Colors.grey),
+                color: _refAligned != null ? AppTheme.simHigh : Colors.grey),
           ),
         ]),
       ),
@@ -723,17 +719,13 @@ class _CompareScreenState extends State<CompareScreen>
         child: Column(children: [
           if (_alignMode) ...[
             Row(children: [
-              _toolBtn('⟳ Эталон',
-                  () => _refCtrl.value = Matrix4.identity()),
+              _toolBtn('⟳ Эт.', () => _refCtrl.value = Matrix4.identity()),
               const SizedBox(width: 4),
-              _toolBtn('⟳ Фото',
-                  () => _cmpCtrl.value = Matrix4.identity()),
+              _toolBtn('⟳ Фото', () => _cmpCtrl.value = Matrix4.identity()),
               const SizedBox(width: 4),
-              _toolBtn('📐 Перспектива', _fixPerspective),
+              _toolBtn('📐', _fixPerspective),
               const Spacer(),
-              XpBtn(
-                  label: '📐 Захватить (фон отброшен)',
-                  onPressed: _captureAligned),
+              XpBtn(label: '📐 Захватить', onPressed: _captureAligned),
             ]),
           ] else ...[
             Row(children: [
