@@ -722,8 +722,6 @@ class _CompareScreenState extends State<CompareScreen>
               _toolBtn('⟳ Эт.', () => _refCtrl.value = Matrix4.identity()),
               const SizedBox(width: 4),
               _toolBtn('⟳ Фото', () => _cmpCtrl.value = Matrix4.identity()),
-              const SizedBox(width: 4),
-              _toolBtn('📐', _fixPerspective),
               const Spacer(),
               XpBtn(label: '📐 Захватить', onPressed: _captureAligned),
             ]),
