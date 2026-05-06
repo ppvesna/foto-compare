@@ -1,23 +1,29 @@
-# Подключение OpenCV к Android
+# Подключение OpenCV — пошаговая инструкция
 
-## Шаг 1 — Добавить зависимость в android/app/build.gradle
+## Шаг 1 — android/app/build.gradle
+
+Добавить одну строку в `dependencies`:
 
 ```gradle
 dependencies {
-    implementation 'org.opencv:opencv:4.9.0'   // добавить эту строку
-    // ... остальные зависимости
+    implementation("org.opencv:opencv:4.9.0")   // ← добавить
 }
 ```
 
-## Шаг 2 — Скопировать OpenCvPlugin.kt
+## Шаг 2 — скопировать OpenCvPlugin.kt
 
-Скопировать файл `opencv_android/OpenCvPlugin.kt` в:
+Скопировать файл:
+```
+opencv_android/OpenCvPlugin.kt
+```
+В папку:
 ```
 android/app/src/main/kotlin/com/example/photo_compare/OpenCvPlugin.kt
 ```
-(заменить `com/example/photo_compare` на фактический пакет приложения)
 
-## Шаг 3 — Зарегистрировать плагин в MainActivity.kt
+## Шаг 3 — обновить MainActivity.kt
+
+Заменить содержимое `android/app/src/main/kotlin/com/example/photo_compare/MainActivity.kt`:
 
 ```kotlin
 package com.example.photo_compare
@@ -33,23 +39,15 @@ class MainActivity : FlutterActivity() {
 }
 ```
 
-## Шаг 4 — Запустить
+## Шаг 4 — запустить
 
 ```bash
 flutter clean
 flutter run
 ```
 
-## Что получите
+## Что появится после подключения
 
-| Функция | Описание |
-|---|---|
-| 📐 Перспектива | Автоматически выравнивает перспективу распечатки |
-| ORB выравнивание | Точное совмещение по характерным точкам |
-| SSIM метрика | Точнее MAE для оценки качества печати |
-| Обнаружение углов | Находит контур листа на фото |
-
-## Fallback
-
-Если OpenCV не подключён — приложение работает в обычном режиме.
-Кнопка «📐 Перспектива» покажет сообщение что плагин недоступен.
+- Кнопка **📐 Перспектива** в режиме Выравнивание — автоматически выправляет фото снятое под углом
+- **SSIM** метрика в результатах — точнее чем MAE
+- **ORB выравнивание** — точное совмещение по характерным точкам

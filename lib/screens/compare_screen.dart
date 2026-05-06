@@ -196,8 +196,13 @@ class _CompareScreenState extends State<CompareScreen>
     if (!mounted) return;
     setState(() { _cmpImg = fixed; _cmpAligned = null; });
     if (!OpenCvService.isAvailable) {
-      xpDlg(context, 'OpenCV недоступен',
-          'Добавьте нативный плагин по инструкции в opencv_android/');
+      xpDlg(context, 'OpenCV не подключён',
+          'Следуй инструкции в файле opencv_android/SETUP.md:\n\n'
+          '1. Добавь в android/app/build.gradle:\n'
+          '   implementation("org.opencv:opencv:4.9.0")\n\n'
+          '2. Скопируй OpenCvPlugin.kt в android/app/src/main/kotlin/com/example/photo_compare/\n\n'
+          '3. Обнови MainActivity.kt\n\n'
+          '4. flutter clean && flutter run');
     }
   }
 
@@ -722,6 +727,8 @@ class _CompareScreenState extends State<CompareScreen>
               _toolBtn('⟳ Эт.', () => _refCtrl.value = Matrix4.identity()),
               const SizedBox(width: 4),
               _toolBtn('⟳ Фото', () => _cmpCtrl.value = Matrix4.identity()),
+              const SizedBox(width: 4),
+              _toolBtn('📐 Перспектива', _fixPerspective),
               const Spacer(),
               XpBtn(label: '📐 Захватить', onPressed: _captureAligned),
             ]),
