@@ -1385,14 +1385,14 @@ class _CompareScreenState extends State<CompareScreen>
       ]);
 
   Widget _barcodeTile(BarcodeResult b) {
-    final readColor = Color(b.readabilityColor);
+    final verdictColor = Color(b.verdictColor);
     final hasDims = b.widthPx > 0 && b.heightPx > 0;
     return Container(
       margin: const EdgeInsets.only(bottom: 6),
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
         color: Colors.white,
-        border: Border.all(color: Colors.grey.shade300),
+        border: Border(left: BorderSide(color: verdictColor, width: 3)),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         // Значение + формат
@@ -1410,30 +1410,32 @@ class _CompareScreenState extends State<CompareScreen>
           ),
         ]),
         const SizedBox(height: 6),
-        // Размер + площадь
+        // Размер в пикселях
         if (hasDims)
           Row(children: [
             const Icon(Icons.photo_size_select_large, size: 12, color: Colors.grey),
             const SizedBox(width: 4),
             Text('${b.widthPx}×${b.heightPx} px',
                 style: const TextStyle(fontSize: 10, color: Colors.grey)),
-            const SizedBox(width: 10),
-            const Icon(Icons.crop_free, size: 12, color: Colors.grey),
-            const SizedBox(width: 4),
-            Text('${b.areaPct.toStringAsFixed(1)}% площади',
-                style: const TextStyle(fontSize: 10, color: Colors.grey)),
           ]),
         const SizedBox(height: 4),
-        // Считываемость камерой
+        // Масштаб % от номинала
         Row(children: [
-          Icon(Icons.camera_alt, size: 12, color: readColor),
+          Icon(Icons.straighten, size: 12, color: verdictColor),
           const SizedBox(width: 4),
-          Text('Камера: ${b.readability}',
-              style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.bold,
-                  color: readColor)),
+          Text(
+            b.scalePct > 0
+                ? 'Масштаб: ${b.scalePct.toStringAsFixed(0)}% от номинала'
+                    '  (норма ${b.minPct.toInt()}–${b.maxPct.toInt()}%)'
+                : 'Масштаб: не определён',
+            style: TextStyle(fontSize: 10, color: verdictColor,
+                fontWeight: FontWeight.bold),
+          ),
         ]),
+        const SizedBox(height: 2),
+        // Вердикт
+        Text('● ${b.scaleVerdict}',
+            style: TextStyle(fontSize: 10, color: verdictColor)),
       ]),
     );
   }
