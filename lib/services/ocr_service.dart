@@ -5,21 +5,23 @@ import 'package:path_provider/path_provider.dart';
 
 class OcrBlock {
   final String text;
-  final double left, top, right, bottom; // пиксели
+  final double left, top, right, bottom;
   const OcrBlock(this.text, this.left, this.top, this.right, this.bottom);
 }
 
 class OcrResult {
   final String fullText;
   final List<OcrBlock> blocks;
-  const OcrResult(this.fullText, this.blocks);
+  final String? error; // null = успех, строка = причина сбоя
+  const OcrResult(this.fullText, this.blocks, {this.error});
   bool get isEmpty => fullText.trim().isEmpty;
+  bool get hasError => error != null;
 }
 
 class TextDiff {
-  final List<String> missing;    // есть в эталоне, нет в фото
-  final List<String> extra;      // есть в фото, нет в эталоне
-  final double similarity;       // 0–100%
+  final List<String> missing;   // есть в эталоне, нет в фото
+  final List<String> extra;     // есть в фото, нет в эталоне
+  final double similarity;      // 0–100%
 
   const TextDiff({
     required this.missing,
@@ -39,6 +41,7 @@ class OcrService {
       tmp = File('${dir.path}/ocr_${DateTime.now().millisecondsSinceEpoch}.jpg');
       await tmp.writeAsBytes(bytes);
 
+      // latin охватывает латиницу + кириллицу в ML Kit v2
       recognizer = TextRecognizer(script: TextRecognitionScript.latin);
       final inputImage = InputImage.fromFilePath(tmp.path);
       final recognized = await recognizer.processImage(inputImage);
@@ -52,15 +55,15 @@ class OcrService {
           )).toList();
 
       return OcrResult(recognized.text, blocks);
-    } catch (_) {
-      return const OcrResult('', []);
+    } catch (e) {
+      // Возвращаем ошибку для отображения в UI
+      return OcrResult('', [], error: e.toString());
     } finally {
       await recognizer?.close();
       await tmp?.delete().catchError((_) {});
     }
   }
 
-  // Частотный diff по словам
   static TextDiff compareTexts(String ref, String cmp) {
     final refWords = _tokenize(ref);
     final cmpWords = _tokenize(cmp);
@@ -75,13 +78,11 @@ class OcrService {
       return TextDiff(missing: refWords, extra: [], similarity: 0);
     }
 
-    // Частотные карты
     final refFreq = <String, int>{};
     final cmpFreq = <String, int>{};
     for (final w in refWords) refFreq[w] = (refFreq[w] ?? 0) + 1;
     for (final w in cmpWords) cmpFreq[w] = (cmpFreq[w] ?? 0) + 1;
 
-    // Совпадения: min(refCount, cmpCount) для каждого слова
     int matched = 0;
     for (final w in refFreq.keys) {
       matched += _min(refFreq[w]!, cmpFreq[w] ?? 0);

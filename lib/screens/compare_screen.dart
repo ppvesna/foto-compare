@@ -1078,19 +1078,8 @@ class _CompareScreenState extends State<CompareScreen>
                   style: TextStyle(fontSize: 11, color: Colors.grey)),
             ]),
           ),
-        if (_textDiff != null || (_refOcr != null && !_refOcr!.isEmpty) || (_cmpOcr != null && !_cmpOcr!.isEmpty))
-          XpGroup(
-              label: 'Текст (OCR)',
-              child: _ocrSection()),
-        if (_result != null && (_refOcr == null || (_refOcr!.isEmpty && (_cmpOcr == null || _cmpOcr!.isEmpty))))
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            child: Row(children: [
-              const Icon(Icons.text_fields, size: 14, color: Colors.grey),
-              const SizedBox(width: 6),
-              const Text('Текст не распознан', style: TextStyle(fontSize: 11, color: Colors.grey)),
-            ]),
-          ),
+        if (_refOcr != null || _cmpOcr != null)
+          XpGroup(label: 'Текст (OCR)', child: _ocrSection()),
         XpGroup(
             label: 'AI Анализ',
             child: Column(children: [
@@ -1470,8 +1459,48 @@ class _CompareScreenState extends State<CompareScreen>
     final diff = _textDiff;
     final refText = _refOcr?.fullText.trim() ?? '';
     final cmpText = _cmpOcr?.fullText.trim() ?? '';
+    final refErr  = _refOcr?.error;
+    final cmpErr  = _cmpOcr?.error;
 
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      // Ошибка OCR
+      if (refErr != null || cmpErr != null)
+        Container(
+          padding: const EdgeInsets.all(8),
+          color: AppTheme.simLow.withOpacity(0.08),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Row(children: [
+              Icon(Icons.error_outline, size: 14, color: AppTheme.simLow),
+              SizedBox(width: 6),
+              Text('Ошибка OCR', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppTheme.simLow)),
+            ]),
+            if (refErr != null) ...[
+              const SizedBox(height: 4),
+              Text('Эталон: $refErr', style: const TextStyle(fontSize: 10, color: Colors.black54)),
+            ],
+            if (cmpErr != null) ...[
+              const SizedBox(height: 4),
+              Text('Фото: $cmpErr', style: const TextStyle(fontSize: 10, color: Colors.black54)),
+            ],
+            const SizedBox(height: 6),
+            const Text(
+              'Добавьте в AndroidManifest.xml внутри <application>:\n'
+              '<meta-data android:name="com.google.mlkit.vision.DEPENDENCIES" android:value="ocr"/>',
+              style: TextStyle(fontSize: 9, color: Colors.black45, fontFamily: 'monospace'),
+            ),
+          ]),
+        ),
+      // Нет текста (OCR сработал но ничего не нашёл)
+      if (refErr == null && cmpErr == null && refText.isEmpty && cmpText.isEmpty)
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 4),
+          child: Row(children: [
+            Icon(Icons.text_fields, size: 14, color: Colors.grey),
+            SizedBox(width: 6),
+            Text('Текст на изображениях не обнаружен',
+                style: TextStyle(fontSize: 11, color: Colors.grey)),
+          ]),
+        ),
       // Совпадение
       if (diff != null) ...[
         Container(
