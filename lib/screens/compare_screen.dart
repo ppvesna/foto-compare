@@ -406,16 +406,12 @@ class _CompareScreenState extends State<CompareScreen>
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: shots.length >= 2
-                    ? () => Navigator.pop(ctx)
-                    : null,
+                onPressed: null, // требует OpenCV — см. opencv_android/SETUP.md
                 style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF226622),
                     foregroundColor: Colors.white,
                     disabledBackgroundColor: Colors.grey.shade300),
-                child: Text(shots.length >= 2
-                    ? '✅ Объединить ${shots.length} снимка'
-                    : 'Нужно минимум 2 снимка'),
+                child: const Text('⚠️ Требует OpenCV (см. настройки)'),
               ),
             ),
             const SizedBox(height: 8),
