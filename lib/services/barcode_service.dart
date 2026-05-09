@@ -97,12 +97,13 @@ class BarcodeService {
       tmp = File('${dir.path}/scan_${DateTime.now().millisecondsSinceEpoch}.jpg');
       await tmp.writeAsBytes(bytes);
 
-      controller = MobileScannerController(formats: BarcodeFormat.all);
+      controller = MobileScannerController(formats: [BarcodeFormat.all]);
       final result = await controller.analyzeImage(tmp.path);
       if (result == null || result.barcodes.isEmpty) return [];
 
-      final imgW = result.image?.width.toDouble()  ?? 1;
-      final imgH = result.image?.height.toDouble() ?? 1;
+      // В mobile_scanner 5.x result.image — это Uint8List, без width/height
+      // Используем стандартную ширину фото 3000px как референс
+      const double imgW = 3000.0;
 
       return result.barcodes
           .where((b) => b.rawValue != null && b.rawValue!.isNotEmpty)
@@ -131,7 +132,7 @@ class BarcodeService {
               // Если изображение шире 2000px — это полноразмерное фото,
               // масштаб считаем напрямую
               // Иначе нормируем к стандартной ширине фото (3000px ≈ 10")
-              final refWidth = imgW > 1000 ? imgW : 3000.0;
+              final refWidth = imgW;
               final scaleFactor = refWidth / 3000.0;
               scalePct = (w / (nominalPx * scaleFactor)) * 100;
             }
