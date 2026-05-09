@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'package:image/image.dart' as img;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class AiAnalysis {
@@ -60,30 +61,33 @@ class PrintIssue {
 }
 
 class AiCompareService {
-  // Максимальный размер base64 ~3MB (ограничение Edge Function)
-  static const _maxBytes = 2 * 1024 * 1024;
+  static const _maxSide = 1024; // макс. сторона перед отправкой в AI
 
-  static String _mediaType(Uint8List bytes) {
-    if (bytes.length >= 4 &&
-        bytes[0] == 0x89 && bytes[1] == 0x50 &&
-        bytes[2] == 0x4E && bytes[3] == 0x47) {
-      return 'image/png';
+  // Ресайз + кодирование в JPEG для стабильной отправки
+  static Uint8List _prepare(Uint8List bytes) {
+    final decoded = img.decodeImage(bytes);
+    if (decoded == null) return bytes;
+    img.Image resized = decoded;
+    if (decoded.width > _maxSide || decoded.height > _maxSide) {
+      resized = decoded.width >= decoded.height
+          ? img.copyResize(decoded, width: _maxSide)
+          : img.copyResize(decoded, height: _maxSide);
     }
-    return 'image/jpeg';
+    return Uint8List.fromList(img.encodeJpg(resized, quality: 88));
   }
 
   static Future<AiAnalysis> analyze(
       Uint8List ref, Uint8List cmp) async {
-    final refData = ref.length > _maxBytes ? ref.sublist(0, _maxBytes) : ref;
-    final cmpData = cmp.length > _maxBytes ? cmp.sublist(0, _maxBytes) : cmp;
+    final refData = _prepare(ref);
+    final cmpData = _prepare(cmp);
 
     final response = await Supabase.instance.client.functions.invoke(
       'analyze-print',
       body: {
-        'refImage': base64Encode(refData),
-        'cmpImage': base64Encode(cmpData),
-        'refMediaType': _mediaType(refData),
-        'cmpMediaType': _mediaType(cmpData),
+        'refImage':     base64Encode(refData),
+        'cmpImage':     base64Encode(cmpData),
+        'refMediaType': 'image/jpeg',
+        'cmpMediaType': 'image/jpeg',
       },
     );
 
