@@ -53,6 +53,7 @@ class _CompareScreenState extends State<CompareScreen>
   Size _cmpViewerSize = Size.zero;
   Uint8List? _refAligned;
   Uint8List? _cmpAligned;
+  Uint8List? _cmpOriginal; // оригинал до перспективы (для сброса)
 
   // Отступ рамки (10% с каждой стороны = 80% центральная зона)
   static const double _framePad = 0.10;
@@ -199,9 +200,10 @@ class _CompareScreenState extends State<CompareScreen>
       xpDlg(context, 'Ошибка', 'Загрузите сравниваемое фото');
       return;
     }
-    final fixed = await OpenCvService.perspectiveCorrect(_cmpImg!);
+    final original = _cmpImg!;
+    final fixed = await OpenCvService.perspectiveCorrect(original);
     if (!mounted) return;
-    setState(() { _cmpImg = fixed; _cmpAligned = null; });
+    setState(() { _cmpOriginal = original; _cmpImg = fixed; _cmpAligned = null; });
     if (!OpenCvService.isAvailable) {
       xpDlg(context, 'OpenCV не подключён',
           'Следуй инструкции в файле opencv_android/SETUP.md:\n\n'
@@ -749,6 +751,14 @@ class _CompareScreenState extends State<CompareScreen>
               _toolBtn('⟳ Фото', () => _cmpCtrl.value = Matrix4.identity()),
               const SizedBox(width: 4),
               _toolBtn('📐 Перспектива', _fixPerspective),
+              if (_cmpOriginal != null) ...[
+                const SizedBox(width: 4),
+                _toolBtn('↩ Сброс', () => setState(() {
+                  _cmpImg = _cmpOriginal;
+                  _cmpOriginal = null;
+                  _cmpAligned = null;
+                })),
+              ],
               const Spacer(),
               XpBtn(label: '📐 Захватить', onPressed: _captureAligned),
             ]),
