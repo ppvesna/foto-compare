@@ -342,14 +342,10 @@ class _CompareScreenState extends State<CompareScreen>
               onTap: () => Navigator.pop(context, 'camera')),
           ListTile(
               leading: const Text('📸', style: TextStyle(fontSize: 20)),
-              title: const Text('Серия снимков — Premium'),
-              subtitle: const Text('AI усреднение · скоро в платной версии',
-                  style: TextStyle(fontSize: 11, color: Colors.orange)),
-              onTap: () {
-                Navigator.pop(context);
-                xpDlg(context, '⭐ Premium функция',
-                    'Объединение нескольких снимков с AI выравниванием будет доступно в платной версии.\n\nПока используйте один лучший снимок.');
-              }),
+              title: const Text('Серия снимков'),
+              subtitle: const Text('Усреднение для чистоты изображения',
+                  style: TextStyle(fontSize: 11, color: Colors.grey)),
+              onTap: () => Navigator.pop(context, 'stack')),
         ]),
       ),
     );
