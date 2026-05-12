@@ -59,7 +59,13 @@ class _CompareScreenState extends State<CompareScreen>
   double _overlayOpacity = 0.5;
   Size _overlayViewerSize = Size.zero;
 
-  // Ручное наложение на вкладке Сравнение (ref + cmp)
+  // Раздел 1 вкладки Сравнение: cmp1 + cmp2 → merge
+  Uint8List? _cmp2Img;
+  final _cmp2Ctrl = TransformationController();
+  double _cmp2Opacity = 0.5;
+  Size _cmp2ViewerSize = Size.zero;
+
+  // Раздел 2 вкладки Сравнение: ref + cmp → compare
   final _cmpOverlayCtrl = TransformationController();
   double _cmpOverlayOpacity = 0.5;
   Size _cmpOverlayViewerSize = Size.zero;
@@ -125,6 +131,7 @@ class _CompareScreenState extends State<CompareScreen>
     _refCtrl.dispose();
     _cmpCtrl.dispose();
     _overlayCtrl.dispose();
+    _cmp2Ctrl.dispose();
     _cmpOverlayCtrl.dispose();
     _previewCtrl.dispose();
     super.dispose();
@@ -203,6 +210,29 @@ class _CompareScreenState extends State<CompareScreen>
       _cmpAligned = cmp ?? _cmpImg;
     });
     _runCompare();
+  }
+
+  // ── Второй снимок сравнения: выбор ───────────────
+  Future<void> _pickCmp2(ImageSource source) async {
+    final x = await _picker.pickImage(source: source, imageQuality: 92);
+    if (x == null) return;
+    final bytes = await x.readAsBytes();
+    if (mounted) setState(() { _cmp2Img = bytes; _cmp2Ctrl.value = Matrix4.identity(); });
+  }
+
+  // ── Объединение двух снимков сравнения ────────────
+  Future<void> _mergeCmpImages() async {
+    if (_cmpImg == null || _cmp2Img == null) return;
+    setState(() => _stacking = true);
+    try {
+      final aligned = await OpenCvService.alignImages(_cmpImg!, _cmp2Img!);
+      final merged  = await compute(_averageImages, [_cmpImg!, aligned]);
+      if (mounted) setState(() { _cmpImg = merged; _cmpAligned = null; _cmp2Img = null; _cmp2Ctrl.value = Matrix4.identity(); });
+    } catch (e) {
+      if (mounted) xpDlg(context, 'Ошибка', e.toString());
+    } finally {
+      if (mounted) setState(() => _stacking = false);
+    }
   }
 
   // ── Совместить фото с эталоном и сравнить ────────
@@ -943,28 +973,32 @@ class _CompareScreenState extends State<CompareScreen>
     return SingleChildScrollView(
       padding: const EdgeInsets.all(12),
       child: Column(children: [
-        // ── Сравниваемое изображение ─────────────────
+
+        // ── Раздел 1: фото1 + фото2 → объединить ────
         XpGroup(
             label: 'Сравниваемое изображение',
-            child: Column(children: [
+            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              // Фото1 — основное
               GestureDetector(
                 onTap: () => _pickImage(false),
                 child: Container(
                   height: 200,
                   width: double.infinity,
                   color: Colors.black,
-                  child: _cmpImg != null
-                      ? Image.memory(_cmpImg!, fit: BoxFit.contain)
-                      : const Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text('📷', style: TextStyle(fontSize: 40)),
-                            SizedBox(height: 8),
-                            Text('Нажмите для выбора',
-                                style: TextStyle(fontSize: 11, color: Colors.white54)),
-                            Text('JPEG, PNG, TIFF, RAW',
-                                style: TextStyle(fontSize: 10, color: Colors.white38)),
-                          ]),
+                  child: _stacking
+                      ? const Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+                          CircularProgressIndicator(color: Colors.white),
+                          SizedBox(height: 8),
+                          Text('Объединение снимков...', style: TextStyle(fontSize: 11, color: Colors.white70)),
+                        ]))
+                      : _cmpImg != null
+                          ? Image.memory(_cmpImg!, fit: BoxFit.contain)
+                          : const Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                              Text('📷', style: TextStyle(fontSize: 40)),
+                              SizedBox(height: 8),
+                              Text('Нажмите для выбора', style: TextStyle(fontSize: 11, color: Colors.white54)),
+                              Text('JPEG, PNG, TIFF, RAW', style: TextStyle(fontSize: 10, color: Colors.white38)),
+                            ]),
                 ),
               ),
               const SizedBox(height: 8),
@@ -975,16 +1009,76 @@ class _CompareScreenState extends State<CompareScreen>
                 const SizedBox(width: 4),
                 Expanded(child: XpBtn(label: '📷 Камера',  onPressed: () => _pickImage(false))),
               ]),
+
+              // Фото2 — для объединения
+              if (_cmpImg != null) ...[
+                const SizedBox(height: 8),
+                const Divider(),
+                const SizedBox(height: 6),
+                if (_cmp2Img == null) ...[
+                  const Text('Загрузите второй снимок для объединения:',
+                      style: TextStyle(fontSize: 11, color: Colors.grey)),
+                  const SizedBox(height: 6),
+                  Row(children: [
+                    Expanded(child: XpBtn(label: '🖼️ Галерея', onPressed: () => _pickCmp2(ImageSource.gallery))),
+                    const SizedBox(width: 4),
+                    Expanded(child: XpBtn(label: '📷 Камера',  onPressed: () => _pickCmp2(ImageSource.camera))),
+                  ]),
+                ] else ...[
+                  // Overlay: фото1 (фон) + фото2 (двигается)
+                  ClipRect(
+                    child: Container(
+                      height: 240,
+                      color: Colors.black,
+                      child: LayoutBuilder(builder: (_, c) {
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          _cmp2ViewerSize = Size(c.maxWidth, c.maxHeight);
+                        });
+                        return Stack(fit: StackFit.expand, children: [
+                          Image.memory(_cmpImg!, fit: BoxFit.contain),
+                          Opacity(
+                            opacity: _cmp2Opacity,
+                            child: InteractiveViewer(
+                              transformationController: _cmp2Ctrl,
+                              boundaryMargin: const EdgeInsets.all(double.infinity),
+                              minScale: 0.1, maxScale: 6.0,
+                              child: Image.memory(_cmp2Img!, fit: BoxFit.contain),
+                            ),
+                          ),
+                          const Positioned(left: 8, top: 8, child: _ImgLabel('Фото 1')),
+                          const Positioned(right: 8, top: 8, child: _ImgLabel('Фото 2 ↕↔')),
+                        ]);
+                      }),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Row(children: [
+                    const SizedBox(width: 90, child: Text('Прозрачность:', style: TextStyle(fontSize: 11))),
+                    Expanded(child: Slider(
+                      value: _cmp2Opacity,
+                      onChanged: (v) => setState(() => _cmp2Opacity = v),
+                      activeColor: AppTheme.blue,
+                    )),
+                    Text('${(_cmp2Opacity * 100).round()}%', style: const TextStyle(fontSize: 10)),
+                  ]),
+                  Row(children: [
+                    XpBtn(label: '🗑 Убрать', danger: true,
+                        onPressed: () => setState(() { _cmp2Img = null; _cmp2Ctrl.value = Matrix4.identity(); })),
+                    const Spacer(),
+                    XpBtn(label: '🔀 OpenCV объединить', primary: true,
+                        onPressed: _stacking ? null : _mergeCmpImages),
+                  ]),
+                ],
+              ],
             ])),
 
-        // ── Наложить и совместить ────────────────────
+        // ── Раздел 2: эталон + фото → сравнить ──────
         if (_refImg != null && _cmpImg != null) ...[
           const SizedBox(height: 8),
           XpGroup(
-              label: 'Наложить и совместить',
+              label: 'Совместить с эталоном',
               child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                const Text(
-                    'Перетащите фото поверх эталона. Совместите — нажмите Сравнить.',
+                const Text('Перетащите фото поверх эталона. Совместите — нажмите Сравнить.',
                     style: TextStyle(fontSize: 11, color: Colors.grey, height: 1.5)),
                 const SizedBox(height: 8),
                 ClipRect(
@@ -996,38 +1090,31 @@ class _CompareScreenState extends State<CompareScreen>
                         _cmpOverlayViewerSize = Size(c.maxWidth, c.maxHeight);
                       });
                       return Stack(fit: StackFit.expand, children: [
-                        // Эталон — неподвижный фон
                         Image.memory(_refImg!, fit: BoxFit.contain),
-                        // Фото — перетаскиваемое наложение
                         Opacity(
                           opacity: _cmpOverlayOpacity,
                           child: InteractiveViewer(
                             transformationController: _cmpOverlayCtrl,
                             boundaryMargin: const EdgeInsets.all(double.infinity),
-                            minScale: 0.1,
-                            maxScale: 6.0,
+                            minScale: 0.1, maxScale: 6.0,
                             child: Image.memory(_cmpImg!, fit: BoxFit.contain),
                           ),
                         ),
-                        const Positioned(left: 8, top: 8,
-                            child: _ImgLabel('Эталон')),
-                        const Positioned(right: 8, top: 8,
-                            child: _ImgLabel('Фото ↕↔')),
+                        const Positioned(left: 8, top: 8, child: _ImgLabel('Эталон')),
+                        const Positioned(right: 8, top: 8, child: _ImgLabel('Фото ↕↔')),
                       ]);
                     }),
                   ),
                 ),
                 const SizedBox(height: 6),
                 Row(children: [
-                  const SizedBox(width: 90,
-                      child: Text('Прозрачность:', style: TextStyle(fontSize: 11))),
+                  const SizedBox(width: 90, child: Text('Прозрачность:', style: TextStyle(fontSize: 11))),
                   Expanded(child: Slider(
                     value: _cmpOverlayOpacity,
                     onChanged: (v) => setState(() => _cmpOverlayOpacity = v),
                     activeColor: AppTheme.blue,
                   )),
-                  Text('${(_cmpOverlayOpacity * 100).round()}%',
-                      style: const TextStyle(fontSize: 10)),
+                  Text('${(_cmpOverlayOpacity * 100).round()}%', style: const TextStyle(fontSize: 10)),
                 ]),
                 Row(children: [
                   XpBtn(label: '📐 Перспектива', onPressed: _fixPerspective),
@@ -1039,8 +1126,7 @@ class _CompareScreenState extends State<CompareScreen>
                     })),
                   ],
                   const Spacer(),
-                  XpBtn(label: '⟳', onPressed: () => setState(
-                      () => _cmpOverlayCtrl.value = Matrix4.identity())),
+                  XpBtn(label: '⟳', onPressed: () => setState(() => _cmpOverlayCtrl.value = Matrix4.identity())),
                 ]),
               ])),
         ],
@@ -1060,9 +1146,7 @@ class _CompareScreenState extends State<CompareScreen>
                 : XpBtn(
                     label: 'Сравнить ›',
                     primary: true,
-                    onPressed: _refImg != null && _cmpImg != null
-                        ? _applyCmpAndCompare
-                        : null),
+                    onPressed: _refImg != null && _cmpImg != null ? _applyCmpAndCompare : null),
           ]),
         ]),
       ]),
