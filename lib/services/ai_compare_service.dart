@@ -100,4 +100,25 @@ class AiCompareService {
 
     return AiAnalysis.fromJson(data['analysis'] as Map<String, dynamic>);
   }
+
+  // Анализ качества одного эталонного изображения
+  static Future<AiAnalysis> analyzeReference(Uint8List ref) async {
+    final refData = _prepare(ref);
+    final response = await Supabase.instance.client.functions.invoke(
+      'analyze-print',
+      body: {
+        'refImage':     base64Encode(refData),
+        'cmpImage':     base64Encode(refData), // тот же снимок
+        'refMediaType': 'image/jpeg',
+        'cmpMediaType': 'image/jpeg',
+        'mode':         'reference_quality',   // подсказка для prompt
+      },
+    );
+    if (response.status != 200) {
+      throw Exception('Ошибка сервера: ${response.status}');
+    }
+    final data = response.data as Map<String, dynamic>;
+    if (data['error'] != null) throw Exception(data['error']);
+    return AiAnalysis.fromJson(data['analysis'] as Map<String, dynamic>);
+  }
 }

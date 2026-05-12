@@ -49,6 +49,9 @@ class _CompareScreenState extends State<CompareScreen>
   Uint8List? _refAligned;
   Uint8List? _cmpAligned;
   Uint8List? _cmpOriginal; // оригинал до перспективы (для сброса)
+  Uint8List? _ref2Img;     // второй снимок эталона для объединения
+  AiAnalysis? _refAiResult;
+  bool _refAiLoading = false;
 
   // Ручное наложение на вкладке Эталон
   final _overlayCtrl = TransformationController();
@@ -193,6 +196,61 @@ class _CompareScreenState extends State<CompareScreen>
       _cmpAligned = cmp ?? _cmpImg;
     });
     _runCompare();
+  }
+
+  // ── Второй эталон: выбор ─────────────────────────
+  Future<void> _pickRef2(ImageSource source) async {
+    final x = await _picker.pickImage(source: source, imageQuality: 92);
+    if (x == null) return;
+    final bytes = await x.readAsBytes();
+    if (mounted) {
+      setState(() {
+        _ref2Img = bytes;
+        _overlayCtrl.value = Matrix4.identity();
+      });
+    }
+  }
+
+  // ── Объединение двух эталонов через OpenCV ────────
+  Future<void> _mergeRefImages() async {
+    if (_refImg == null || _ref2Img == null) return;
+    setState(() => _stacking = true);
+    try {
+      final aligned = await OpenCvService.alignImages(_refImg!, _ref2Img!);
+      final merged  = await compute(_averageImages, [_refImg!, aligned]);
+      if (!mounted) return;
+      final now = DateTime.now();
+      final label =
+          '${now.day.toString().padLeft(2,'0')}.${now.month.toString().padLeft(2,'0')}.${now.year}';
+      await ReferenceStorage.save(merged, label: label);
+      setState(() {
+        _refImg        = merged;
+        _refAligned    = null;
+        _ref2Img       = null;
+        _savedRefLabel = label;
+        _overlayCtrl.value = Matrix4.identity();
+      });
+      xpDlg(context, 'Готово', 'Два снимка объединены и сохранены как эталон.');
+    } catch (e) {
+      if (mounted) xpDlg(context, 'Ошибка', e.toString());
+    } finally {
+      if (mounted) setState(() => _stacking = false);
+    }
+  }
+
+  // ── AI анализ качества эталона ───────────────────
+  Future<void> _analyzeReferenceWithAi() async {
+    if (_refImg == null) return;
+    setState(() { _refAiLoading = true; _refAiResult = null; });
+    try {
+      // Отправляем эталон дважды — Claude оценивает его качество как образца
+      final result = await AiCompareService.analyzeReference(_refImg!);
+      if (mounted) setState(() => _refAiResult = result);
+    } catch (e) {
+      if (mounted) xpDlg(context, 'Ошибка AI', e.toString());
+    } finally {
+      if (mounted) setState(() => _refAiLoading = false);
+    }
   }
 
   // ── AI анализ через Claude Vision ─────────────────
@@ -660,68 +718,49 @@ class _CompareScreenState extends State<CompareScreen>
     return SingleChildScrollView(
       padding: const EdgeInsets.all(12),
       child: Column(children: [
+        // ── Эталонное изображение ────────────────────
         XpGroup(
             label: 'Эталонное изображение',
             child: Column(children: [
               GestureDetector(
                 onTap: () => _pickImage(true),
                 child: Container(
-                  height: 160,
+                  height: 200,
                   width: double.infinity,
-                  decoration: BoxDecoration(
-                    border: Border.all(
-                        color: _refImg != null
-                            ? AppTheme.blue
-                            : AppTheme.border,
-                        width: 2),
-                    color: Colors.white,
-                  ),
+                  color: Colors.black,
                   child: _stacking
                       ? const Center(child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            CircularProgressIndicator(),
+                            CircularProgressIndicator(color: Colors.white),
                             SizedBox(height: 8),
-                            Text('Усреднение снимков...',
-                                style: TextStyle(fontSize: 11)),
+                            Text('Объединение снимков...',
+                                style: TextStyle(fontSize: 11, color: Colors.white70)),
                           ]))
                       : _refImg != null
-                      ? Image.memory(_refImg!, fit: BoxFit.cover)
+                      ? Image.memory(_refImg!, fit: BoxFit.contain)
                       : const Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Text('🖼️',
-                                style: TextStyle(fontSize: 40)),
+                            Text('🖼️', style: TextStyle(fontSize: 40)),
                             SizedBox(height: 8),
                             Text('Нажмите для выбора',
-                                style: TextStyle(
-                                    fontSize: 11,
-                                    color: Colors.grey)),
+                                style: TextStyle(fontSize: 11, color: Colors.white54)),
                             Text('JPEG, PNG, TIFF, RAW',
-                                style: TextStyle(
-                                    fontSize: 10,
-                                    color: Colors.grey)),
+                                style: TextStyle(fontSize: 10, color: Colors.white38)),
                           ]),
                 ),
               ),
               const SizedBox(height: 8),
               Row(children: [
-                Expanded(
-                    child: XpBtn(
-                        label: '📂 Файл',
-                        onPressed: () => _pickImage(true))),
+                Expanded(child: XpBtn(label: '📂 Файл',    onPressed: () => _pickImage(true))),
                 const SizedBox(width: 4),
-                Expanded(
-                    child: XpBtn(
-                        label: '🖼️ Галерея',
-                        onPressed: () => _pickImage(true))),
+                Expanded(child: XpBtn(label: '🖼️ Галерея', onPressed: () => _pickImage(true))),
                 const SizedBox(width: 4),
-                Expanded(
-                    child: XpBtn(
-                        label: '📷 Камера',
-                        onPressed: () => _pickImage(true))),
+                Expanded(child: XpBtn(label: '📷 Камера',  onPressed: () => _pickImage(true))),
               ]),
             ])),
+
         if (_savedRefLabel != null)
           Container(
             margin: const EdgeInsets.only(top: 8),
@@ -733,7 +772,7 @@ class _CompareScreenState extends State<CompareScreen>
             child: Row(children: [
               const Text('💾', style: TextStyle(fontSize: 14)),
               const SizedBox(width: 6),
-              Expanded(child: Text('Эталон сохранён: $_savedRefLabel',
+              Expanded(child: Text('Сохранён: $_savedRefLabel',
                   style: const TextStyle(fontSize: 11, color: AppTheme.simHigh))),
               XpBtn(label: '🗑 Сбросить', danger: true, onPressed: _clearReference),
             ]),
@@ -745,96 +784,125 @@ class _CompareScreenState extends State<CompareScreen>
               primary: true,
               onPressed: _refImg != null ? _saveReference : null)),
         ]),
-        if (_cmpImg != null)
+
+        // ── Наложить и совместить ────────────────────
+        if (_refImg != null) ...[
+          const SizedBox(height: 8),
           XpGroup(
               label: 'Наложить и совместить',
-              child: Column(children: [
-                const Text(
-                    'Перетащите фото поверх эталона. Совместите — нажмите ОК.',
-                    style: TextStyle(fontSize: 11, color: Colors.grey)),
-                const SizedBox(height: 8),
-                // Overlay viewer
-                ClipRect(
-                  child: Container(
-                    height: 230,
-                    color: Colors.black,
-                    child: LayoutBuilder(builder: (_, c) {
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        _overlayViewerSize =
-                            Size(c.maxWidth, c.maxHeight);
-                      });
-                      return Stack(fit: StackFit.expand, children: [
-                        // Эталон — неподвижный фон
-                        Image.memory(_refImg!, fit: BoxFit.contain),
-                        // Сравниваемое — перетаскиваемое наложение
-                        Opacity(
-                          opacity: _overlayOpacity,
-                          child: InteractiveViewer(
-                            transformationController: _overlayCtrl,
-                            boundaryMargin:
-                                const EdgeInsets.all(double.infinity),
-                            minScale: 0.1,
-                            maxScale: 6.0,
-                            child: Image.memory(_cmpImg!,
-                                fit: BoxFit.contain),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                // Если второй снимок не загружен — кнопки выбора
+                if (_ref2Img == null) ...[
+                  const Text(
+                      'Загрузите второй снимок эталона для объединения.\n'
+                      'OpenCV выровняет и усреднит оба снимка.',
+                      style: TextStyle(fontSize: 11, color: Colors.grey, height: 1.5)),
+                  const SizedBox(height: 10),
+                  Row(children: [
+                    Expanded(child: XpBtn(
+                        label: '🖼️ Галерея',
+                        onPressed: () => _pickRef2(ImageSource.gallery))),
+                    const SizedBox(width: 4),
+                    Expanded(child: XpBtn(
+                        label: '📷 Камера',
+                        onPressed: () => _pickRef2(ImageSource.camera))),
+                  ]),
+                ] else ...[
+                  // Overlay: эталон 1 (фон) + эталон 2 (двигается)
+                  ClipRect(
+                    child: Container(
+                      height: 240,
+                      color: Colors.black,
+                      child: LayoutBuilder(builder: (_, c) {
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          _overlayViewerSize = Size(c.maxWidth, c.maxHeight);
+                        });
+                        return Stack(fit: StackFit.expand, children: [
+                          Image.memory(_refImg!, fit: BoxFit.contain),
+                          Opacity(
+                            opacity: _overlayOpacity,
+                            child: InteractiveViewer(
+                              transformationController: _overlayCtrl,
+                              boundaryMargin: const EdgeInsets.all(double.infinity),
+                              minScale: 0.1,
+                              maxScale: 6.0,
+                              child: Image.memory(_ref2Img!, fit: BoxFit.contain),
+                            ),
                           ),
-                        ),
-                        // Рамка захвата
-                        IgnorePointer(
-                          child: CustomPaint(
-                              painter:
-                                  _FrameOverlayPainter(_framePad)),
-                        ),
-                        // Подписи
-                        const Positioned(
-                            left: 8,
-                            top: 8,
-                            child: _ImgLabel('Эталон')),
-                        const Positioned(
-                            right: 8,
-                            top: 8,
-                            child: _ImgLabel('Фото ↕↔')),
-                      ]);
-                    }),
+                          const Positioned(left: 8, top: 8,
+                              child: _ImgLabel('Эталон 1')),
+                          const Positioned(right: 8, top: 8,
+                              child: _ImgLabel('Эталон 2 ↕↔')),
+                        ]);
+                      }),
+                    ),
                   ),
-                ),
+                  const SizedBox(height: 6),
+                  Row(children: [
+                    const SizedBox(width: 90,
+                        child: Text('Прозрачность:', style: TextStyle(fontSize: 11))),
+                    Expanded(child: Slider(
+                      value: _overlayOpacity,
+                      onChanged: (v) => setState(() => _overlayOpacity = v),
+                      activeColor: AppTheme.blue,
+                    )),
+                    Text('${(_overlayOpacity * 100).round()}%',
+                        style: const TextStyle(fontSize: 10)),
+                  ]),
+                  Row(children: [
+                    XpBtn(
+                        label: '🗑 Убрать',
+                        danger: true,
+                        onPressed: () => setState(() {
+                          _ref2Img = null;
+                          _overlayCtrl.value = Matrix4.identity();
+                        })),
+                    const Spacer(),
+                    XpBtn(
+                        label: '🔀 OpenCV объединить',
+                        primary: true,
+                        onPressed: _stacking ? null : _mergeRefImages),
+                  ]),
+                ],
+
+                // AI анализ эталона
+                const SizedBox(height: 8),
+                const Divider(),
                 const SizedBox(height: 6),
-                // Прозрачность наложения
-                Row(children: [
-                  const SizedBox(
-                      width: 90,
-                      child: Text('Прозрачность:',
-                          style: TextStyle(fontSize: 11))),
-                  Expanded(
-                      child: Slider(
-                    value: _overlayOpacity,
-                    onChanged: (v) =>
-                        setState(() => _overlayOpacity = v),
-                    activeColor: AppTheme.blue,
-                  )),
-                  Text('${(_overlayOpacity * 100).round()}%',
-                      style: const TextStyle(fontSize: 10)),
-                ]),
-                Row(children: [
+                if (_refAiLoading)
+                  const Center(child: Padding(
+                    padding: EdgeInsets.symmetric(vertical: 8),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      SizedBox(width: 16, height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2)),
+                      SizedBox(width: 10),
+                      Text('AI анализирует эталон...', style: TextStyle(fontSize: 11)),
+                    ]),
+                  ))
+                else if (_refAiResult != null) ...[
+                  _aiVerdictBadge(_refAiResult!),
+                  const SizedBox(height: 6),
+                  if (_refAiResult!.recommendations.isNotEmpty)
+                    ..._refAiResult!.recommendations.map((r) => Padding(
+                      padding: const EdgeInsets.only(bottom: 3),
+                      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        const Text('• ', style: TextStyle(fontSize: 11)),
+                        Expanded(child: Text(r, style: const TextStyle(fontSize: 11, height: 1.4))),
+                      ]),
+                    )),
+                  const SizedBox(height: 6),
+                  XpBtn(label: '🔄 Повторить AI анализ', onPressed: _analyzeReferenceWithAi),
+                ] else
                   XpBtn(
-                      label: '⟳ Сброс',
-                      onPressed: () => setState(
-                          () => _overlayCtrl.value =
-                              Matrix4.identity())),
-                  const Spacer(),
-                  XpBtn(
-                      label: '✅ ОК — Совместить и сравнить',
-                      primary: true,
-                      onPressed: _applyOverlayAlignment),
-                ]),
+                      label: '🤖 AI анализ качества эталона',
+                      onPressed: _refImg != null ? _analyzeReferenceWithAi : null),
               ])),
+        ],
+
         const SizedBox(height: 12),
         const Divider(),
         Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-          XpBtn(
-              label: 'Далее ›',
-              primary: true,
-              onPressed: () => _tabs.animateTo(1)),
+          XpBtn(label: 'Далее ›', primary: true, onPressed: () => _tabs.animateTo(1)),
         ]),
       ]),
     );
