@@ -225,12 +225,17 @@ class _CompareScreenState extends State<CompareScreen>
     }
     setState(() { _comparing = true; _aiResult = null; _refBarcodes = []; _cmpBarcodes = []; _refOcr = null; _cmpOcr = null; _textDiff = null; });
     try {
+      // OCR с таймаутом 15 сек — ML Kit может медленно грузить модель
+      Future<OcrResult> ocrSafe(Uint8List b) => OcrService.recognize(b)
+          .timeout(const Duration(seconds: 15),
+              onTimeout: () => OcrResult('', [], error: 'Таймаут OCR'));
+
       final results = await Future.wait([
         CompareService.compare(ref, cmp),
         BarcodeService.scanImage(ref),
         BarcodeService.scanImage(cmp),
-        OcrService.recognize(ref),
-        OcrService.recognize(cmp),
+        ocrSafe(ref),
+        ocrSafe(cmp),
       ]);
       final refOcr = results[3] as OcrResult;
       final cmpOcr = results[4] as OcrResult;
