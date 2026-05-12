@@ -770,13 +770,14 @@ class _CompareScreenState extends State<CompareScreen>
         ]),
 
         // ── Наложить и совместить ────────────────────
-        if (_refImg != null) ...[
-          const SizedBox(height: 8),
-          XpGroup(
-              label: 'Наложить и совместить',
-              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                // Если второй снимок не загружен — кнопки выбора
-                if (_ref2Img == null) ...[
+        const SizedBox(height: 8),
+        XpGroup(
+            label: 'Наложить и совместить',
+            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              if (_refImg == null) ...[
+                const Text('Сначала загрузите первый эталон выше.',
+                    style: TextStyle(fontSize: 11, color: Colors.grey)),
+              ] else if (_ref2Img == null) ...[
                   const Text(
                       'Загрузите второй снимок эталона для объединения.\n'
                       'OpenCV выровняет и усреднит оба снимка.',
@@ -881,7 +882,6 @@ class _CompareScreenState extends State<CompareScreen>
                       label: '🤖 AI анализ качества эталона',
                       onPressed: _refImg != null ? _analyzeReferenceWithAi : null),
               ])),
-        ],
 
         const SizedBox(height: 12),
         const Divider(),
