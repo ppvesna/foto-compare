@@ -617,7 +617,9 @@ class _CompareScreenState extends State<CompareScreen>
               onTap: _fixPerspective),
           XpMenuItem.sep,
           XpMenuItem(
-              label: 'AI Анализ (Pro)', icon: '🤖', disabled: true),
+              label: 'AI Анализ',
+              icon: '🤖',
+              onTap: _runAiAnalysis),
         ]),
         XpMenu(label: 'Справка', items: [
           XpMenuItem(
