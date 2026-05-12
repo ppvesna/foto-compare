@@ -263,7 +263,7 @@ class _CompareScreenState extends State<CompareScreen>
           final r = _result!;
           setState(() => _result = CompareResult(
             similarity: r.similarity,
-            ssim: ssim * 100, // OpenCV возвращает 0–1
+            ssim: ssim, // OpenCV уже возвращает 0–100
             diffPixels: r.diffPixels,
             totalPixels: r.totalPixels,
             refSize: r.refSize,
@@ -1535,56 +1535,63 @@ class _CompareScreenState extends State<CompareScreen>
   Widget _barcodeTile(BarcodeResult b) {
     final verdictColor = Color(b.verdictColor);
     final hasDims = b.widthPx > 0 && b.heightPx > 0;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 6),
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border(left: BorderSide(color: verdictColor, width: 3)),
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      elevation: 2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(6),
+        side: BorderSide(color: verdictColor, width: 2),
       ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // Значение + формат
-        Row(children: [
-          Expanded(
-            child: Text(b.value,
-                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-                overflow: TextOverflow.ellipsis),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            color: AppTheme.silver,
-            child: Text(b.displayFormat,
-                style: const TextStyle(fontSize: 10, color: Colors.black54)),
-          ),
-        ]),
-        const SizedBox(height: 6),
-        // Размер в пикселях
-        if (hasDims)
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          // Формат — крупно
           Row(children: [
-            const Icon(Icons.photo_size_select_large, size: 12, color: Colors.grey),
-            const SizedBox(width: 4),
-            Text('${b.widthPx}×${b.heightPx} px',
-                style: const TextStyle(fontSize: 10, color: Colors.grey)),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: verdictColor,
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(b.displayFormat,
+                  style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white)),
+            ),
+            const Spacer(),
+            if (hasDims)
+              Text('${b.widthPx}×${b.heightPx} px',
+                  style: const TextStyle(fontSize: 11, color: Colors.grey)),
           ]),
-        const SizedBox(height: 4),
-        // Масштаб % от номинала
-        Row(children: [
-          Icon(Icons.straighten, size: 12, color: verdictColor),
-          const SizedBox(width: 4),
-          Text(
-            b.scalePct > 0
-                ? 'Масштаб: ${b.scalePct.toStringAsFixed(0)}% от номинала'
-                    '  (норма ${b.minPct.toInt()}–${b.maxPct.toInt()}%)'
-                : 'Масштаб: не определён',
-            style: TextStyle(fontSize: 10, color: verdictColor,
-                fontWeight: FontWeight.bold),
-          ),
+          const SizedBox(height: 8),
+          // Значение — крупно
+          Text(b.value,
+              style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1.2)),
+          const SizedBox(height: 8),
+          const Divider(height: 1),
+          const SizedBox(height: 8),
+          // Масштаб
+          Row(children: [
+            Icon(Icons.straighten, size: 16, color: verdictColor),
+            const SizedBox(width: 6),
+            Expanded(child: Text(
+              b.scalePct > 0
+                  ? 'Масштаб ${b.scalePct.toStringAsFixed(0)}%'
+                      '  (норма ${b.minPct.toInt()}–${b.maxPct.toInt()}%)'
+                  : 'Масштаб не определён',
+              style: TextStyle(fontSize: 12, color: verdictColor,
+                  fontWeight: FontWeight.bold),
+            )),
+          ]),
+          const SizedBox(height: 4),
+          Text(b.scaleVerdict,
+              style: TextStyle(fontSize: 12, color: verdictColor)),
         ]),
-        const SizedBox(height: 2),
-        // Вердикт
-        Text('● ${b.scaleVerdict}',
-            style: TextStyle(fontSize: 10, color: verdictColor)),
-      ]),
+      ),
     );
   }
 
