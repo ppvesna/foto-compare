@@ -60,26 +60,38 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         val mat = bytesToMat(bytes)
         val gray = Mat()
         Imgproc.cvtColor(mat, gray, Imgproc.COLOR_BGR2GRAY)
-        Imgproc.GaussianBlur(gray, gray, Size(5.0, 5.0), 0.0)
-        Imgproc.Canny(gray, gray, 75.0, 200.0)
 
-        val kernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(3.0, 3.0))
-        Imgproc.dilate(gray, gray, kernel)
+        // Более мягкие параметры для реальных фотографий
+        Imgproc.GaussianBlur(gray, gray, Size(9.0, 9.0), 0.0)
+        Imgproc.Canny(gray, gray, 30.0, 100.0)
+
+        // Закрываем разрывы контуров
+        val kernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(5.0, 5.0))
+        Imgproc.dilate(gray, gray, kernel, Point(-1.0, -1.0), 2)
+        Imgproc.erode(gray, gray, kernel, Point(-1.0, -1.0), 1)
 
         val contours = ArrayList<MatOfPoint>()
-        Imgproc.findContours(gray, contours, Mat(), Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE)
+        Imgproc.findContours(
+            gray, contours, Mat(),
+            Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE
+        )
 
         val imgArea = mat.width().toDouble() * mat.height()
-        val quad = contours
-            .map { c -> Pair(c, MatOfPoint2f(*c.toArray())) }
-            .mapNotNull { (_, c2f) ->
-                val approx = MatOfPoint2f()
-                val peri = Imgproc.arcLength(c2f, true)
-                Imgproc.approxPolyDP(c2f, approx, 0.02 * peri, true)
-                if (approx.rows() == 4) approx else null
-            }
-            .filter { Imgproc.contourArea(it) > imgArea * 0.1 }
-            .maxByOrNull { Imgproc.contourArea(it) }
+
+        // Пробуем разные epsilon пока не найдём четырёхугольник
+        var quad: MatOfPoint2f? = null
+        for (eps in listOf(0.02, 0.03, 0.04, 0.05, 0.06)) {
+            quad = contours
+                .map { c ->
+                    val c2f = MatOfPoint2f(*c.toArray())
+                    val approx = MatOfPoint2f()
+                    Imgproc.approxPolyDP(c2f, approx, eps * Imgproc.arcLength(c2f, true), true)
+                    approx
+                }
+                .filter { it.rows() == 4 && Imgproc.contourArea(it) > imgArea * 0.15 }
+                .maxByOrNull { Imgproc.contourArea(it) }
+            if (quad != null) break
+        }
 
         if (quad == null) return matToBytes(mat)
 
@@ -95,6 +107,11 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             sqrt((tl.x - bl.x).pow(2) + (tl.y - bl.y).pow(2))
         )
 
+        // Отбрасываем явно некорректные результаты
+        if (ww < 50 || hh < 50 || ww > mat.width() * 2 || hh > mat.height() * 2) {
+            return matToBytes(mat)
+        }
+
         val dst = MatOfPoint2f(
             Point(0.0, 0.0), Point(ww - 1, 0.0),
             Point(ww - 1, hh - 1), Point(0.0, hh - 1)
@@ -107,12 +124,15 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     }
 
     private fun orderPoints(pts: Array<Point>): List<Point> {
-        val sorted = pts.sortedBy { it.x + it.y }
-        val tl = sorted.first()
-        val br = sorted.last()
-        val remaining = pts.filter { it != tl && it != br }
-        val tr = remaining.minByOrNull { it.x - it.y }!!
-        val bl = remaining.maxByOrNull { it.x - it.y }!!
+        // TL = наименьшая сумма x+y, BR = наибольшая
+        val sumSorted = pts.sortedBy { it.x + it.y }
+        val tl = sumSorted[0]
+        val br = sumSorted[3]
+        // TR = наибольшая разница x-y, BL = наименьшая
+        // (TR: x велик, y мал → x-y велико; BL: x мал, y велик → x-y мало)
+        val diffSorted = pts.sortedBy { it.x - it.y }
+        val bl = diffSorted[0]
+        val tr = diffSorted[3]
         return listOf(tl, tr, br, bl)
     }
 
