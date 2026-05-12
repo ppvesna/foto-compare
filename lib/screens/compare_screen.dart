@@ -125,6 +125,7 @@ class _CompareScreenState extends State<CompareScreen>
     _refCtrl.dispose();
     _cmpCtrl.dispose();
     _overlayCtrl.dispose();
+    _cmpOverlayCtrl.dispose();
     _previewCtrl.dispose();
     super.dispose();
   }
@@ -201,6 +202,24 @@ class _CompareScreenState extends State<CompareScreen>
       _refAligned = ref ?? _refImg;
       _cmpAligned = cmp ?? _cmpImg;
     });
+    _runCompare();
+  }
+
+  // ── Совместить фото с эталоном и сравнить ────────
+  Future<void> _applyCmpAndCompare() async {
+    if (_refImg == null || _cmpImg == null) return;
+    if (_cmpOverlayViewerSize != Size.zero) {
+      final ref = await _extractRegion(
+          _refImg!, Matrix4.identity(), _cmpOverlayViewerSize);
+      final cmp = await _extractRegion(
+          _cmpImg!, _cmpOverlayCtrl.value, _cmpOverlayViewerSize);
+      if (mounted) {
+        setState(() {
+          _refAligned = ref ?? _refImg;
+          _cmpAligned = cmp ?? _cmpImg;
+        });
+      }
+    }
     _runCompare();
   }
 
@@ -921,145 +940,133 @@ class _CompareScreenState extends State<CompareScreen>
 
   // ── Таб: Сравнение ────────────────────────────────
   Widget _tabCmp() {
-    return Column(children: [
-      // Переключатель режима
-      Container(
-        color: AppTheme.silver,
-        padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
-        child: Row(children: [
-          _toggleBtn(
-              '📐 Выравнивание',
-              _alignMode,
-              () => setState(() => _alignMode = true)),
-          const SizedBox(width: 4),
-          _toggleBtn(
-              '👁 Просмотр',
-              !_alignMode,
-              () async {
-                // Захватываем рамку перед показом сравнения
-                await _captureAligned(silent: true);
-                if (mounted) setState(() => _alignMode = false);
-              }),
-          const SizedBox(width: 8),
-          const Spacer(),
-          Text(
-            _refAligned != null ? '✅ захвачено' : 'вписать в рамку',
-            style: TextStyle(
-                fontSize: 9,
-                color: _refAligned != null ? AppTheme.simHigh : Colors.grey),
-          ),
-        ]),
-      ),
-
-      // Основная область
-      Expanded(
-          child: _alignMode ? _alignmentView() : _comparisonView()),
-
-      // Панель управления
-      Container(
-        color: AppTheme.silver,
-        padding:
-            const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        child: Column(children: [
-          if (_alignMode) ...[
-            Row(children: [
-              _toolBtn('⟳ Эт.', () => _refCtrl.value = Matrix4.identity()),
-              const SizedBox(width: 4),
-              _toolBtn('⟳ Фото', () => _cmpCtrl.value = Matrix4.identity()),
-              const SizedBox(width: 4),
-              _toolBtn('📐 Перспектива', _fixPerspective),
-              if (_cmpOriginal != null || _refOriginal != null) ...[
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(12),
+      child: Column(children: [
+        // ── Сравниваемое изображение ─────────────────
+        XpGroup(
+            label: 'Сравниваемое изображение',
+            child: Column(children: [
+              GestureDetector(
+                onTap: () => _pickImage(false),
+                child: Container(
+                  height: 200,
+                  width: double.infinity,
+                  color: Colors.black,
+                  child: _cmpImg != null
+                      ? Image.memory(_cmpImg!, fit: BoxFit.contain)
+                      : const Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text('📷', style: TextStyle(fontSize: 40)),
+                            SizedBox(height: 8),
+                            Text('Нажмите для выбора',
+                                style: TextStyle(fontSize: 11, color: Colors.white54)),
+                            Text('JPEG, PNG, TIFF, RAW',
+                                style: TextStyle(fontSize: 10, color: Colors.white38)),
+                          ]),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(children: [
+                Expanded(child: XpBtn(label: '📂 Файл',    onPressed: () => _pickImage(false))),
                 const SizedBox(width: 4),
-                _toolBtn('↩ Сброс', () => setState(() {
-                  if (_refOriginal != null) { _refImg = _refOriginal; _refOriginal = null; _refAligned = null; }
-                  if (_cmpOriginal != null) { _cmpImg = _cmpOriginal; _cmpOriginal = null; _cmpAligned = null; }
-                })),
-              ],
-              const Spacer(),
-              XpBtn(label: '📐 Захватить', onPressed: _captureAligned),
-            ]),
-          ] else ...[
-            Row(children: [
-              _toolBtn('−', () => _zoomView(0.8)),
-              const SizedBox(width: 4),
-              _toolBtn('+', () => _zoomView(1.25)),
-              const SizedBox(width: 4),
-              _toolBtn('↺',
-                  () => setState(() => _rotation = (_rotation + 90) % 360)),
-              const SizedBox(width: 4),
-              _toolBtn('⟳', () {
-                setState(() { _rotation = 0; _zoom = 1.0; });
-              }),
-              const Spacer(),
-              const Text('Режим:',
-                  style: TextStyle(fontSize: 11)),
-              const SizedBox(width: 4),
-              _modeBtn('s', '🔄 Слайдер'),
-              const SizedBox(width: 4),
-              _modeBtn('d', '◀▶'),
-              const SizedBox(width: 4),
-              _modeBtn('o', '🔲'),
-            ]),
-            if (_mode == 'o') ...[
-              const SizedBox(height: 4),
-              Row(children: [
-                const Text('Прозрачность:',
-                    style: TextStyle(fontSize: 10)),
-                Expanded(
-                    child: Slider(
-                  value: _opacity,
-                  onChanged: (v) =>
-                      setState(() => _opacity = v),
-                  activeColor: AppTheme.blue,
-                  inactiveColor: AppTheme.silverDark,
-                )),
+                Expanded(child: XpBtn(label: '🖼️ Галерея', onPressed: () => _pickImage(false))),
+                const SizedBox(width: 4),
+                Expanded(child: XpBtn(label: '📷 Камера',  onPressed: () => _pickImage(false))),
               ]),
-            ],
-            if (_mode == 's') ...[
-              const SizedBox(height: 4),
-              Row(children: [
-                const Text('◀',
-                    style: TextStyle(fontSize: 10)),
-                Expanded(
-                    child: Slider(
-                  value: _sliderPos,
-                  onChanged: (v) =>
-                      setState(() => _sliderPos = v),
-                  activeColor: AppTheme.blue,
-                  inactiveColor: AppTheme.silverDark,
-                )),
-                const Text('▶',
-                    style: TextStyle(fontSize: 10)),
-              ]),
-            ],
-          ],
-          const Divider(height: 10),
-          Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                XpBtn(
-                    label: '‹ Эталон',
-                    onPressed: () => _tabs.animateTo(0)),
+            ])),
+
+        // ── Наложить и совместить ────────────────────
+        if (_refImg != null && _cmpImg != null) ...[
+          const SizedBox(height: 8),
+          XpGroup(
+              label: 'Наложить и совместить',
+              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                const Text(
+                    'Перетащите фото поверх эталона. Совместите — нажмите Сравнить.',
+                    style: TextStyle(fontSize: 11, color: Colors.grey, height: 1.5)),
+                const SizedBox(height: 8),
+                ClipRect(
+                  child: Container(
+                    height: 240,
+                    color: Colors.black,
+                    child: LayoutBuilder(builder: (_, c) {
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        _cmpOverlayViewerSize = Size(c.maxWidth, c.maxHeight);
+                      });
+                      return Stack(fit: StackFit.expand, children: [
+                        // Эталон — неподвижный фон
+                        Image.memory(_refImg!, fit: BoxFit.contain),
+                        // Фото — перетаскиваемое наложение
+                        Opacity(
+                          opacity: _cmpOverlayOpacity,
+                          child: InteractiveViewer(
+                            transformationController: _cmpOverlayCtrl,
+                            boundaryMargin: const EdgeInsets.all(double.infinity),
+                            minScale: 0.1,
+                            maxScale: 6.0,
+                            child: Image.memory(_cmpImg!, fit: BoxFit.contain),
+                          ),
+                        ),
+                        const Positioned(left: 8, top: 8,
+                            child: _ImgLabel('Эталон')),
+                        const Positioned(right: 8, top: 8,
+                            child: _ImgLabel('Фото ↕↔')),
+                      ]);
+                    }),
+                  ),
+                ),
+                const SizedBox(height: 6),
                 Row(children: [
-                  if (_result != null) ...[
-                    SimBadge(value: _result!.similarity),
-                    const SizedBox(width: 8),
-                  ],
-                  _comparing
-                      ? const SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2))
-                      : XpBtn(
-                          label: 'Сравнить ›',
-                          primary: true,
-                          onPressed: _runCompare),
+                  const SizedBox(width: 90,
+                      child: Text('Прозрачность:', style: TextStyle(fontSize: 11))),
+                  Expanded(child: Slider(
+                    value: _cmpOverlayOpacity,
+                    onChanged: (v) => setState(() => _cmpOverlayOpacity = v),
+                    activeColor: AppTheme.blue,
+                  )),
+                  Text('${(_cmpOverlayOpacity * 100).round()}%',
+                      style: const TextStyle(fontSize: 10)),
                 ]),
-              ]),
+                Row(children: [
+                  XpBtn(label: '📐 Перспектива', onPressed: _fixPerspective),
+                  if (_refOriginal != null || _cmpOriginal != null) ...[
+                    const SizedBox(width: 4),
+                    XpBtn(label: '↩ Сброс', onPressed: () => setState(() {
+                      if (_refOriginal != null) { _refImg = _refOriginal; _refOriginal = null; _refAligned = null; }
+                      if (_cmpOriginal != null) { _cmpImg = _cmpOriginal; _cmpOriginal = null; _cmpAligned = null; }
+                    })),
+                  ],
+                  const Spacer(),
+                  XpBtn(label: '⟳', onPressed: () => setState(
+                      () => _cmpOverlayCtrl.value = Matrix4.identity())),
+                ]),
+              ])),
+        ],
+
+        const SizedBox(height: 12),
+        const Divider(),
+        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          XpBtn(label: '‹ Эталон', onPressed: () => _tabs.animateTo(0)),
+          Row(children: [
+            if (_result != null) ...[
+              SimBadge(value: _result!.score),
+              const SizedBox(width: 8),
+            ],
+            _comparing
+                ? const SizedBox(width: 24, height: 24,
+                    child: CircularProgressIndicator(strokeWidth: 2))
+                : XpBtn(
+                    label: 'Сравнить ›',
+                    primary: true,
+                    onPressed: _refImg != null && _cmpImg != null
+                        ? _applyCmpAndCompare
+                        : null),
+          ]),
         ]),
-      ),
-    ]);
+      ]),
+    );
   }
 
   // ── Вид: Выравнивание (два независимых вьювера) ───
