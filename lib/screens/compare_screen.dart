@@ -408,12 +408,16 @@ class _CompareScreenState extends State<CompareScreen>
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: null, // требует OpenCV — см. opencv_android/SETUP.md
+                onPressed: shots.length >= 2
+                    ? () => Navigator.pop(ctx)
+                    : null,
                 style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF226622),
                     foregroundColor: Colors.white,
                     disabledBackgroundColor: Colors.grey.shade300),
-                child: const Text('⚠️ Требует OpenCV (см. настройки)'),
+                child: Text(shots.length >= 2
+                    ? '✅ Объединить ${shots.length} снимка'
+                    : 'Нужно минимум 2 снимка'),
               ),
             ),
             const SizedBox(height: 8),
@@ -426,7 +430,14 @@ class _CompareScreenState extends State<CompareScreen>
 
     setState(() => _stacking = true);
     try {
-      final result = await compute(_stackImages, shots);
+      // Шаг 1: выравниваем через OpenCV ORB (основной поток)
+      final aligned = <Uint8List>[shots[0]];
+      for (int i = 1; i < shots.length; i++) {
+        final a = await OpenCvService.alignImages(shots[0], shots[i]);
+        aligned.add(a);
+      }
+      // Шаг 2: усредняем пиксели в isolate
+      final result = await compute(_averageImages, aligned);
       if (mounted) {
         setState(() {
           if (isRef) { _refImg = result; _refAligned = null; }
@@ -1814,6 +1825,38 @@ class _RightClipper extends CustomClipper<Rect> {
 }
 
 // Усреднение серии снимков с выравниванием по первому кадру (isolate)
+// Простое усреднение пикселей (изображения уже выровнены через OpenCV)
+Uint8List _averageImages(List<Uint8List> images) {
+  final decoded = <img.Image>[];
+  for (final b in images) {
+    final d = img.decodeImage(b);
+    if (d != null) decoded.add(d);
+  }
+  if (decoded.isEmpty) return images.first;
+  if (decoded.length == 1) return images.first;
+
+  int w = decoded[0].width;
+  int h = decoded[0].height;
+  if (w > 1024) { h = (h * 1024 / w).round(); w = 1024; }
+  if (h > 1024) { w = (w * 1024 / h).round(); h = 1024; }
+
+  final frames = decoded.map((d) => img.copyResize(d, width: w, height: h)).toList();
+  final out = img.Image(width: w, height: h);
+
+  for (int y = 0; y < h; y++) {
+    for (int x = 0; x < w; x++) {
+      int r = 0, g = 0, b = 0;
+      for (final f in frames) {
+        final p = f.getPixel(x, y);
+        r += p.r.toInt(); g += p.g.toInt(); b += p.b.toInt();
+      }
+      final n = frames.length;
+      out.setPixelRgb(x, y, r ~/ n, g ~/ n, b ~/ n);
+    }
+  }
+  return Uint8List.fromList(img.encodePng(out));
+}
+
 Uint8List _stackImages(List<Uint8List> images) {
   final decoded = <img.Image>[];
   for (final b in images) {
