@@ -55,6 +55,11 @@ class _CompareScreenState extends State<CompareScreen>
   Uint8List? _cmpAligned;
   Uint8List? _cmpOriginal; // оригинал до перспективы (для сброса)
 
+  // Ручное наложение на вкладке Эталон
+  final _overlayCtrl = TransformationController();
+  double _overlayOpacity = 0.5;
+  Size _overlayViewerSize = Size.zero;
+
   // Отступ рамки (10% с каждой стороны = 80% центральная зона)
   static const double _framePad = 0.10;
 
@@ -115,6 +120,7 @@ class _CompareScreenState extends State<CompareScreen>
     _tabs.dispose();
     _refCtrl.dispose();
     _cmpCtrl.dispose();
+    _overlayCtrl.dispose();
     _previewCtrl.dispose();
     super.dispose();
   }
@@ -178,6 +184,22 @@ class _CompareScreenState extends State<CompareScreen>
     }
   }
 
+  // ── Ручное наложение → совмещение → сравнение ────
+  Future<void> _applyOverlayAlignment() async {
+    if (_refImg == null || _cmpImg == null) return;
+    if (_overlayViewerSize == Size.zero) return;
+    final ref = await _extractRegion(
+        _refImg!, Matrix4.identity(), _overlayViewerSize);
+    final cmp = await _extractRegion(
+        _cmpImg!, _overlayCtrl.value, _overlayViewerSize);
+    if (!mounted) return;
+    setState(() {
+      _refAligned = ref ?? _refImg;
+      _cmpAligned = cmp ?? _cmpImg;
+    });
+    _runCompare();
+  }
+
   // ── AI анализ через Claude Vision ─────────────────
   Future<void> _runAiAnalysis() async {
     final ref = _refAligned ?? _refImg;
@@ -239,6 +261,22 @@ class _CompareScreenState extends State<CompareScreen>
       if (!mounted) return;
       setState(() { _result = compareResult; _comparing = false; });
       _tabs.animateTo(2);
+
+      // OpenCV SSIM — точнее MAE, обновляем результат если доступен
+      OpenCvService.ssim(ref, cmp).then((ssim) {
+        if (ssim != null && ssim > 0 && mounted && _result != null) {
+          final r = _result!;
+          setState(() => _result = CompareResult(
+            similarity: r.similarity,
+            ssim: ssim * 100, // OpenCV возвращает 0–1
+            diffPixels: r.diffPixels,
+            totalPixels: r.totalPixels,
+            refSize: r.refSize,
+            cmpSize: r.cmpSize,
+            diffImage: r.diffImage,
+          ));
+        }
+      }).catchError((_) {});
 
       // Фаза 2: штрихкоды + OCR — фоном, обновляем результат когда готово
       Future<OcrResult> ocrSafe(Uint8List b) => OcrService.recognize(b)
@@ -716,6 +754,89 @@ class _CompareScreenState extends State<CompareScreen>
               primary: true,
               onPressed: _refImg != null ? _saveReference : null)),
         ]),
+        if (_cmpImg != null)
+          XpGroup(
+              label: 'Наложить и совместить',
+              child: Column(children: [
+                const Text(
+                    'Перетащите фото поверх эталона. Совместите — нажмите ОК.',
+                    style: TextStyle(fontSize: 11, color: Colors.grey)),
+                const SizedBox(height: 8),
+                // Overlay viewer
+                ClipRect(
+                  child: Container(
+                    height: 230,
+                    color: Colors.black,
+                    child: LayoutBuilder(builder: (_, c) {
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        _overlayViewerSize =
+                            Size(c.maxWidth, c.maxHeight);
+                      });
+                      return Stack(fit: StackFit.expand, children: [
+                        // Эталон — неподвижный фон
+                        Image.memory(_refImg!, fit: BoxFit.contain),
+                        // Сравниваемое — перетаскиваемое наложение
+                        Opacity(
+                          opacity: _overlayOpacity,
+                          child: InteractiveViewer(
+                            transformationController: _overlayCtrl,
+                            boundaryMargin:
+                                const EdgeInsets.all(double.infinity),
+                            minScale: 0.1,
+                            maxScale: 6.0,
+                            child: Image.memory(_cmpImg!,
+                                fit: BoxFit.contain),
+                          ),
+                        ),
+                        // Рамка захвата
+                        IgnorePointer(
+                          child: CustomPaint(
+                              painter:
+                                  _FrameOverlayPainter(_framePad)),
+                        ),
+                        // Подписи
+                        const Positioned(
+                            left: 8,
+                            top: 8,
+                            child: _ImgLabel('Эталон')),
+                        const Positioned(
+                            right: 8,
+                            top: 8,
+                            child: _ImgLabel('Фото ↕↔')),
+                      ]);
+                    }),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                // Прозрачность наложения
+                Row(children: [
+                  const SizedBox(
+                      width: 90,
+                      child: Text('Прозрачность:',
+                          style: TextStyle(fontSize: 11))),
+                  Expanded(
+                      child: Slider(
+                    value: _overlayOpacity,
+                    onChanged: (v) =>
+                        setState(() => _overlayOpacity = v),
+                    activeColor: AppTheme.blue,
+                  )),
+                  Text('${(_overlayOpacity * 100).round()}%',
+                      style: const TextStyle(fontSize: 10)),
+                ]),
+                Row(children: [
+                  XpBtn(
+                      label: '⟳ Сброс',
+                      onPressed: () => setState(
+                          () => _overlayCtrl.value =
+                              Matrix4.identity())),
+                  const Spacer(),
+                  XpBtn(
+                      label: '✅ ОК — Совместить и сравнить',
+                      primary: true,
+                      onPressed: _applyOverlayAlignment),
+                ]),
+              ])),
         XpGroup(
             label: 'Параметры',
             child: Column(children: [
