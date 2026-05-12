@@ -28,9 +28,6 @@ class _CompareScreenState extends State<CompareScreen>
   Uint8List? _refImg;
   Uint8List? _cmpImg;
   final _picker = ImagePicker();
-  double _sliderPos = 0.5;
-  double _opacity   = 0.5;
-  String _mode      = 's'; // s=slider, d=side, o=overlay
   bool   _comparing  = false;
   bool   _aiLoading  = false;
   CompareResult? _result;
@@ -41,11 +38,6 @@ class _CompareScreenState extends State<CompareScreen>
   OcrResult? _cmpOcr;
   TextDiff?  _textDiff;
 
-  // Выравнивание — независимые контроллеры для каждого фото
-  final _refCtrl = TransformationController();
-  final _cmpCtrl = TransformationController();
-  Size _refViewerSize = Size.zero;
-  Size _cmpViewerSize = Size.zero;
   Uint8List? _refAligned;
   Uint8List? _cmpAligned;
   Uint8List? _refOriginal; // оригинал эталона до перспективы
@@ -74,12 +66,6 @@ class _CompareScreenState extends State<CompareScreen>
   static const double _framePad = 0.10;
 
   bool   _stacking   = false; // идёт усреднение серии
-
-  // Режим просмотра: true = выравнивание, false = сравнение
-  bool   _alignMode  = true;
-  double _rotation   = 0;
-  double _zoom       = 1.0;
-  final  _previewCtrl = TransformationController();
 
   final _history = [
     {'file': 'photo_001.jpg', 'sim': 87.4, 'date': '16.04.2026'},
@@ -128,12 +114,9 @@ class _CompareScreenState extends State<CompareScreen>
   @override
   void dispose() {
     _tabs.dispose();
-    _refCtrl.dispose();
-    _cmpCtrl.dispose();
     _overlayCtrl.dispose();
     _cmp2Ctrl.dispose();
     _cmpOverlayCtrl.dispose();
-    _previewCtrl.dispose();
     super.dispose();
   }
 
@@ -177,39 +160,6 @@ class _CompareScreenState extends State<CompareScreen>
     final cropped = img.copyCrop(decoded,
         x: px1, y: py1, width: px2 - px1, height: py2 - py1);
     return Uint8List.fromList(img.encodePng(cropped));
-  }
-
-  Future<void> _captureAligned({bool silent = false}) async {
-    if (_refImg == null || _cmpImg == null) {
-      if (!silent) xpDlg(context, 'Ошибка', 'Загрузите оба изображения');
-      return;
-    }
-    final ref = await _extractRegion(_refImg!, _refCtrl.value, _refViewerSize);
-    final cmp = await _extractRegion(_cmpImg!, _cmpCtrl.value, _cmpViewerSize);
-    if (!mounted) return;
-    setState(() {
-      _refAligned = ref ?? _refImg;
-      _cmpAligned = cmp ?? _cmpImg;
-    });
-    if (!silent) {
-      xpDlg(context, 'Готово', 'Область захвачена.');
-    }
-  }
-
-  // ── Ручное наложение → совмещение → сравнение ────
-  Future<void> _applyOverlayAlignment() async {
-    if (_refImg == null || _cmpImg == null) return;
-    if (_overlayViewerSize == Size.zero) return;
-    final ref = await _extractRegion(
-        _refImg!, Matrix4.identity(), _overlayViewerSize);
-    final cmp = await _extractRegion(
-        _cmpImg!, _overlayCtrl.value, _overlayViewerSize);
-    if (!mounted) return;
-    setState(() {
-      _refAligned = ref ?? _refImg;
-      _cmpAligned = cmp ?? _cmpImg;
-    });
-    _runCompare();
   }
 
   // ── Второй снимок сравнения: выбор ───────────────
@@ -421,16 +371,6 @@ class _CompareScreenState extends State<CompareScreen>
       if (mounted) xpDlg(context, 'Ошибка сравнения', e.toString());
     } finally {
       if (mounted) setState(() => _comparing = false);
-    }
-  }
-
-  // ── Зум ──────────────────────────────────────────
-  void _zoomView(double factor) {
-    if (_alignMode) {
-      _refCtrl.value = _refCtrl.value.clone()..scale(factor, factor);
-      _cmpCtrl.value = _cmpCtrl.value.clone()..scale(factor, factor);
-    } else {
-      setState(() => _zoom = (_zoom * factor).clamp(0.2, 8.0));
     }
   }
 
@@ -672,27 +612,9 @@ class _CompareScreenState extends State<CompareScreen>
         ]),
         XpMenu(label: 'Инструменты', items: [
           XpMenuItem(
-              label: 'Увеличить',
-              icon: '🔍',
-              shortcut: 'Ctrl++',
-              onTap: () => _zoomView(1.25)),
-          XpMenuItem(
-              label: 'Уменьшить',
-              icon: '🔎',
-              shortcut: 'Ctrl+-',
-              onTap: () => _zoomView(0.8)),
-          XpMenuItem(
-              label: 'Повернуть',
-              icon: '↺',
-              shortcut: 'Ctrl+R',
-              onTap: () =>
-                  setState(() => _rotation = (_rotation + 90) % 360)),
-          XpMenuItem.sep,
-          XpMenuItem(
-              label: 'Захватить область',
+              label: 'Перспектива',
               icon: '📐',
-              shortcut: 'Ctrl+T',
-              onTap: _captureAligned),
+              onTap: _fixPerspective),
           XpMenuItem.sep,
           XpMenuItem(
               label: 'AI Анализ (Pro)', icon: '🤖', disabled: true),
@@ -1153,120 +1075,6 @@ class _CompareScreenState extends State<CompareScreen>
     );
   }
 
-  // ── Вид: Выравнивание (два независимых вьювера) ───
-  Widget _alignmentView() {
-    return Row(children: [
-      Expanded(
-          child: Column(children: [
-        _viewerHeader('Эталон', AppTheme.simHigh,
-            _refAligned != null ? '✅ захвачено' : 'вписать объект в рамку'),
-        Expanded(
-            child: _photoViewer(_refImg, _refCtrl,
-                onEmpty: () => _pickImage(true),
-                onSizeChanged: (s) => _refViewerSize = s)),
-      ])),
-      Container(width: 1, color: AppTheme.silverDark),
-      Expanded(
-          child: Column(children: [
-        _viewerHeader('Сравниваемое', AppTheme.blue,
-            _cmpAligned != null ? '✅ захвачено' : 'вписать объект в рамку'),
-        Expanded(
-            child: _photoViewer(_cmpImg, _cmpCtrl,
-                onEmpty: () => _pickImage(false),
-                onSizeChanged: (s) => _cmpViewerSize = s)),
-      ])),
-    ]);
-  }
-
-  // ── Вид: Просмотр сравнения ───────────────────────
-  Widget _comparisonView() {
-    final ref = _refAligned ?? _refImg;
-    final cmp = _cmpAligned ?? _cmpImg;
-    final transform = Matrix4.identity()
-      ..scale(_zoom)
-      ..rotateZ(_rotation * pi / 180);
-    return Container(
-      color: Colors.black,
-      child: LayoutBuilder(builder: (_, c) {
-        return _buildModeView(ref, cmp, transform, c.maxWidth, c.maxHeight);
-      }),
-    );
-  }
-
-  Widget _buildModeView(Uint8List? ref, Uint8List? cmp,
-      Matrix4 transform, double w, double h) {
-    if (_mode == 'd') {
-      return Transform(
-        transform: transform,
-        alignment: Alignment.center,
-        child: Row(children: [
-          Expanded(child: ref != null
-              ? Image.memory(ref, fit: BoxFit.cover)
-              : const Center(child: Text('Эталон',
-                  style: TextStyle(color: Colors.white54)))),
-          Container(width: 2, color: Colors.white24),
-          Expanded(child: cmp != null
-              ? Image.memory(cmp, fit: BoxFit.cover)
-              : const Center(child: Text('Фото',
-                  style: TextStyle(color: Colors.white54)))),
-        ]),
-      );
-    }
-
-    if (_mode == 'o') {
-      return Transform(
-        transform: transform,
-        alignment: Alignment.center,
-        child: Stack(fit: StackFit.expand, children: [
-          if (ref != null) Image.memory(ref, fit: BoxFit.contain),
-          Opacity(
-              opacity: _opacity,
-              child: cmp != null
-                  ? Image.memory(cmp, fit: BoxFit.contain)
-                  : const SizedBox()),
-        ]),
-      );
-    }
-
-    // Слайдер (default)
-    final divX = (_sliderPos * w).clamp(0.0, w);
-    return GestureDetector(
-      onHorizontalDragUpdate: (d) {
-        setState(() =>
-            _sliderPos = (d.localPosition.dx / w).clamp(0.0, 1.0));
-      },
-      child: Transform(
-        transform: transform,
-        alignment: Alignment.center,
-        child: Stack(fit: StackFit.expand, children: [
-          if (ref != null) Image.memory(ref, fit: BoxFit.contain),
-          if (cmp != null)
-            ClipRect(
-              clipper: _RightClipper(divX),
-              child: Image.memory(cmp, fit: BoxFit.contain),
-            ),
-          Positioned(
-              left: divX - 1, top: 0, bottom: 0,
-              child: Container(width: 2, color: Colors.white)),
-          Positioned(
-            left: (divX - 14).clamp(0.0, w - 28),
-            top: h / 2 - 14,
-            child: Container(
-              width: 28, height: 28,
-              decoration: const BoxDecoration(
-                  color: Colors.white, shape: BoxShape.circle,
-                  boxShadow: [BoxShadow(color: Colors.black38, blurRadius: 4)]),
-              child: const Icon(Icons.compare_arrows,
-                  size: 16, color: Colors.black87),
-            ),
-          ),
-          const Positioned(left: 8, top: 8, child: _ImgLabel('Эталон')),
-          const Positioned(right: 8, top: 8, child: _ImgLabel('Фото')),
-        ]),
-      ),
-    );
-  }
-
   // ── Таб: Результат ────────────────────────────────
   Widget _tabResult() {
     if (_result == null) {
@@ -1556,137 +1364,6 @@ class _CompareScreenState extends State<CompareScreen>
   }
 
   // ── Helpers ───────────────────────────────────────
-  Widget _viewerHeader(String title, Color color, String hint) {
-    return Container(
-      padding:
-          const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      color: color.withOpacity(0.1),
-      child: Row(children: [
-        Text(title,
-            style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.bold,
-                color: color)),
-        const SizedBox(width: 6),
-        Text(hint,
-            style: const TextStyle(
-                fontSize: 9, color: Colors.grey)),
-      ]),
-    );
-  }
-
-  Widget _photoViewer(Uint8List? imageData, TransformationController ctrl,
-      {VoidCallback? onEmpty, required ValueChanged<Size> onSizeChanged}) {
-    if (imageData == null) {
-      return GestureDetector(
-        onTap: onEmpty,
-        child: Container(
-          color: Colors.black87,
-          child: Center(
-              child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('📷',
-                  style: TextStyle(fontSize: 32)),
-              const SizedBox(height: 6),
-              if (onEmpty != null) ...[
-                const Text('Нажмите для выбора',
-                    style: TextStyle(
-                        color: Colors.white54, fontSize: 10)),
-                const SizedBox(height: 4),
-                const Text('Вписать объект в рамку → Захватить',
-                    style: TextStyle(
-                        color: Colors.white30, fontSize: 9)),
-              ],
-            ],
-          )),
-        ),
-      );
-    }
-    return LayoutBuilder(builder: (context, constraints) {
-      final size = Size(constraints.maxWidth, constraints.maxHeight);
-      WidgetsBinding.instance.addPostFrameCallback((_) => onSizeChanged(size));
-      return Stack(
-        fit: StackFit.expand,
-        children: [
-          Container(
-            color: Colors.black,
-            child: InteractiveViewer(
-              transformationController: ctrl,
-              minScale: 0.2,
-              maxScale: 8.0,
-              child: Image.memory(imageData, fit: BoxFit.contain),
-            ),
-          ),
-          // Рамка захвата — IgnorePointer чтобы жесты проходили к фото
-          IgnorePointer(
-            child: CustomPaint(painter: _FrameOverlayPainter(_framePad)),
-          ),
-        ],
-      );
-    });
-  }
-
-  Widget _toggleBtn(String label, bool active, VoidCallback onTap) {
-    return ElevatedButton(
-      onPressed: onTap,
-      style: ElevatedButton.styleFrom(
-        backgroundColor:
-            active ? const Color(0xFF003388) : const Color(0xFFE0DDD4),
-        foregroundColor: active ? Colors.white : Colors.black87,
-        elevation: active ? 2 : 1,
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        minimumSize: Size.zero,
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        textStyle: TextStyle(
-          fontSize: 12,
-          fontWeight: active ? FontWeight.bold : FontWeight.normal,
-        ),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(3)),
-      ),
-      child: Text(label),
-    );
-  }
-
-  Widget _modeBtn(String mode, String label) {
-    final active = _mode == mode;
-    return ElevatedButton(
-      onPressed: () => setState(() => _mode = mode),
-      style: ElevatedButton.styleFrom(
-        backgroundColor:
-            active ? const Color(0xFF003388) : const Color(0xFFE0DDD4),
-        foregroundColor: active ? Colors.white : Colors.black87,
-        elevation: active ? 2 : 1,
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        minimumSize: Size.zero,
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        textStyle: const TextStyle(fontSize: 11),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(3)),
-      ),
-      child: Text(label),
-    );
-  }
-
-  Widget _toolBtn(String label, VoidCallback onTap) {
-    return ElevatedButton(
-      onPressed: onTap,
-      style: ElevatedButton.styleFrom(
-        backgroundColor: const Color(0xFFE0DDD4),
-        foregroundColor: Colors.black87,
-        elevation: 1,
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        minimumSize: Size.zero,
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        textStyle: const TextStyle(fontSize: 11),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(3),
-          side: BorderSide(color: Colors.grey.shade400),
-        ),
-      ),
-      child: Text(label),
-    );
-  }
-
   TableRow _tableRow(String key, String val) => TableRow(children: [
         Padding(
             padding: const EdgeInsets.symmetric(
@@ -2107,16 +1784,6 @@ class _CompareScreenState extends State<CompareScreen>
           ));
 }
 
-class _RightClipper extends CustomClipper<Rect> {
-  final double x;
-  _RightClipper(this.x);
-  @override
-  Rect getClip(Size s) => Rect.fromLTWH(x, 0, s.width, s.height);
-  @override
-  bool shouldReclip(_RightClipper o) => o.x != x;
-}
-
-// Усреднение серии снимков с выравниванием по первому кадру (isolate)
 // Простое усреднение пикселей (изображения уже выровнены через OpenCV)
 Uint8List _averageImages(List<Uint8List> images) {
   final decoded = <img.Image>[];
@@ -2147,152 +1814,6 @@ Uint8List _averageImages(List<Uint8List> images) {
     }
   }
   return Uint8List.fromList(img.encodePng(out));
-}
-
-Uint8List _stackImages(List<Uint8List> images) {
-  final decoded = <img.Image>[];
-  for (final b in images) {
-    final d = img.decodeImage(b);
-    if (d != null) decoded.add(d);
-  }
-  if (decoded.isEmpty) return images.first;
-  if (decoded.length == 1) return images.first;
-
-  int w = decoded[0].width;
-  int h = decoded[0].height;
-  if (w > 1024) { h = (h * 1024 / w).round(); w = 1024; }
-  if (h > 1024) { w = (w * 1024 / h).round(); h = 1024; }
-
-  final frames = decoded.map((d) => img.copyResize(d, width: w, height: h)).toList();
-
-  final offsets = <(int, int)>[(0, 0)];
-  for (int i = 1; i < frames.length; i++) {
-    offsets.add(_findOffset(frames[0], frames[i]));
-  }
-
-  final out = img.Image(width: w, height: h);
-  for (int y = 0; y < h; y++) {
-    for (int x = 0; x < w; x++) {
-      int r = 0, g = 0, b = 0, count = 0;
-      for (int i = 0; i < frames.length; i++) {
-        final sx = x + offsets[i].$1;
-        final sy = y + offsets[i].$2;
-        if (sx >= 0 && sx < w && sy >= 0 && sy < h) {
-          final p = frames[i].getPixel(sx, sy);
-          r += p.r.toInt(); g += p.g.toInt(); b += p.b.toInt(); count++;
-        }
-      }
-      if (count > 0) out.setPixelRgb(x, y, r ~/ count, g ~/ count, b ~/ count);
-    }
-  }
-  return Uint8List.fromList(img.encodePng(out));
-}
-
-// Двухпроходный поиск трансляционного смещения: грубо → точно
-(int, int) _findOffset(img.Image ref, img.Image src) {
-  // Проход 1: грубый — 128×128, диапазон ±40px (~31% ширины)
-  const s1 = 128, r1 = 40;
-  final refC = img.copyResize(ref, width: s1, height: s1);
-  final srcC = img.copyResize(src, width: s1, height: s1);
-  int cx = 0, cy = 0;
-  {
-    double best = double.infinity;
-    for (int dy = -r1; dy <= r1; dy++) {
-      for (int dx = -r1; dx <= r1; dx++) {
-        double sad = 0; int n = 0;
-        for (int y = r1; y < s1 - r1; y += 2) {
-          for (int x = r1; x < s1 - r1; x += 2) {
-            final nx = x + dx; final ny = y + dy;
-            if (nx < 0 || nx >= s1 || ny < 0 || ny >= s1) continue;
-            final pr = refC.getPixel(x, y); final pc = srcC.getPixel(nx, ny);
-            sad += (pr.r-pc.r).abs() + (pr.g-pc.g).abs() + (pr.b-pc.b).abs();
-            n++;
-          }
-        }
-        if (n > 0 && sad / n < best) { best = sad / n; cx = dx; cy = dy; }
-      }
-    }
-  }
-
-  // Проход 2: точный — 256×256, ±8px вокруг грубой оценки
-  const s2 = 256, r2 = 8;
-  final refF = img.copyResize(ref, width: s2, height: s2);
-  final srcF = img.copyResize(src, width: s2, height: s2);
-  final baseDx = (cx * s2 / s1).round();
-  final baseDy = (cy * s2 / s1).round();
-  int fx = baseDx, fy = baseDy;
-  {
-    double best = double.infinity;
-    const m = 40;
-    for (int dy = baseDy - r2; dy <= baseDy + r2; dy++) {
-      for (int dx = baseDx - r2; dx <= baseDx + r2; dx++) {
-        double sad = 0; int n = 0;
-        for (int y = m; y < s2 - m; y += 2) {
-          for (int x = m; x < s2 - m; x += 2) {
-            final nx = x + dx; final ny = y + dy;
-            if (nx < m || nx >= s2 - m || ny < m || ny >= s2 - m) continue;
-            final pr = refF.getPixel(x, y); final pc = srcF.getPixel(nx, ny);
-            sad += (pr.r-pc.r).abs() + (pr.g-pc.g).abs() + (pr.b-pc.b).abs();
-            n++;
-          }
-        }
-        if (n > 0 && sad / n < best) { best = sad / n; fx = dx; fy = dy; }
-      }
-    }
-  }
-
-  final scaleX = ref.width / s2;
-  final scaleY = ref.height / s2;
-  return ((fx * scaleX).round(), (fy * scaleY).round());
-}
-
-// Рамка захвата — тёмный оверлей снаружи + белая рамка внутри
-class _FrameOverlayPainter extends CustomPainter {
-  final double pad;
-  const _FrameOverlayPainter(this.pad);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final w = size.width;
-    final h = size.height;
-    final frame = Rect.fromLTRB(w * pad, h * pad, w * (1 - pad), h * (1 - pad));
-
-    // Затемнение за рамкой
-    final outside = Path()
-      ..addRect(Rect.fromLTWH(0, 0, w, h))
-      ..addRect(frame)
-      ..fillType = PathFillType.evenOdd;
-    canvas.drawPath(outside, Paint()..color = Colors.black.withOpacity(0.50));
-
-    // Белая рамка
-    canvas.drawRect(frame,
-        Paint()
-          ..color = Colors.white
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.5);
-
-    // Угловые маркеры
-    const cl = 14.0;
-    final cp = Paint()
-      ..color = Colors.white
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 3;
-    void corner(Offset a, Offset b, Offset c) {
-      canvas.drawLine(a, b, cp);
-      canvas.drawLine(b, c, cp);
-    }
-    corner(Offset(frame.left, frame.top + cl), frame.topLeft,
-        Offset(frame.left + cl, frame.top));
-    corner(Offset(frame.right - cl, frame.top), frame.topRight,
-        Offset(frame.right, frame.top + cl));
-    corner(Offset(frame.left, frame.bottom - cl), frame.bottomLeft,
-        Offset(frame.left + cl, frame.bottom));
-    corner(Offset(frame.right - cl, frame.bottom), frame.bottomRight,
-        Offset(frame.right, frame.bottom - cl));
-  }
-
-  @override
-  bool shouldRepaint(_FrameOverlayPainter old) => old.pad != pad;
 }
 
 class _ImgLabel extends StatelessWidget {
