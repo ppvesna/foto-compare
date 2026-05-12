@@ -35,8 +35,36 @@ class PhotoCompareApp extends StatelessWidget {
       title: 'Photo Compare',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.theme,
-      home: const MainShell(),
+      home: const AuthGate(),
     );
+  }
+}
+
+// Проверяет сессию и показывает нужный экран
+class AuthGate extends StatefulWidget {
+  const AuthGate({super.key});
+
+  @override
+  State<AuthGate> createState() => _AuthGateState();
+}
+
+class _AuthGateState extends State<AuthGate> {
+  @override
+  void initState() {
+    super.initState();
+    // Слушаем изменения авторизации
+    Supabase.instance.client.auth.onAuthStateChange.listen((data) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final session = Supabase.instance.client.auth.currentSession;
+    if (session != null) {
+      return const MainShell();
+    }
+    return const StartScreen();
   }
 }
 
@@ -52,7 +80,6 @@ class _MainShellState extends State<MainShell> {
   int _chatBadge = 4;
 
   final List<Widget> _screens = const [
-    StartScreen(),
     CompareScreen(),
     ChatScreen(),
     ShopScreen(),
@@ -62,15 +89,34 @@ class _MainShellState extends State<MainShell> {
   void _onTab(int i) {
     setState(() {
       _tab = i;
-      if (i == 2) _chatBadge = 0;
+      if (i == 1) _chatBadge = 0;
     });
   }
 
   @override
   Widget build(BuildContext context) {
+    final user = Supabase.instance.client.auth.currentUser;
+    final email = user?.email ?? '';
+
     return Scaffold(
       body: SafeArea(
         child: Column(children: [
+          // Полоска с email пользователя
+          Container(
+            color: AppTheme.blueDark,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
+            child: Row(children: [
+              const Icon(Icons.account_circle, size: 13, color: Colors.white54),
+              const SizedBox(width: 5),
+              Expanded(child: Text(email,
+                  style: const TextStyle(fontSize: 10, color: Colors.white70))),
+              GestureDetector(
+                onTap: _signOut,
+                child: const Text('Выйти',
+                    style: TextStyle(fontSize: 10, color: Colors.white54)),
+              ),
+            ]),
+          ),
           Expanded(
             child: IndexedStack(index: _tab, children: _screens),
           ),
@@ -94,16 +140,34 @@ class _MainShellState extends State<MainShell> {
           child: SizedBox(
             height: 56,
             child: Row(children: [
-              Expanded(child: _navBtn(0, '🔭', 'Старт')),
-              Expanded(child: _navBtn(1, '🔍', 'Сравнение')),
-              _navBtnBadge(2, '💬', 'Чат', _chatBadge),
-              Expanded(child: _navBtn(3, '🛒', 'Магазин')),
-              Expanded(child: _navBtn(4, '⚙️', 'Настройки')),
+              Expanded(child: _navBtn(0, '🔍', 'Сравнение')),
+              _navBtnBadge(1, '💬', 'Чат', _chatBadge),
+              Expanded(child: _navBtn(2, '🛒', 'Магазин')),
+              Expanded(child: _navBtn(3, '⚙️', 'Настройки')),
             ]),
           ),
         ),
       ),
     );
+  }
+
+  Future<void> _signOut() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Выйти?'),
+        content: const Text('Вы будете отключены от аккаунта.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false),
+              child: const Text('Отмена')),
+          TextButton(onPressed: () => Navigator.pop(context, true),
+              child: const Text('Выйти')),
+        ],
+      ),
+    );
+    if (ok == true) {
+      await Supabase.instance.client.auth.signOut();
+    }
   }
 
   Widget _navBtn(int idx, String icon, String label) {
@@ -121,7 +185,7 @@ class _MainShellState extends State<MainShell> {
           border: Border(
             top: BorderSide(
                 color: active ? AppTheme.blue : Colors.transparent, width: 3),
-            right: idx < 4
+            right: idx < 3
                 ? const BorderSide(color: AppTheme.silverDark)
                 : BorderSide.none,
           ),

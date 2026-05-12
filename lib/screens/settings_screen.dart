@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/app_theme.dart';
 import '../widgets/xp_widgets.dart';
 
@@ -87,14 +88,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 Row(children: [
                   const Text('👤', style: TextStyle(fontSize: 36)),
                   const SizedBox(width: 10),
-                  const Expanded(
+                  Expanded(
                       child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('user@example.com',
-                          style: TextStyle(
+                      Text(
+                          Supabase.instance.client.auth.currentUser?.email ?? '',
+                          style: const TextStyle(
                               fontWeight: FontWeight.bold, fontSize: 11)),
-                      Text('Бесплатный план',
+                      const Text('Бесплатный план',
                           style: TextStyle(color: Colors.grey, fontSize: 11)),
                     ],
                   )),
@@ -121,7 +123,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           onPressed: () async {
                             final ok = await xpConfirm(context, 'Выйти?',
                                 'Вы будете отключены от аккаунта.');
-                            if (ok) {}
+                            if (ok) {
+                              await Supabase.instance.client.auth.signOut();
+                            }
                           })),
                 ]),
               ])),
