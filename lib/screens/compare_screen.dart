@@ -41,11 +41,6 @@ class _CompareScreenState extends State<CompareScreen>
   OcrResult? _cmpOcr;
   TextDiff?  _textDiff;
 
-  // Параметры обработки
-  bool _autoScale  = true;
-  bool _normBright = true;
-  bool _autoRotate = false;
-
   // Выравнивание — независимые контроллеры для каждого фото
   final _refCtrl = TransformationController();
   final _cmpCtrl = TransformationController();
@@ -833,16 +828,6 @@ class _CompareScreenState extends State<CompareScreen>
                       onPressed: _applyOverlayAlignment),
                 ]),
               ])),
-        XpGroup(
-            label: 'Параметры',
-            child: Column(children: [
-              _check('Автомасштабирование', _autoScale,
-                  (v) => setState(() => _autoScale = v)),
-              _check('Нормализация яркости', _normBright,
-                  (v) => setState(() => _normBright = v)),
-              _check('Автоповорот по EXIF', _autoRotate,
-                  (v) => setState(() => _autoRotate = v)),
-            ])),
         const SizedBox(height: 12),
         const Divider(),
         Row(mainAxisAlignment: MainAxisAlignment.end, children: [
@@ -1531,17 +1516,6 @@ class _CompareScreenState extends State<CompareScreen>
       ),
       child: Text(label),
     );
-  }
-
-  Widget _check(String label, bool val, ValueChanged<bool> onChange) {
-    return Row(children: [
-      Checkbox(
-          value: val,
-          onChanged: (v) => onChange(v ?? val),
-          activeColor: AppTheme.blue,
-          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap),
-      Text(label, style: const TextStyle(fontSize: 11)),
-    ]);
   }
 
   TableRow _tableRow(String key, String val) => TableRow(children: [
