@@ -48,7 +48,8 @@ class _CompareScreenState extends State<CompareScreen>
   Size _cmpViewerSize = Size.zero;
   Uint8List? _refAligned;
   Uint8List? _cmpAligned;
-  Uint8List? _cmpOriginal; // оригинал до перспективы (для сброса)
+  Uint8List? _refOriginal; // оригинал эталона до перспективы
+  Uint8List? _cmpOriginal; // оригинал фото до перспективы
   Uint8List? _ref2Img;     // второй снимок эталона для объединения
   AiAnalysis? _refAiResult;
   bool _refAiLoading = false;
@@ -271,23 +272,28 @@ class _CompareScreenState extends State<CompareScreen>
 
   // ── Коррекция перспективы через OpenCV ───────────
   Future<void> _fixPerspective() async {
-    if (_cmpImg == null) {
-      xpDlg(context, 'Ошибка', 'Загрузите сравниваемое фото');
+    if (_refImg == null && _cmpImg == null) {
+      xpDlg(context, 'Ошибка', 'Загрузите изображения');
       return;
     }
-    final original = _cmpImg!;
-    final fixed = await OpenCvService.perspectiveCorrect(original);
+    // Сохраняем оригиналы для сброса
+    final origRef = _refImg;
+    final origCmp = _cmpImg;
+
+    // Обрабатываем оба параллельно
+    final futures = <Future<Uint8List>>[];
+    if (_refImg != null) futures.add(OpenCvService.perspectiveCorrect(_refImg!));
+    if (_cmpImg != null) futures.add(OpenCvService.perspectiveCorrect(_cmpImg!));
+    final results = await Future.wait(futures);
+
     if (!mounted) return;
-    setState(() { _cmpOriginal = original; _cmpImg = fixed; _cmpAligned = null; });
-    if (!OpenCvService.isAvailable) {
-      xpDlg(context, 'OpenCV не подключён',
-          'Следуй инструкции в файле opencv_android/SETUP.md:\n\n'
-          '1. Добавь в android/app/build.gradle:\n'
-          '   implementation("org.opencv:opencv:4.9.0")\n\n'
-          '2. Скопируй OpenCvPlugin.kt в android/app/src/main/kotlin/com/example/photo_compare/\n\n'
-          '3. Обнови MainActivity.kt\n\n'
-          '4. flutter clean && flutter run');
-    }
+    setState(() {
+      _refOriginal = origRef;
+      _cmpOriginal = origCmp;
+      int i = 0;
+      if (_refImg != null) { _refImg = results[i++]; _refAligned = null; }
+      if (_cmpImg != null) { _cmpImg = results[i++]; _cmpAligned = null; }
+    });
   }
 
   // ── Сравнение ─────────────────────────────────────
@@ -957,12 +963,11 @@ class _CompareScreenState extends State<CompareScreen>
               _toolBtn('⟳ Фото', () => _cmpCtrl.value = Matrix4.identity()),
               const SizedBox(width: 4),
               _toolBtn('📐 Перспектива', _fixPerspective),
-              if (_cmpOriginal != null) ...[
+              if (_cmpOriginal != null || _refOriginal != null) ...[
                 const SizedBox(width: 4),
                 _toolBtn('↩ Сброс', () => setState(() {
-                  _cmpImg = _cmpOriginal;
-                  _cmpOriginal = null;
-                  _cmpAligned = null;
+                  if (_refOriginal != null) { _refImg = _refOriginal; _refOriginal = null; _refAligned = null; }
+                  if (_cmpOriginal != null) { _cmpImg = _cmpOriginal; _cmpOriginal = null; _cmpAligned = null; }
                 })),
               ],
               const Spacer(),
