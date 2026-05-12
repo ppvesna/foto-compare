@@ -223,33 +223,49 @@ class _CompareScreenState extends State<CompareScreen>
       xpDlg(context, 'Ошибка', 'Загрузите оба изображения');
       return;
     }
-    setState(() { _comparing = true; _aiResult = null; _refBarcodes = []; _cmpBarcodes = []; _refOcr = null; _cmpOcr = null; _textDiff = null; });
+    setState(() {
+      _comparing = true;
+      _aiResult = null;
+      _refBarcodes = [];
+      _cmpBarcodes = [];
+      _refOcr = null;
+      _cmpOcr = null;
+      _textDiff = null;
+      _result = null;
+    });
     try {
-      // OCR с таймаутом 15 сек — ML Kit может медленно грузить модель
+      // Фаза 1: сравнение пикселей — быстро, показываем результат сразу
+      final compareResult = await CompareService.compare(ref, cmp);
+      if (!mounted) return;
+      setState(() { _result = compareResult; _comparing = false; });
+      _tabs.animateTo(2);
+
+      // Фаза 2: штрихкоды + OCR — фоном, обновляем результат когда готово
       Future<OcrResult> ocrSafe(Uint8List b) => OcrService.recognize(b)
           .timeout(const Duration(seconds: 15),
-              onTimeout: () => OcrResult('', [], error: 'Таймаут OCR'));
+              onTimeout: () => OcrResult('', [], error: 'Таймаут OCR'))
+          .catchError((Object e) => OcrResult('', [], error: e.toString()));
 
-      final results = await Future.wait([
-        CompareService.compare(ref, cmp),
-        BarcodeService.scanImage(ref),
-        BarcodeService.scanImage(cmp),
+      final extras = await Future.wait([
+        BarcodeService.scanImage(ref)
+            .catchError((Object _) => <BarcodeResult>[]),
+        BarcodeService.scanImage(cmp)
+            .catchError((Object _) => <BarcodeResult>[]),
         ocrSafe(ref),
         ocrSafe(cmp),
       ]);
-      final refOcr = results[3] as OcrResult;
-      final cmpOcr = results[4] as OcrResult;
+      if (!mounted) return;
+      final ro = extras[2] as OcrResult;
+      final co = extras[3] as OcrResult;
       setState(() {
-        _result       = results[0] as CompareResult;
-        _refBarcodes  = results[1] as List<BarcodeResult>;
-        _cmpBarcodes  = results[2] as List<BarcodeResult>;
-        _refOcr       = refOcr;
-        _cmpOcr       = cmpOcr;
-        _textDiff     = (!refOcr.isEmpty || !cmpOcr.isEmpty)
-            ? OcrService.compareTexts(refOcr.fullText, cmpOcr.fullText)
+        _refBarcodes = extras[0] as List<BarcodeResult>;
+        _cmpBarcodes = extras[1] as List<BarcodeResult>;
+        _refOcr      = ro;
+        _cmpOcr      = co;
+        _textDiff    = (!ro.isEmpty || !co.isEmpty)
+            ? OcrService.compareTexts(ro.fullText, co.fullText)
             : null;
       });
-      _tabs.animateTo(2);
     } catch (e) {
       if (mounted) xpDlg(context, 'Ошибка сравнения', e.toString());
     } finally {
@@ -288,10 +304,14 @@ class _CompareScreenState extends State<CompareScreen>
               onTap: () => Navigator.pop(context, 'camera')),
           ListTile(
               leading: const Text('📸', style: TextStyle(fontSize: 20)),
-              title: const Text('Серия снимков (улучшение качества)'),
-              subtitle: const Text('2–8 фото → усреднение → 1 чёткий снимок',
-                  style: TextStyle(fontSize: 11)),
-              onTap: () => Navigator.pop(context, 'stack')),
+              title: const Text('Серия снимков — Premium'),
+              subtitle: const Text('AI усреднение · скоро в платной версии',
+                  style: TextStyle(fontSize: 11, color: Colors.orange)),
+              onTap: () {
+                Navigator.pop(context);
+                xpDlg(context, '⭐ Premium функция',
+                    'Объединение нескольких снимков с AI выравниванием будет доступно в платной версии.\n\nПока используйте один лучший снимок.');
+              }),
         ]),
       ),
     );
