@@ -54,10 +54,15 @@ class _CompareScreenState extends State<CompareScreen>
   AiAnalysis? _refAiResult;
   bool _refAiLoading = false;
 
-  // Ручное наложение на вкладке Эталон
+  // Ручное наложение на вкладке Эталон (ref1 + ref2)
   final _overlayCtrl = TransformationController();
   double _overlayOpacity = 0.5;
   Size _overlayViewerSize = Size.zero;
+
+  // Ручное наложение на вкладке Сравнение (ref + cmp)
+  final _cmpOverlayCtrl = TransformationController();
+  double _cmpOverlayOpacity = 0.5;
+  Size _cmpOverlayViewerSize = Size.zero;
 
   // Отступ рамки (10% с каждой стороны = 80% центральная зона)
   static const double _framePad = 0.10;
