@@ -175,8 +175,11 @@ class _CompareScreenState extends State<CompareScreen>
     if (_cmpImg == null || _cmp2Img == null) return;
     setState(() => _stacking = true);
     try {
-      final aligned = await OpenCvService.alignImages(_cmpImg!, _cmp2Img!);
-      final merged  = await compute(_averageImages, [_cmpImg!, aligned]);
+      final merged = await compute(_mergeWithOverlayTransform, {
+        'img1': _cmpImg!, 'img2': _cmp2Img!,
+        'transform': _cmp2Ctrl.value.storage.toList(),
+        'vw': _cmp2ViewerSize.width, 'vh': _cmp2ViewerSize.height,
+      });
       if (mounted) setState(() { _cmpImg = merged; _cmpAligned = null; _cmp2Img = null; _cmp2Ctrl.value = Matrix4.identity(); });
     } catch (e) {
       if (mounted) xpDlg(context, 'Ошибка', e.toString());
@@ -221,8 +224,11 @@ class _CompareScreenState extends State<CompareScreen>
     if (_refImg == null || _ref2Img == null) return;
     setState(() => _stacking = true);
     try {
-      final aligned = await OpenCvService.alignImages(_refImg!, _ref2Img!);
-      final merged  = await compute(_averageImages, [_refImg!, aligned]);
+      final merged = await compute(_mergeWithOverlayTransform, {
+        'img1': _refImg!, 'img2': _ref2Img!,
+        'transform': _overlayCtrl.value.storage.toList(),
+        'vw': _overlayViewerSize.width, 'vh': _overlayViewerSize.height,
+      });
       if (!mounted) return;
       final now = DateTime.now();
       final label =
@@ -1839,4 +1845,71 @@ class _BarcodeIssue {
   final String detail;
   const _BarcodeIssue.error(this.title, this.detail) : isError = true;
   const _BarcodeIssue.warning(this.title, this.detail) : isError = false;
+}
+
+// Объединение двух снимков с учётом ручного наложения из overlay (isolate)
+// Применяет transform второго изображения и усредняет пиксели
+Uint8List _mergeWithOverlayTransform(Map<String, dynamic> args) {
+  final img1bytes = args['img1'] as Uint8List;
+  final img2bytes = args['img2'] as Uint8List;
+  final tStorage  = (args['transform'] as List).cast<double>();
+  final vw = (args['vw'] as num).toDouble();
+  final vh = (args['vh'] as num).toDouble();
+
+  final decoded1 = img.decodeImage(img1bytes);
+  final decoded2 = img.decodeImage(img2bytes);
+  if (decoded1 == null || decoded2 == null) return img1bytes;
+
+  final w1 = decoded1.width.toDouble();
+  final h1 = decoded1.height.toDouble();
+  final w2 = decoded2.width.toDouble();
+  final h2 = decoded2.height.toDouble();
+
+  // BoxFit.contain масштаб и смещение для каждого изображения в viewer
+  final scale1 = min(vw / w1, vh / h1);
+  final offX1  = (vw - w1 * scale1) / 2;
+  final offY1  = (vh - h1 * scale1) / 2;
+
+  final scale2 = min(vw / w2, vh / h2);
+  final offX2  = (vw - w2 * scale2) / 2;
+  final offY2  = (vh - h2 * scale2) / 2;
+
+  // InteractiveViewer transform (scale + translate, column-major Matrix4)
+  // storage[0]=sx, storage[5]=sy, storage[12]=tx, storage[13]=ty
+  final sx = tStorage[0];
+  final sy = tStorage[5];
+  final tx = tStorage[12];
+  final ty = tStorage[13];
+
+  final out = img.Image(width: decoded1.width, height: decoded1.height);
+
+  for (int y = 0; y < decoded1.height; y++) {
+    for (int x = 0; x < decoded1.width; x++) {
+      final p1 = decoded1.getPixel(x, y);
+
+      // Пиксель ref1 → координаты viewer
+      final vx = x * scale1 + offX1;
+      final vy = y * scale1 + offY1;
+
+      // Инверсный transform (viewer → child ref2)
+      final cx = (vx - tx) / sx;
+      final cy = (vy - ty) / sy;
+
+      // child ref2 → пиксель ref2
+      final ix2 = ((cx - offX2) / scale2).round();
+      final iy2 = ((cy - offY2) / scale2).round();
+
+      if (ix2 >= 0 && ix2 < decoded2.width && iy2 >= 0 && iy2 < decoded2.height) {
+        final p2 = decoded2.getPixel(ix2, iy2);
+        out.setPixelRgb(x, y,
+          (p1.r.toInt() + p2.r.toInt()) ~/ 2,
+          (p1.g.toInt() + p2.g.toInt()) ~/ 2,
+          (p1.b.toInt() + p2.b.toInt()) ~/ 2);
+      } else {
+        out.setPixelRgb(x, y, p1.r.toInt(), p1.g.toInt(), p1.b.toInt());
+      }
+    }
+  }
+
+  return Uint8List.fromList(img.encodePng(out));
 }
