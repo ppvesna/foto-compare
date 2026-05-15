@@ -162,13 +162,6 @@ class _CompareScreenState extends State<CompareScreen>
     return Uint8List.fromList(img.encodePng(cropped));
   }
 
-  // ── Второй снимок сравнения: выбор ───────────────
-  Future<void> _pickCmp2(ImageSource source) async {
-    final x = await _picker.pickImage(source: source, imageQuality: 92);
-    if (x == null) return;
-    final bytes = await x.readAsBytes();
-    if (mounted) setState(() { _cmp2Img = bytes; _cmp2Ctrl.value = Matrix4.identity(); });
-  }
 
   // ── Объединение двух снимков сравнения ────────────
   Future<void> _mergeCmpImages() async {
@@ -207,8 +200,10 @@ class _CompareScreenState extends State<CompareScreen>
   }
 
   // ── Второй эталон: выбор ─────────────────────────
-  Future<void> _pickRef2(ImageSource source) async {
-    final x = await _picker.pickImage(source: source, imageQuality: 92);
+  Future<void> _pickRef2([ImageSource? source]) async {
+    final src = source ?? await _pickSource();
+    if (src == null) return;
+    final x = await _picker.pickImage(source: src, imageQuality: 92);
     if (x == null) return;
     final bytes = await x.readAsBytes();
     if (mounted) {
@@ -217,6 +212,33 @@ class _CompareScreenState extends State<CompareScreen>
         _overlayCtrl.value = Matrix4.identity();
       });
     }
+  }
+
+  // ── Второй образец: выбор ────────────────────────
+  Future<void> _pickCmp2([ImageSource? source]) async {
+    final src = source ?? await _pickSource();
+    if (src == null) return;
+    final x = await _picker.pickImage(source: src, imageQuality: 92);
+    if (x == null) return;
+    final bytes = await x.readAsBytes();
+    if (mounted) setState(() { _cmp2Img = bytes; _cmp2Ctrl.value = Matrix4.identity(); });
+  }
+
+  Future<ImageSource?> _pickSource() async {
+    return showModalBottomSheet<ImageSource>(
+      context: context,
+      backgroundColor: AppTheme.silver,
+      builder: (_) => Column(mainAxisSize: MainAxisSize.min, children: [
+        ListTile(
+          leading: const Text('🖼️', style: TextStyle(fontSize: 20)),
+          title: const Text('Галерея'),
+          onTap: () => Navigator.pop(context, ImageSource.gallery)),
+        ListTile(
+          leading: const Text('📷', style: TextStyle(fontSize: 20)),
+          title: const Text('Камера'),
+          onTap: () => Navigator.pop(context, ImageSource.camera)),
+      ]),
+    );
   }
 
   // ── Объединение двух эталонов через OpenCV ────────
@@ -604,8 +626,8 @@ class _CompareScreenState extends State<CompareScreen>
               icon: '🖼️',
               onTap: () => _tabs.animateTo(0)),
           XpMenuItem(
-              label: 'Сравнение',
-              icon: '🔍',
+              label: 'Образец',
+              icon: '📷',
               onTap: () => _tabs.animateTo(1)),
           XpMenuItem(
               label: 'Результат',
@@ -642,7 +664,7 @@ class _CompareScreenState extends State<CompareScreen>
         padding: const EdgeInsets.fromLTRB(4, 6, 4, 0),
         child: Row(children: [
           _xpTab('🖼️ Эталон', 0),
-          _xpTab('🔍 Сравн.', 1),
+          _xpTab('📷 Образец', 1),
           _xpTab('📊 Результат', 2),
           _xpTab('📋 История', 3),
         ]),
@@ -708,9 +730,9 @@ class _CompareScreenState extends State<CompareScreen>
     return SingleChildScrollView(
       padding: const EdgeInsets.all(12),
       child: Column(children: [
-        // ── Эталонное изображение ────────────────────
+        // ── Эталон 1 ─────────────────────────────────
         XpGroup(
-            label: 'Эталонное изображение',
+            label: 'Эталон 1',
             child: Column(children: [
               GestureDetector(
                 onTap: () => _pickImage(true),
@@ -741,14 +763,6 @@ class _CompareScreenState extends State<CompareScreen>
                           ]),
                 ),
               ),
-              const SizedBox(height: 8),
-              Row(children: [
-                Expanded(child: XpBtn(label: '📂 Файл',    onPressed: () => _pickImage(true))),
-                const SizedBox(width: 4),
-                Expanded(child: XpBtn(label: '🖼️ Галерея', onPressed: () => _pickImage(true))),
-                const SizedBox(width: 4),
-                Expanded(child: XpBtn(label: '📷 Камера',  onPressed: () => _pickImage(true))),
-              ]),
             ])),
 
         if (_savedRefLabel != null)
@@ -775,29 +789,32 @@ class _CompareScreenState extends State<CompareScreen>
               onPressed: _refImg != null ? _saveReference : null)),
         ]),
 
-        // ── Наложить и совместить ────────────────────
+        // ── Эталон 2 ─────────────────────────────────
         const SizedBox(height: 8),
         XpGroup(
-            label: 'Наложить и совместить',
+            label: 'Эталон 2',
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
               if (_refImg == null) ...[
-                const Text('Сначала загрузите первый эталон выше.',
+                const Text('Сначала загрузите Эталон 1.',
                     style: TextStyle(fontSize: 11, color: Colors.grey)),
               ] else if (_ref2Img == null) ...[
-                  const Text(
-                      'Загрузите второй снимок эталона для объединения.\n'
-                      'OpenCV выровняет и усреднит оба снимка.',
-                      style: TextStyle(fontSize: 11, color: Colors.grey, height: 1.5)),
-                  const SizedBox(height: 10),
-                  Row(children: [
-                    Expanded(child: XpBtn(
-                        label: '🖼️ Галерея',
-                        onPressed: () => _pickRef2(ImageSource.gallery))),
-                    const SizedBox(width: 4),
-                    Expanded(child: XpBtn(
-                        label: '📷 Камера',
-                        onPressed: () => _pickRef2(ImageSource.camera))),
-                  ]),
+                  GestureDetector(
+                    onTap: () => _pickRef2(),
+                    child: Container(
+                      height: 160,
+                      width: double.infinity,
+                      color: Colors.black,
+                      child: const Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text('🖼️', style: TextStyle(fontSize: 40)),
+                          SizedBox(height: 8),
+                          Text('Нажмите для выбора второго снимка',
+                              style: TextStyle(fontSize: 11, color: Colors.white54)),
+                        ],
+                      ),
+                    ),
+                  ),
                 ] else ...[
                   // Overlay: эталон 1 (фон) + эталон 2 (двигается)
                   ClipRect(
@@ -898,17 +915,16 @@ class _CompareScreenState extends State<CompareScreen>
     );
   }
 
-  // ── Таб: Сравнение ────────────────────────────────
+  // ── Таб: Образец ─────────────────────────────────
   Widget _tabCmp() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(12),
       child: Column(children: [
 
-        // ── Раздел 1: фото1 + фото2 → объединить ────
+        // ── Образец 1 ────────────────────────────────
         XpGroup(
-            label: 'Сравниваемое изображение',
+            label: 'Образец 1',
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              // Фото1 — основное
               GestureDetector(
                 onTap: () => _pickImage(false),
                 child: Container(
@@ -931,29 +947,26 @@ class _CompareScreenState extends State<CompareScreen>
                             ]),
                 ),
               ),
-              const SizedBox(height: 8),
-              Row(children: [
-                Expanded(child: XpBtn(label: '📂 Файл',    onPressed: () => _pickImage(false))),
-                const SizedBox(width: 4),
-                Expanded(child: XpBtn(label: '🖼️ Галерея', onPressed: () => _pickImage(false))),
-                const SizedBox(width: 4),
-                Expanded(child: XpBtn(label: '📷 Камера',  onPressed: () => _pickImage(false))),
-              ]),
 
-              // Фото2 — для объединения
+              // Образец 2 — для объединения
               if (_cmpImg != null) ...[
                 const SizedBox(height: 8),
                 const Divider(),
                 const SizedBox(height: 6),
                 if (_cmp2Img == null) ...[
-                  const Text('Загрузите второй снимок для объединения:',
-                      style: TextStyle(fontSize: 11, color: Colors.grey)),
-                  const SizedBox(height: 6),
-                  Row(children: [
-                    Expanded(child: XpBtn(label: '🖼️ Галерея', onPressed: () => _pickCmp2(ImageSource.gallery))),
-                    const SizedBox(width: 4),
-                    Expanded(child: XpBtn(label: '📷 Камера',  onPressed: () => _pickCmp2(ImageSource.camera))),
-                  ]),
+                  GestureDetector(
+                    onTap: () => _pickCmp2(),
+                    child: Container(
+                      height: 120,
+                      width: double.infinity,
+                      color: Colors.black,
+                      child: const Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                        Text('📷', style: TextStyle(fontSize: 30)),
+                        SizedBox(height: 6),
+                        Text('Нажмите для второго снимка', style: TextStyle(fontSize: 11, color: Colors.white54)),
+                      ]),
+                    ),
+                  ),
                 ] else ...[
                   // Overlay: фото1 (фон) + фото2 (двигается)
                   ClipRect(
