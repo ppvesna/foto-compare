@@ -1,49 +1,40 @@
 import 'dart:io';
 import 'dart:typed_data';
-import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
 import 'package:path_provider/path_provider.dart';
 
-// Номинальная ширина каждого формата при 100% масштабе, в мм (GS1 / ISO стандарты)
-// X-dimension (ширина тонкого штриха) при 100%:
-//   EAN-13 / UPC-A: X = 0.330mm, итого ширина = 37.29mm
-//   EAN-8:           X = 0.330mm, итого ширина = 26.73mm
-//   Code 128:        X = 0.250mm (типовой), минимальная высота = 15% длины
-//   QR Code v1:      21 модулей × 0.350mm = 7.35mm (с тихой зоной ~10mm)
-//
-// При разрешении 300 DPI: 1mm = 11.81px
-// Храним номинальную ширину в пикселях при 300 DPI (стандартная печать)
 class _FormatSpec {
-  final double nominalWidthMm;  // ширина при 100% в мм
-  final double minPct;          // минимальный допустимый % (GS1)
-  final double maxPct;          // максимальный допустимый % (GS1)
+  final double nominalWidthMm;
+  final double minPct;
+  final double maxPct;
   const _FormatSpec(this.nominalWidthMm, this.minPct, this.maxPct);
 }
 
 const _specs = {
-  'EAN-13':    _FormatSpec(37.29, 80, 200),
-  'EAN-8':     _FormatSpec(26.73, 80, 200),
-  'UPC-A':     _FormatSpec(37.29, 80, 200),
-  'UPC-E':     _FormatSpec(22.11, 80, 200),
-  'Code 128':  _FormatSpec(30.00, 80, 200),
-  'Code 39':   _FormatSpec(30.00, 75, 200),
-  'Code 93':   _FormatSpec(25.00, 75, 200),
-  'ITF':       _FormatSpec(32.00, 62, 200),
-  'Codabar':   _FormatSpec(28.00, 80, 200),
-  'QR Code':   _FormatSpec(10.00, 80, 400),  // минимальный QR v1
-  'DataMatrix': _FormatSpec(8.00, 80, 400),
-  'PDF417':    _FormatSpec(28.00, 75, 200),
-  'Aztec':     _FormatSpec(8.00,  80, 400),
+  'EAN-13':     _FormatSpec(37.29, 80, 200),
+  'EAN-8':      _FormatSpec(26.73, 80, 200),
+  'UPC-A':      _FormatSpec(37.29, 80, 200),
+  'UPC-E':      _FormatSpec(22.11, 80, 200),
+  'Code 128':   _FormatSpec(30.00, 80, 200),
+  'Code 39':    _FormatSpec(30.00, 75, 200),
+  'Code 93':    _FormatSpec(25.00, 75, 200),
+  'ITF':        _FormatSpec(32.00, 62, 200),
+  'Codabar':    _FormatSpec(28.00, 80, 200),
+  'QR Code':    _FormatSpec(10.00, 80, 400),
+  'DataMatrix': _FormatSpec(8.00,  80, 400),
+  'PDF417':     _FormatSpec(28.00, 75, 200),
+  'Aztec':      _FormatSpec(8.00,  80, 400),
 };
 
-const _dpi300px = 11.811; // px на мм при 300 DPI
+const _dpi300px = 11.811;
 
 class BarcodeResult {
   final String value;
   final String displayFormat;
-  final int    widthPx;       // реальная ширина в пикселях на фото
+  final int    widthPx;
   final int    heightPx;
-  final double scalePct;      // % от номинала 100% (при 300 DPI)
-  final double minPct;        // минимальный допустимый %
+  final double scalePct;
+  final double minPct;
   final double maxPct;
 
   const BarcodeResult({
@@ -56,85 +47,91 @@ class BarcodeResult {
     required this.maxPct,
   });
 
-  // Оценка: в норме ли масштаб
   String get scaleVerdict {
-    if (scalePct < minPct)  return 'мелкий — трудно сканировать';
-    if (scalePct > maxPct)  return 'слишком крупный';
-    if (scalePct < minPct + 10) return 'на пределе минимума';
+    if (scalePct <= 0)           return 'масштаб не определён';
+    if (scalePct < minPct)       return 'мелкий — трудно сканировать';
+    if (scalePct > maxPct)       return 'слишком крупный';
+    if (scalePct < minPct + 10)  return 'на пределе минимума';
     return 'норма';
   }
 
   int get verdictColor {
-    if (scalePct < minPct)       return 0xFFC82020; // красный
-    if (scalePct < minPct + 10)  return 0xFFC8A020; // жёлтый
-    if (scalePct > maxPct)       return 0xFFC8A020; // жёлтый
-    return 0xFF3A8C2F;                               // зелёный
+    if (scalePct <= 0)            return 0xFF808080;
+    if (scalePct < minPct)        return 0xFFC82020;
+    if (scalePct < minPct + 10)   return 0xFFC8A020;
+    if (scalePct > maxPct)        return 0xFFC8A020;
+    return 0xFF3A8C2F;
   }
 }
 
 class BarcodeService {
-  static final _formatNames = {
-    BarcodeFormat.qrCode:     'QR Code',
-    BarcodeFormat.ean13:      'EAN-13',
-    BarcodeFormat.ean8:       'EAN-8',
-    BarcodeFormat.code128:    'Code 128',
-    BarcodeFormat.code39:     'Code 39',
-    BarcodeFormat.code93:     'Code 93',
-    BarcodeFormat.dataMatrix: 'DataMatrix',
-    BarcodeFormat.pdf417:     'PDF417',
-    BarcodeFormat.aztec:      'Aztec',
-    BarcodeFormat.itf:        'ITF',
-    BarcodeFormat.upcA:       'UPC-A',
-    BarcodeFormat.upcE:       'UPC-E',
-    BarcodeFormat.codabar:    'Codabar',
+  static const _fmtNames = {
+    BarcodeType.unknown:    'Unknown',
+    BarcodeType.url:        'URL',
+    BarcodeType.text:       'Text',
+    BarcodeType.email:      'Email',
+    BarcodeType.phone:      'Phone',
+    BarcodeType.sms:        'SMS',
+    BarcodeType.wifi:       'WiFi',
+    BarcodeType.geoCoordinates: 'GeoPoint',
+    BarcodeType.contactInfo:    'Contact',
+    BarcodeType.calendarEvent:  'Calendar',
+    BarcodeType.driverLicense:  'License',
+    BarcodeType.isbn:       'ISBN',
+    BarcodeType.product:    'Product',
   };
+
+  static String _formatName(Barcode b) {
+    // Определяем формат по rawFormat
+    switch (b.format) {
+      case BarcodeFormat.ean13:      return 'EAN-13';
+      case BarcodeFormat.ean8:       return 'EAN-8';
+      case BarcodeFormat.upca:       return 'UPC-A';
+      case BarcodeFormat.upce:       return 'UPC-E';
+      case BarcodeFormat.code128:    return 'Code 128';
+      case BarcodeFormat.code39:     return 'Code 39';
+      case BarcodeFormat.code93:     return 'Code 93';
+      case BarcodeFormat.itf:        return 'ITF';
+      case BarcodeFormat.codabar:    return 'Codabar';
+      case BarcodeFormat.qrCode:     return 'QR Code';
+      case BarcodeFormat.dataMatrix: return 'DataMatrix';
+      case BarcodeFormat.pdf417:     return 'PDF417';
+      case BarcodeFormat.aztec:      return 'Aztec';
+      default:                       return b.format.name;
+    }
+  }
 
   static Future<List<BarcodeResult>> scanImage(Uint8List bytes) async {
     File? tmp;
-    MobileScannerController? controller;
+    BarcodeScanner? scanner;
     try {
       final dir = await getTemporaryDirectory();
-      tmp = File('${dir.path}/scan_${DateTime.now().millisecondsSinceEpoch}.jpg');
+      tmp = File('${dir.path}/bc_${DateTime.now().millisecondsSinceEpoch}.jpg');
       await tmp.writeAsBytes(bytes);
 
-      controller = MobileScannerController(formats: [BarcodeFormat.all]);
-      final result = await controller.analyzeImage(tmp.path);
-      if (result == null || result.barcodes.isEmpty) return [];
+      scanner = BarcodeScanner(formats: [BarcodeFormat.all]);
+      final input = InputImage.fromFile(tmp);
+      final barcodes = await scanner.processImage(input);
 
-      // В mobile_scanner 5.x result.image — это Uint8List, без width/height
-      // Используем стандартную ширину фото 3000px как референс
-      const double imgW = 3000.0;
+      if (barcodes.isEmpty) return [];
 
-      return result.barcodes
+      return barcodes
           .where((b) => b.rawValue != null && b.rawValue!.isNotEmpty)
           .map((b) {
-            final fmt = _formatNames[b.format] ?? b.format.name;
+            final fmt = _formatName(b);
             int w = 0, h = 0;
 
-            final corners = b.corners;
-            if (corners != null && corners.length >= 4) {
-              final xs = corners.map((c) => c.dx);
-              final ys = corners.map((c) => c.dy);
-              w = (xs.reduce((a, b) => a > b ? a : b) -
-                   xs.reduce((a, b) => a < b ? a : b)).round().abs();
-              h = (ys.reduce((a, b) => a > b ? a : b) -
-                   ys.reduce((a, b) => a < b ? a : b)).round().abs();
+            final box = b.boundingBox;
+            if (box != null) {
+              w = box.width.round();
+              h = box.height.round();
             }
 
-            // Рассчитываем масштаб относительно 100% при 300 DPI
-            // Предполагаем, что фото сделано так, что штрихкод занимает
-            // пропорциональную часть кадра — нормируем по ширине изображения
             final spec = _specs[fmt];
             double scalePct = 0;
             if (spec != null && w > 0) {
-              // номинальная ширина в пикселях при 300 DPI
               final nominalPx = spec.nominalWidthMm * _dpi300px;
-              // Если изображение шире 2000px — это полноразмерное фото,
-              // масштаб считаем напрямую
-              // Иначе нормируем к стандартной ширине фото (3000px ≈ 10")
-              final refWidth = imgW;
-              final scaleFactor = refWidth / 3000.0;
-              scalePct = (w / (nominalPx * scaleFactor)) * 100;
+              scalePct = (w / nominalPx) * 100;
             }
 
             return BarcodeResult(
@@ -151,7 +148,7 @@ class BarcodeService {
     } catch (_) {
       return [];
     } finally {
-      await controller?.dispose();
+      await scanner?.close();
       await tmp?.delete().catchError((_) {});
     }
   }
