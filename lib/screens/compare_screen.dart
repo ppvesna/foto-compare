@@ -168,11 +168,8 @@ class _CompareScreenState extends State<CompareScreen>
     if (_cmpImg == null || _cmp2Img == null) return;
     setState(() => _stacking = true);
     try {
-      final merged = await compute(_mergeWithOverlayTransform, {
-        'img1': _cmpImg!, 'img2': _cmp2Img!,
-        'transform': _cmp2Ctrl.value.storage.toList(),
-        'vw': _cmp2ViewerSize.width, 'vh': _cmp2ViewerSize.height,
-      });
+      final aligned = await OpenCvService.alignImages(_cmpImg!, _cmp2Img!);
+      final merged  = await compute(_averageImages, [_cmpImg!, aligned]);
       if (mounted) setState(() { _cmpImg = merged; _cmpAligned = null; _cmp2Img = null; _cmp2Ctrl.value = Matrix4.identity(); });
     } catch (e) {
       if (mounted) xpDlg(context, 'Ошибка', e.toString());
@@ -246,11 +243,8 @@ class _CompareScreenState extends State<CompareScreen>
     if (_refImg == null || _ref2Img == null) return;
     setState(() => _stacking = true);
     try {
-      final merged = await compute(_mergeWithOverlayTransform, {
-        'img1': _refImg!, 'img2': _ref2Img!,
-        'transform': _overlayCtrl.value.storage.toList(),
-        'vw': _overlayViewerSize.width, 'vh': _overlayViewerSize.height,
-      });
+      final aligned = await OpenCvService.alignImages(_refImg!, _ref2Img!);
+      final merged  = await compute(_averageImages, [_refImg!, aligned]);
       if (!mounted) return;
       final now = DateTime.now();
       final label =

@@ -140,11 +140,22 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         val ref = bytesToMat(refBytes)
         val src = bytesToMat(srcBytes)
 
-        val refGray = Mat(); val srcGray = Mat()
-        Imgproc.cvtColor(ref, refGray, Imgproc.COLOR_BGR2GRAY)
-        Imgproc.cvtColor(src, srcGray, Imgproc.COLOR_BGR2GRAY)
+        // Ресайз до 1024px для скорости и стабильности ORB
+        val maxSide = 1024.0
+        val scaleRef = minOf(maxSide / ref.width(), maxSide / ref.height(), 1.0)
+        val refSmall = Mat(); val srcSmall = Mat()
+        Imgproc.resize(ref, refSmall, Size(ref.width() * scaleRef, ref.height() * scaleRef))
+        Imgproc.resize(src, srcSmall, Size(ref.width() * scaleRef, ref.height() * scaleRef))
 
-        val orb = ORB.create(2000)
+        val refGray = Mat(); val srcGray = Mat()
+        Imgproc.cvtColor(refSmall, refGray, Imgproc.COLOR_BGR2GRAY)
+        Imgproc.cvtColor(srcSmall, srcGray, Imgproc.COLOR_BGR2GRAY)
+
+        // Выравниваем гистограмму для лучшего обнаружения точек
+        Imgproc.equalizeHist(refGray, refGray)
+        Imgproc.equalizeHist(srcGray, srcGray)
+
+        val orb = ORB.create(5000)
         val kp1 = MatOfKeyPoint(); val kp2 = MatOfKeyPoint()
         val d1 = Mat(); val d2 = Mat()
         orb.detectAndCompute(refGray, Mat(), kp1, d1)
@@ -152,23 +163,41 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
         if (d1.empty() || d2.empty()) return srcBytes
 
-        val matcher = BFMatcher.create(org.opencv.core.CvType.CV_8U, true)
-        val matches = MatOfDMatch()
-        matcher.match(d1, d2, matches)
+        // kNN-матчинг с тестом Lowe's ratio (0.75) вместо простого match
+        val matcher = BFMatcher.create(org.opencv.core.CvType.CV_8U, false)
+        val knnMatches = ArrayList<MatOfDMatch>()
+        matcher.knnMatch(d1, d2, knnMatches, 2)
 
-        val allMatches = matches.toArray().sortedBy { it.distance }
-        val good = allMatches.take((allMatches.size * 0.2).toInt().coerceAtLeast(8))
-        if (good.size < 4) return srcBytes
+        val good = knnMatches
+            .filter { it.rows() >= 2 }
+            .mapNotNull { m ->
+                val arr = m.toArray()
+                if (arr[0].distance < 0.75f * arr[1].distance) arr[0] else null
+            }
+
+        if (good.size < 10) return srcBytes
 
         val kp1List = kp1.toArray(); val kp2List = kp2.toArray()
         val pts1 = MatOfPoint2f(*good.map { kp1List[it.queryIdx].pt }.toTypedArray())
         val pts2 = MatOfPoint2f(*good.map { kp2List[it.trainIdx].pt }.toTypedArray())
 
-        val H = Calib3d.findHomography(pts2, pts1, Calib3d.RANSAC, 5.0)
+        // RANSAC с жёстким порогом репроекции
+        val H = Calib3d.findHomography(pts2, pts1, Calib3d.RANSAC, 3.0)
         if (H.empty()) return srcBytes
 
+        // Проверка гомографии — отбрасываем если слишком искажает
+        val det = H.get(0, 0)[0] * H.get(1, 1)[0] - H.get(0, 1)[0] * H.get(1, 0)[0]
+        if (det < 0.1 || det > 10.0) return srcBytes
+
+        // Применяем к полноразмерному изображению
+        val Hfull = H.clone()
+        Hfull.put(0, 2, H.get(0, 2)[0] / scaleRef)
+        Hfull.put(1, 2, H.get(1, 2)[0] / scaleRef)
+        Hfull.put(2, 0, H.get(2, 0)[0] * scaleRef)
+        Hfull.put(2, 1, H.get(2, 1)[0] * scaleRef)
+
         val aligned = Mat()
-        Imgproc.warpPerspective(src, aligned, H, ref.size())
+        Imgproc.warpPerspective(src, aligned, Hfull, ref.size())
         return matToBytes(aligned)
     }
 
