@@ -141,12 +141,14 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         val ref = bytesToMat(refBytes)
         val src = bytesToMat(srcBytes)
 
-        // Ресайз до 512px для ECC
         val maxSide = 512.0
         val scale = minOf(maxSide / ref.width(), maxSide / ref.height(), 1.0)
+        val smallW = (ref.width() * scale).toInt()
+        val smallH = (ref.height() * scale).toInt()
+
         val refSmall = Mat(); val srcSmall = Mat()
-        Imgproc.resize(ref, refSmall, Size(ref.width() * scale, ref.height() * scale))
-        Imgproc.resize(src, srcSmall, Size(ref.width() * scale, ref.height() * scale))
+        Imgproc.resize(ref, refSmall, Size(smallW.toDouble(), smallH.toDouble()))
+        Imgproc.resize(src, srcSmall, Size(smallW.toDouble(), smallH.toDouble()))
 
         val refGray = Mat(); val srcGray = Mat()
         Imgproc.cvtColor(refSmall, refGray, Imgproc.COLOR_BGR2GRAY)
@@ -155,24 +157,28 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         refGray.convertTo(refGray, CvType.CV_32F)
         srcGray.convertTo(srcGray, CvType.CV_32F)
 
-        // ECC — находит аффинное преобразование (смещение + поворот + масштаб)
+        // EUCLIDEAN: только сдвиг + поворот — стабильнее AFFINE для съёмки с руки
         val warpMatrix = Mat.eye(2, 3, CvType.CV_32F)
-        val criteria = TermCriteria(TermCriteria.COUNT + TermCriteria.EPS, 200, 1e-5)
+        val criteria = TermCriteria(TermCriteria.COUNT + TermCriteria.EPS, 100, 1e-4)
 
         return try {
             Video.findTransformECC(refGray, srcGray, warpMatrix,
-                Video.MOTION_AFFINE, criteria, Mat(), 5)
+                Video.MOTION_EUCLIDEAN, criteria, Mat(), 5)
 
-            // Масштабируем матрицу под полный размер
+            // Проверяем угол поворота: если > 15° — трансформ неверный, отдаём оригинал
+            val angleDeg = Math.toDegrees(Math.atan2(
+                warpMatrix.get(1, 0)[0], warpMatrix.get(0, 0)[0]))
+            if (Math.abs(angleDeg) > 15.0) return matToBytes(src)
+
+            // Масштабируем сдвиг под полный размер
             warpMatrix.put(0, 2, warpMatrix.get(0, 2)[0] / scale)
             warpMatrix.put(1, 2, warpMatrix.get(1, 2)[0] / scale)
 
             val aligned = Mat()
-            Imgproc.warpAffine(src, aligned, warpMatrix,
-                ref.size(), Imgproc.INTER_LINEAR + Imgproc.WARP_INVERSE_MAP)
+            // Без WARP_INVERSE_MAP — ECC уже даёт прямое преобразование src→ref
+            Imgproc.warpAffine(src, aligned, warpMatrix, ref.size(), Imgproc.INTER_LINEAR)
             matToBytes(aligned)
         } catch (e: Exception) {
-            // ECC не сошёлся — возвращаем оригинал
             matToBytes(src)
         }
     }
