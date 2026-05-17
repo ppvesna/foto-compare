@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -47,6 +48,8 @@ class _CompareScreenState extends State<CompareScreen>
   bool _refAiLoading = false;
 
   // Ручное наложение на вкладке Эталон (ref1 + ref2)
+  final _overlayKey  = GlobalKey();
+  final _cmp2Key     = GlobalKey();
   final _overlayCtrl = TransformationController();
   double _overlayOpacity = 0.5;
   Size _overlayViewerSize = Size.zero;
@@ -168,7 +171,8 @@ class _CompareScreenState extends State<CompareScreen>
     if (_cmpImg == null || _cmp2Img == null) return;
     setState(() => _stacking = true);
     try {
-      final merged  = await compute(_averageImages, [[_cmpImg!, _cmp2Img!], 0.12]);
+      final merged = await _captureFrameRegion(_cmp2Key);
+      if (merged == null) return;
       if (mounted) setState(() { _cmpImg = merged; _cmpAligned = null; _cmp2Img = null; _cmp2Ctrl.value = Matrix4.identity(); });
     } catch (e) {
       if (mounted) xpDlg(context, 'Ошибка', e.toString());
@@ -237,13 +241,13 @@ class _CompareScreenState extends State<CompareScreen>
     );
   }
 
-  // ── Объединение двух эталонов через OpenCV ────────
+  // ── Объединение двух эталонов ────────────────────
   Future<void> _mergeRefImages() async {
     if (_refImg == null || _ref2Img == null) return;
     setState(() => _stacking = true);
     try {
-      final merged  = await compute(_averageImages, [[_refImg!, _ref2Img!], 0.12]);
-      if (!mounted) return;
+      final merged = await _captureFrameRegion(_overlayKey);
+      if (merged == null || !mounted) return;
       final now = DateTime.now();
       final label =
           '${now.day.toString().padLeft(2,'0')}.${now.month.toString().padLeft(2,'0')}.${now.year}';
@@ -261,6 +265,37 @@ class _CompareScreenState extends State<CompareScreen>
     } finally {
       if (mounted) setState(() => _stacking = false);
     }
+  }
+
+  // Захватывает RepaintBoundary и обрезает по рамке (12% с каждого края)
+  Future<Uint8List?> _captureFrameRegion(GlobalKey key) async {
+    final ctx = key.currentContext;
+    if (ctx == null) return null;
+    final boundary = ctx.findRenderObject() as RenderRepaintBoundary?;
+    if (boundary == null) return null;
+
+    final dpr = MediaQuery.of(context).devicePixelRatio;
+    final uiImg = await boundary.toImage(pixelRatio: dpr);
+
+    const margin = 0.12;
+    final w = uiImg.width, h = uiImg.height;
+    final mx = (w * margin).round(), my = (h * margin).round();
+
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    canvas.drawImageRect(
+      uiImg,
+      Rect.fromLTRB(mx.toDouble(), my.toDouble(),
+          (w - mx).toDouble(), (h - my).toDouble()),
+      Rect.fromLTWH(0, 0,
+          (w - 2 * mx).toDouble(), (h - 2 * my).toDouble()),
+      Paint(),
+    );
+    final cropped = await recorder
+        .endRecording()
+        .toImage(w - 2 * mx, h - 2 * my);
+    final bd = await cropped.toByteData(format: ui.ImageByteFormat.png);
+    return bd?.buffer.asUint8List();
   }
 
   // ── AI анализ качества эталона ───────────────────
@@ -818,16 +853,22 @@ class _CompareScreenState extends State<CompareScreen>
                           _overlayViewerSize = Size(c.maxWidth, c.maxHeight);
                         });
                         return Stack(fit: StackFit.expand, children: [
-                          Image.memory(_refImg!, fit: BoxFit.contain),
-                          Opacity(
-                            opacity: _overlayOpacity,
-                            child: InteractiveViewer(
-                              transformationController: _overlayCtrl,
-                              boundaryMargin: const EdgeInsets.all(double.infinity),
-                              minScale: 0.1,
-                              maxScale: 6.0,
-                              child: Image.memory(_ref2Img!, fit: BoxFit.contain),
-                            ),
+                          // RepaintBoundary — захватывает только изображения без рамки
+                          RepaintBoundary(
+                            key: _overlayKey,
+                            child: Stack(fit: StackFit.expand, children: [
+                              Image.memory(_refImg!, fit: BoxFit.contain),
+                              Opacity(
+                                opacity: _overlayOpacity,
+                                child: InteractiveViewer(
+                                  transformationController: _overlayCtrl,
+                                  boundaryMargin: const EdgeInsets.all(double.infinity),
+                                  minScale: 0.1,
+                                  maxScale: 6.0,
+                                  child: Image.memory(_ref2Img!, fit: BoxFit.contain),
+                                ),
+                              ),
+                            ]),
                           ),
                           const IgnorePointer(
                             child: CustomPaint(painter: _FramePainter(0.12)),
@@ -973,15 +1014,20 @@ class _CompareScreenState extends State<CompareScreen>
                           _cmp2ViewerSize = Size(c.maxWidth, c.maxHeight);
                         });
                         return Stack(fit: StackFit.expand, children: [
-                          Image.memory(_cmpImg!, fit: BoxFit.contain),
-                          Opacity(
-                            opacity: _cmp2Opacity,
-                            child: InteractiveViewer(
-                              transformationController: _cmp2Ctrl,
-                              boundaryMargin: const EdgeInsets.all(double.infinity),
-                              minScale: 0.1, maxScale: 6.0,
-                              child: Image.memory(_cmp2Img!, fit: BoxFit.contain),
-                            ),
+                          RepaintBoundary(
+                            key: _cmp2Key,
+                            child: Stack(fit: StackFit.expand, children: [
+                              Image.memory(_cmpImg!, fit: BoxFit.contain),
+                              Opacity(
+                                opacity: _cmp2Opacity,
+                                child: InteractiveViewer(
+                                  transformationController: _cmp2Ctrl,
+                                  boundaryMargin: const EdgeInsets.all(double.infinity),
+                                  minScale: 0.1, maxScale: 6.0,
+                                  child: Image.memory(_cmp2Img!, fit: BoxFit.contain),
+                                ),
+                              ),
+                            ]),
                           ),
                           const IgnorePointer(
                             child: CustomPaint(painter: _FramePainter(0.12)),
