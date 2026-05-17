@@ -168,8 +168,7 @@ class _CompareScreenState extends State<CompareScreen>
     if (_cmpImg == null || _cmp2Img == null) return;
     setState(() => _stacking = true);
     try {
-      final aligned = await OpenCvService.alignImages(_cmpImg!, _cmp2Img!);
-      final merged  = await compute(_averageImages, [_cmpImg!, aligned]);
+      final merged  = await compute(_averageImages, [_cmpImg!, _cmp2Img!]);
       if (mounted) setState(() { _cmpImg = merged; _cmpAligned = null; _cmp2Img = null; _cmp2Ctrl.value = Matrix4.identity(); });
     } catch (e) {
       if (mounted) xpDlg(context, 'Ошибка', e.toString());
@@ -243,8 +242,7 @@ class _CompareScreenState extends State<CompareScreen>
     if (_refImg == null || _ref2Img == null) return;
     setState(() => _stacking = true);
     try {
-      final aligned = await OpenCvService.alignImages(_refImg!, _ref2Img!);
-      final merged  = await compute(_averageImages, [_refImg!, aligned]);
+      final merged  = await compute(_averageImages, [_refImg!, _ref2Img!]);
       if (!mounted) return;
       final now = DateTime.now();
       final label =
