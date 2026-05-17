@@ -168,7 +168,7 @@ class _CompareScreenState extends State<CompareScreen>
     if (_cmpImg == null || _cmp2Img == null) return;
     setState(() => _stacking = true);
     try {
-      final merged  = await compute(_averageImages, [_cmpImg!, _cmp2Img!]);
+      final merged  = await compute(_averageImages, [[_cmpImg!, _cmp2Img!], 0.12]);
       if (mounted) setState(() { _cmpImg = merged; _cmpAligned = null; _cmp2Img = null; _cmp2Ctrl.value = Matrix4.identity(); });
     } catch (e) {
       if (mounted) xpDlg(context, 'Ошибка', e.toString());
@@ -242,7 +242,7 @@ class _CompareScreenState extends State<CompareScreen>
     if (_refImg == null || _ref2Img == null) return;
     setState(() => _stacking = true);
     try {
-      final merged  = await compute(_averageImages, [_refImg!, _ref2Img!]);
+      final merged  = await compute(_averageImages, [[_refImg!, _ref2Img!], 0.12]);
       if (!mounted) return;
       final now = DateTime.now();
       final label =
@@ -569,7 +569,7 @@ class _CompareScreenState extends State<CompareScreen>
         aligned.add(a);
       }
       // Шаг 2: усредняем пиксели в isolate
-      final result = await compute(_averageImages, aligned);
+      final result = await compute(_averageImages, [aligned, 0.0]);
       if (mounted) {
         setState(() {
           if (isRef) { _refImg = result; _refAligned = null; }
@@ -829,6 +829,9 @@ class _CompareScreenState extends State<CompareScreen>
                               child: Image.memory(_ref2Img!, fit: BoxFit.contain),
                             ),
                           ),
+                          const IgnorePointer(
+                            child: CustomPaint(painter: _FramePainter(0.12)),
+                          ),
                           const Positioned(left: 8, top: 8,
                               child: _ImgLabel('Эталон 1')),
                           const Positioned(right: 8, top: 8,
@@ -979,6 +982,9 @@ class _CompareScreenState extends State<CompareScreen>
                               minScale: 0.1, maxScale: 6.0,
                               child: Image.memory(_cmp2Img!, fit: BoxFit.contain),
                             ),
+                          ),
+                          const IgnorePointer(
+                            child: CustomPaint(painter: _FramePainter(0.12)),
                           ),
                           const Positioned(left: 8, top: 8, child: _ImgLabel('Фото 1')),
                           const Positioned(right: 8, top: 8, child: _ImgLabel('Фото 2 ↕↔')),
@@ -1797,15 +1803,25 @@ class _CompareScreenState extends State<CompareScreen>
           ));
 }
 
-// Простое усреднение пикселей (изображения уже выровнены через OpenCV)
-Uint8List _averageImages(List<Uint8List> images) {
+// Усреднение пикселей. args = [List<Uint8List> images, double cropMargin]
+// cropMargin — доля края для обрезки (0.12 = 12% с каждой стороны)
+Uint8List _averageImages(List<dynamic> args) {
+  final rawImages = args[0] as List<Uint8List>;
+  final cropMargin = args.length > 1 ? (args[1] as double) : 0.0;
   final decoded = <img.Image>[];
-  for (final b in images) {
-    final d = img.decodeImage(b);
-    if (d != null) decoded.add(d);
+  for (final b in rawImages) {
+    var d = img.decodeImage(b);
+    if (d == null) continue;
+    if (cropMargin > 0) {
+      final mx = (d.width  * cropMargin).round();
+      final my = (d.height * cropMargin).round();
+      d = img.copyCrop(d, x: mx, y: my,
+          width: d.width - 2 * mx, height: d.height - 2 * my);
+    }
+    decoded.add(d);
   }
-  if (decoded.isEmpty) return images.first;
-  if (decoded.length == 1) return images.first;
+  if (decoded.isEmpty) return rawImages.first;
+  if (decoded.length == 1) return rawImages.first;
 
   int w = decoded[0].width;
   int h = decoded[0].height;
@@ -1827,6 +1843,45 @@ Uint8List _averageImages(List<Uint8List> images) {
     }
   }
   return Uint8List.fromList(img.encodePng(out));
+}
+
+// Рамка: затемняет края (cropMargin с каждой стороны), центр прозрачный
+class _FramePainter extends CustomPainter {
+  final double margin;
+  const _FramePainter(this.margin);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final shadow = Paint()..color = const Color(0xAA000000);
+    final ml = size.width  * margin;
+    final mt = size.height * margin;
+    final mr = size.width  - ml;
+    final mb = size.height - mt;
+
+    canvas.drawRect(Rect.fromLTRB(0, 0, size.width, mt), shadow);
+    canvas.drawRect(Rect.fromLTRB(0, mb, size.width, size.height), shadow);
+    canvas.drawRect(Rect.fromLTRB(0, mt, ml, mb), shadow);
+    canvas.drawRect(Rect.fromLTRB(mr, mt, size.width, mb), shadow);
+
+    // Белые уголки
+    final line = Paint()
+      ..color = Colors.white
+      ..strokeWidth = 2.0
+      ..style = PaintingStyle.stroke;
+    final arm = size.width * 0.06;
+
+    void corner(double x, double y, double dx, double dy) {
+      canvas.drawLine(Offset(x, y), Offset(x + dx * arm, y), line);
+      canvas.drawLine(Offset(x, y), Offset(x, y + dy * arm), line);
+    }
+    corner(ml, mt,  1,  1);
+    corner(mr, mt, -1,  1);
+    corner(ml, mb,  1, -1);
+    corner(mr, mb, -1, -1);
+  }
+
+  @override
+  bool shouldRepaint(_FramePainter old) => old.margin != margin;
 }
 
 class _ImgLabel extends StatelessWidget {
