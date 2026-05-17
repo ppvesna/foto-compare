@@ -77,5 +77,22 @@ class OpenCvService {
     }
   }
 
+  // ── Слияние двух снимков одного объекта ──────────────────────────────────
+  // AKAZE + homography + sharpness-weighted fusion
+  static Future<Uint8List> fuseImages(
+      Uint8List reference, Uint8List source) async {
+    if (!_available) return reference;
+    try {
+      final result = await _channel.invokeMethod<Uint8List>(
+          'fuseImages', {'reference': reference, 'source': source});
+      return result ?? reference;
+    } on MissingPluginException {
+      _available = false;
+      return reference;
+    } catch (_) {
+      return reference;
+    }
+  }
+
   static bool get isAvailable => _available;
 }

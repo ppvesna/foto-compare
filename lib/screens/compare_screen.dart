@@ -218,15 +218,19 @@ class _CompareScreenState extends State<CompareScreen>
     if (mounted) setState(() { _ref1Sharpness = results[0]; _ref2Sharpness = results[1]; });
   }
 
-  // ── Выбрать снимок → коррекция перспективы → сохранить как эталон ──
-  Future<void> _selectRef(Uint8List chosen) async {
+  // ── Выбрать снимок: слить оба → коррекция перспективы → сохранить ──
+  // ref = выбранный (лучший), src = второй; если src == null — только коррекция
+  Future<void> _selectRef(Uint8List ref, [Uint8List? src]) async {
     setState(() { _stacking = true; });
     try {
-      final flat = await OpenCvService.perspectiveCorrect(chosen);
+      final fused = src != null
+          ? await OpenCvService.fuseImages(ref, src)
+          : ref;
+      final flat = await OpenCvService.perspectiveCorrect(fused);
       if (!mounted) return;
       setState(() {
         _refImg = flat;
-        _refOriginal = chosen;
+        _refOriginal = ref;
         _refAligned = null;
         _ref2Img = null;
         _ref1Sharpness = null;
@@ -876,7 +880,7 @@ class _CompareScreenState extends State<CompareScreen>
                       label: 'Эталон 1',
                       sharpness: _ref1Sharpness,
                       other: _ref2Sharpness,
-                      onSelect: () => _selectRef(_refImg!),
+                      onSelect: () => _selectRef(_refImg!, _ref2Img),
                     )),
                     const SizedBox(width: 8),
                     Expanded(child: _SharpnessCard(
@@ -884,7 +888,7 @@ class _CompareScreenState extends State<CompareScreen>
                       label: 'Эталон 2',
                       sharpness: _ref2Sharpness,
                       other: _ref1Sharpness,
-                      onSelect: () => _selectRef(_ref2Img!),
+                      onSelect: () => _selectRef(_ref2Img!, _refImg),
                     )),
                   ]),
                 ],
