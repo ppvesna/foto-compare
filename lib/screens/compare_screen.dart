@@ -43,7 +43,9 @@ class _CompareScreenState extends State<CompareScreen>
   Uint8List? _cmpAligned;
   Uint8List? _refOriginal; // оригинал эталона до перспективы
   Uint8List? _cmpOriginal; // оригинал фото до перспективы
-  Uint8List? _ref2Img;     // второй снимок эталона для объединения
+  Uint8List? _ref2Img;     // второй снимок эталона для выбора
+  double? _ref1Sharpness;  // резкость эталона 1
+  double? _ref2Sharpness;  // резкость эталона 2
   AiAnalysis? _refAiResult;
   bool _refAiLoading = false;
 
@@ -206,12 +208,14 @@ class _CompareScreenState extends State<CompareScreen>
     final x = await _picker.pickImage(source: src, imageQuality: 92);
     if (x == null) return;
     final bytes = await x.readAsBytes();
-    if (mounted) {
-      setState(() {
-        _ref2Img = bytes;
-        _overlayCtrl.value = Matrix4.identity();
-      });
-    }
+    if (!mounted) return;
+    setState(() { _ref2Img = bytes; _ref1Sharpness = null; _ref2Sharpness = null; });
+    // Считаем резкость обоих снимков параллельно
+    final results = await Future.wait([
+      compute(_laplacianSharpness, _refImg!),
+      compute(_laplacianSharpness, bytes),
+    ]);
+    if (mounted) setState(() { _ref1Sharpness = results[0]; _ref2Sharpness = results[1]; });
   }
 
   // ── Второй образец: выбор ────────────────────────
@@ -843,69 +847,33 @@ class _CompareScreenState extends State<CompareScreen>
                     ),
                   ),
                 ] else ...[
-                  // Overlay: эталон 1 (фон) + эталон 2 (двигается)
-                  ClipRect(
-                    child: Container(
-                      height: 240,
-                      color: Colors.black,
-                      child: LayoutBuilder(builder: (_, c) {
-                        WidgetsBinding.instance.addPostFrameCallback((_) {
-                          _overlayViewerSize = Size(c.maxWidth, c.maxHeight);
-                        });
-                        return Stack(fit: StackFit.expand, children: [
-                          // RepaintBoundary — захватывает только изображения без рамки
-                          RepaintBoundary(
-                            key: _overlayKey,
-                            child: Stack(fit: StackFit.expand, children: [
-                              Image.memory(_refImg!, fit: BoxFit.contain),
-                              Opacity(
-                                opacity: _overlayOpacity,
-                                child: InteractiveViewer(
-                                  transformationController: _overlayCtrl,
-                                  boundaryMargin: const EdgeInsets.all(double.infinity),
-                                  minScale: 0.1,
-                                  maxScale: 6.0,
-                                  child: Image.memory(_ref2Img!, fit: BoxFit.contain),
-                                ),
-                              ),
-                            ]),
-                          ),
-                          const IgnorePointer(
-                            child: CustomPaint(painter: _FramePainter(0.12)),
-                          ),
-                          const Positioned(left: 8, top: 8,
-                              child: _ImgLabel('Эталон 1')),
-                          const Positioned(right: 8, top: 8,
-                              child: _ImgLabel('Эталон 2 ↕↔')),
-                        ]);
+                  // Два снимка рядом — пользователь выбирает лучший
+                  const Text('Выберите лучший снимок:',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  Row(children: [
+                    Expanded(child: _SharpnessCard(
+                      bytes: _refImg!,
+                      label: 'Эталон 1',
+                      sharpness: _ref1Sharpness,
+                      other: _ref2Sharpness,
+                      onSelect: () => setState(() {
+                        _ref2Img = null;
+                        _ref1Sharpness = null; _ref2Sharpness = null;
                       }),
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Row(children: [
-                    const SizedBox(width: 90,
-                        child: Text('Прозрачность:', style: TextStyle(fontSize: 11))),
-                    Expanded(child: Slider(
-                      value: _overlayOpacity,
-                      onChanged: (v) => setState(() => _overlayOpacity = v),
-                      activeColor: AppTheme.blue,
                     )),
-                    Text('${(_overlayOpacity * 100).round()}%',
-                        style: const TextStyle(fontSize: 10)),
-                  ]),
-                  Row(children: [
-                    XpBtn(
-                        label: '🗑 Убрать',
-                        danger: true,
-                        onPressed: () => setState(() {
-                          _ref2Img = null;
-                          _overlayCtrl.value = Matrix4.identity();
-                        })),
-                    const Spacer(),
-                    XpBtn(
-                        label: '🔀 OpenCV объединить',
-                        primary: true,
-                        onPressed: _stacking ? null : _mergeRefImages),
+                    const SizedBox(width: 8),
+                    Expanded(child: _SharpnessCard(
+                      bytes: _ref2Img!,
+                      label: 'Эталон 2',
+                      sharpness: _ref2Sharpness,
+                      other: _ref1Sharpness,
+                      onSelect: () => setState(() {
+                        _refImg = _ref2Img;
+                        _ref2Img = null;
+                        _ref1Sharpness = null; _ref2Sharpness = null;
+                      }),
+                    )),
                   ]),
                 ],
 
@@ -1849,6 +1817,28 @@ class _CompareScreenState extends State<CompareScreen>
           ));
 }
 
+// Резкость по дисперсии Лапласиана (выше = резче)
+double _laplacianSharpness(Uint8List bytes) {
+  final src = img.decodeImage(bytes);
+  if (src == null) return 0;
+  final small = img.copyResize(img.grayscale(src), width: 512);
+  final w = small.width, h = small.height;
+  double sum = 0, sumSq = 0;
+  int n = 0;
+  for (int y = 1; y < h - 1; y++) {
+    for (int x = 1; x < w - 1; x++) {
+      final v = small.getPixel(x, y).r.toInt() * 4 -
+          small.getPixel(x - 1, y).r.toInt() -
+          small.getPixel(x + 1, y).r.toInt() -
+          small.getPixel(x, y - 1).r.toInt() -
+          small.getPixel(x, y + 1).r.toInt();
+      sum += v; sumSq += v * v; n++;
+    }
+  }
+  final mean = sum / n;
+  return sumSq / n - mean * mean; // дисперсия
+}
+
 // Усреднение пикселей. args = [List<Uint8List> images, double cropMargin]
 // cropMargin — доля края для обрезки (0.12 = 12% с каждой стороны)
 Uint8List _averageImages(List<dynamic> args) {
@@ -1889,6 +1879,78 @@ Uint8List _averageImages(List<dynamic> args) {
     }
   }
   return Uint8List.fromList(img.encodePng(out));
+}
+
+// Карточка выбора снимка с показателем резкости
+class _SharpnessCard extends StatelessWidget {
+  final Uint8List bytes;
+  final String label;
+  final double? sharpness;
+  final double? other;       // резкость второго снимка для сравнения
+  final VoidCallback onSelect;
+
+  const _SharpnessCard({
+    required this.bytes, required this.label,
+    required this.sharpness, required this.other,
+    required this.onSelect,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isBetter = sharpness != null && other != null && sharpness! >= other!;
+    final loading  = sharpness == null;
+
+    return GestureDetector(
+      onTap: onSelect,
+      child: Container(
+        decoration: BoxDecoration(
+          border: Border.all(
+            color: isBetter ? AppTheme.simHigh : AppTheme.silver,
+            width: isBetter ? 2 : 1,
+          ),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Stack(children: [
+            Image.memory(bytes, height: 140, fit: BoxFit.cover,
+                width: double.infinity),
+            if (isBetter)
+              const Positioned(top: 6, right: 6,
+                child: _ImgLabel('✓ Резче')),
+          ]),
+          Container(
+            color: AppTheme.silver,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(label, style: const TextStyle(
+                  fontSize: 11, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 2),
+              if (loading)
+                const Text('Анализ...', style: TextStyle(fontSize: 10, color: Colors.grey))
+              else ...[
+                Text('Резкость: ${sharpness!.toStringAsFixed(0)}',
+                    style: const TextStyle(fontSize: 10)),
+              ],
+              const SizedBox(height: 6),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: onSelect,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: isBetter ? AppTheme.simHigh : AppTheme.blue,
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: const Text('Выбрать', style: TextStyle(
+                      fontSize: 11, color: Colors.white)),
+                ),
+              ),
+            ]),
+          ),
+        ]),
+      ),
+    );
+  }
 }
 
 // Рамка: затемняет края (cropMargin с каждой стороны), центр прозрачный
