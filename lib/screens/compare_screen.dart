@@ -218,6 +218,25 @@ class _CompareScreenState extends State<CompareScreen>
     if (mounted) setState(() { _ref1Sharpness = results[0]; _ref2Sharpness = results[1]; });
   }
 
+  // ── Выбрать снимок → коррекция перспективы → сохранить как эталон ──
+  Future<void> _selectRef(Uint8List chosen) async {
+    setState(() { _stacking = true; });
+    try {
+      final flat = await OpenCvService.perspectiveCorrect(chosen);
+      if (!mounted) return;
+      setState(() {
+        _refImg = flat;
+        _refOriginal = chosen;
+        _refAligned = null;
+        _ref2Img = null;
+        _ref1Sharpness = null;
+        _ref2Sharpness = null;
+      });
+    } finally {
+      if (mounted) setState(() => _stacking = false);
+    }
+  }
+
   // ── Второй образец: выбор ────────────────────────
   Future<void> _pickCmp2([ImageSource? source]) async {
     final src = source ?? await _pickSource();
@@ -857,10 +876,7 @@ class _CompareScreenState extends State<CompareScreen>
                       label: 'Эталон 1',
                       sharpness: _ref1Sharpness,
                       other: _ref2Sharpness,
-                      onSelect: () => setState(() {
-                        _ref2Img = null;
-                        _ref1Sharpness = null; _ref2Sharpness = null;
-                      }),
+                      onSelect: () => _selectRef(_refImg!),
                     )),
                     const SizedBox(width: 8),
                     Expanded(child: _SharpnessCard(
@@ -868,11 +884,7 @@ class _CompareScreenState extends State<CompareScreen>
                       label: 'Эталон 2',
                       sharpness: _ref2Sharpness,
                       other: _ref1Sharpness,
-                      onSelect: () => setState(() {
-                        _refImg = _ref2Img;
-                        _ref2Img = null;
-                        _ref1Sharpness = null; _ref2Sharpness = null;
-                      }),
+                      onSelect: () => _selectRef(_ref2Img!),
                     )),
                   ]),
                 ],
