@@ -277,35 +277,39 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     }
 
     // ── Слияние двух снимков одного объекта ──────────────────────────────────
-    // 1. AKAZE + homography — выравниваем src в пространство ref
-    // 2. Карты резкости (локальная дисперсия Лапласиана) для обоих снимков
-    // 3. Взвешенное слияние: каждый пиксель берётся больше с того снимка, где он резче
     private fun fuseImages(refBytes: ByteArray, srcBytes: ByteArray): ByteArray {
-        val ref = bytesToMat(refBytes)
-        val src = bytesToMat(srcBytes)
+        return try {
+            fuseImagesInternal(refBytes, srcBytes)
+        } catch (e: Exception) {
+            matToBytes(bytesToMat(refBytes)) // fallback — не крашим приложение
+        }
+    }
 
-        // Детектирование на уменьшенной копии (быстрее, но достаточно точно)
+    private fun fuseImagesInternal(refBytes: ByteArray, srcBytes: ByteArray): ByteArray {
+        val refOrig = bytesToMat(refBytes)
+        val srcOrig = bytesToMat(srcBytes)
+
+        // Всё обрабатываем на 1024px — экономия памяти и скорость
         val maxSide = 1024.0
-        val s = minOf(maxSide / ref.width(), maxSide / ref.height(), 1.0)
-
-        val refS = Mat(); val srcS = Mat()
-        Imgproc.resize(ref, refS, Size(ref.width() * s, ref.height() * s))
-        Imgproc.resize(src, srcS, Size(src.width() * s, src.height() * s))
+        val s = minOf(maxSide / refOrig.width(), maxSide / refOrig.height(), 1.0)
+        val ref = Mat(); val src = Mat()
+        Imgproc.resize(refOrig, ref, Size(refOrig.width() * s, refOrig.height() * s))
+        Imgproc.resize(srcOrig, src, Size(srcOrig.width() * s, srcOrig.height() * s))
 
         val refG = Mat(); val srcG = Mat()
-        Imgproc.cvtColor(refS, refG, Imgproc.COLOR_BGR2GRAY)
-        Imgproc.cvtColor(srcS, srcG, Imgproc.COLOR_BGR2GRAY)
+        Imgproc.cvtColor(ref, refG, Imgproc.COLOR_BGR2GRAY)
+        Imgproc.cvtColor(src, srcG, Imgproc.COLOR_BGR2GRAY)
 
-        // Шаг 1: AKAZE — устойчивее ORB для реальных фото
-        val akaze = AKAZE.create()
+        // ORB — гарантированно доступен в Android OpenCV
+        val orb = ORB.create(3000)
         val kpRef = MatOfKeyPoint(); val kpSrc = MatOfKeyPoint()
         val dRef = Mat(); val dSrc = Mat()
-        akaze.detectAndCompute(refG, Mat(), kpRef, dRef)
-        akaze.detectAndCompute(srcG, Mat(), kpSrc, dSrc)
+        orb.detectAndCompute(refG, Mat(), kpRef, dRef)
+        orb.detectAndCompute(srcG, Mat(), kpSrc, dSrc)
 
         if (dRef.rows() < 10 || dSrc.rows() < 10) return matToBytes(ref)
 
-        // Шаг 2: BFMatcher + Lowe's ratio test (0.75)
+        // BFMatcher + Lowe's ratio test
         val matcher = BFMatcher.create(Core.NORM_HAMMING)
         val knnMatches = ArrayList<MatOfDMatch>()
         matcher.knnMatch(dRef, dSrc, knnMatches, 2)
@@ -323,50 +327,41 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         val ptRef2f = MatOfPoint2f(*good.map { kpRA[it.queryIdx].pt }.toTypedArray())
         val ptSrc2f = MatOfPoint2f(*good.map { kpSA[it.trainIdx].pt }.toTypedArray())
 
-        // Шаг 3: Гомография (8 DOF) через RANSAC — обрабатывает перспективу
+        // Гомография через RANSAC (8 DOF — учитывает перспективу)
         val H = Calib3d.findHomography(ptSrc2f, ptRef2f, Calib3d.RANSAC, 3.0)
         if (H.empty()) return matToBytes(ref)
 
-        // Масштабируем H для полного разрешения:
-        // H_full = S⁻¹ · H_small · S,  S = diag(s, s, 1)
-        if (s < 1.0) {
-            H.put(0, 2, H.get(0, 2)[0] / s)
-            H.put(1, 2, H.get(1, 2)[0] / s)
-            H.put(2, 0, H.get(2, 0)[0] * s)
-            H.put(2, 1, H.get(2, 1)[0] * s)
-        }
-
-        // Деформируем src → пространство ref
         val warped = Mat()
         Imgproc.warpPerspective(src, warped, H, ref.size())
 
-        // Маска: 1 там где у warped есть реальные пиксели, 0 — чёрные края
+        // Маска: 1 — валидный пиксель, 0 — чёрный край после деформации
         val srcMask = Mat.ones(src.rows(), src.cols(), CvType.CV_8U)
         val warpedMask = Mat()
         Imgproc.warpPerspective(srcMask, warpedMask, H, ref.size(), Imgproc.INTER_NEAREST)
         val warpedMask64 = Mat()
         warpedMask.convertTo(warpedMask64, CvType.CV_64F)
 
-        // Шаг 4: Карты резкости
+        // Карты резкости (дисперсия Лапласиана, сглаженная)
         val sharp1 = sharpnessMap(ref)
-        val sharp2 = Mat()
-        Core.multiply(sharpnessMap(warped), warpedMask64, sharp2) // обнуляем края
+        val sharp2raw = sharpnessMap(warped)
+        val sharp2 = Mat(); Core.multiply(sharp2raw, warpedMask64, sharp2)
 
-        // Шаг 5: Взвешенное слияние
+        // Взвешенное слияние пикселей
         val ref64 = Mat(); val warp64 = Mat()
         ref.convertTo(ref64, CvType.CV_64F)
         warped.convertTo(warp64, CvType.CV_64F)
 
+        val s1List = ArrayList<Mat>().also { it.add(sharp1); it.add(sharp1); it.add(sharp1) }
+        val s2List = ArrayList<Mat>().also { it.add(sharp2); it.add(sharp2); it.add(sharp2) }
         val s1c = Mat(); val s2c = Mat()
-        Core.merge(listOf(sharp1, sharp1, sharp1), s1c)
-        Core.merge(listOf(sharp2, sharp2, sharp2), s2c)
+        Core.merge(s1List, s1c)
+        Core.merge(s2List, s2c)
 
         val n1 = Mat(); Core.multiply(ref64, s1c, n1)
         val n2 = Mat(); Core.multiply(warp64, s2c, n2)
         val num = Mat(); Core.add(n1, n2, num)
-
         val den = Mat(); Core.add(s1c, s2c, den)
-        Core.add(den, Scalar(1e-6, 1e-6, 1e-6), den) // защита от деления на 0
+        Core.add(den, Scalar(1e-6, 1e-6, 1e-6), den)
 
         val result64 = Mat(); Core.divide(num, den, result64)
         val result = Mat(); result64.convertTo(result, CvType.CV_8U)
@@ -374,22 +369,16 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         return matToBytes(result)
     }
 
-    // Карта локальной резкости: дисперсия Лапласиана в каждой точке (0..1)
+    // Карта локальной резкости: дисперсия Лапласиана, нормализована 0..1
     private fun sharpnessMap(mat: Mat): Mat {
         val gray = Mat()
         Imgproc.cvtColor(mat, gray, Imgproc.COLOR_BGR2GRAY)
         gray.convertTo(gray, CvType.CV_64F)
-
         val lap = Mat()
         Imgproc.Laplacian(gray, lap, CvType.CV_64F, 3)
-
-        val lapSq = Mat()
-        Core.multiply(lap, lap, lapSq)
-
-        // Гауссово размытие ≈ локальное среднее квадрата Лапласиана
+        val lapSq = Mat(); Core.multiply(lap, lap, lapSq)
         val local = Mat()
         Imgproc.GaussianBlur(lapSq, local, Size(65.0, 65.0), 0.0)
-
         val norm = Mat()
         Core.normalize(local, norm, 0.0, 1.0, Core.NORM_MINMAX, CvType.CV_64F)
         return norm
