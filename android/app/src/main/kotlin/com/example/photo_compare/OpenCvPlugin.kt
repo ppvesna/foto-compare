@@ -289,7 +289,7 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         val refOrig = bytesToMat(refBytes)
         val srcOrig = bytesToMat(srcBytes)
 
-        // Всё обрабатываем на 1024px — экономия памяти и скорость
+        // Работаем на 1024px
         val maxSide = 1024.0
         val s = minOf(maxSide / refOrig.width(), maxSide / refOrig.height(), 1.0)
         val ref = Mat(); val src = Mat()
@@ -300,7 +300,7 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         Imgproc.cvtColor(ref, refG, Imgproc.COLOR_BGR2GRAY)
         Imgproc.cvtColor(src, srcG, Imgproc.COLOR_BGR2GRAY)
 
-        // ORB — гарантированно доступен в Android OpenCV
+        // ── Шаг 1: ORB — грубое совмещение ──────────────────────────────────
         val orb = ORB.create(3000)
         val kpRef = MatOfKeyPoint(); val kpSrc = MatOfKeyPoint()
         val dRef = Mat(); val dSrc = Mat()
@@ -309,11 +309,9 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
         if (dRef.rows() < 10 || dSrc.rows() < 10) return matToBytes(ref)
 
-        // BFMatcher + Lowe's ratio test
         val matcher = BFMatcher.create(Core.NORM_HAMMING)
         val knnMatches = ArrayList<MatOfDMatch>()
         matcher.knnMatch(dRef, dSrc, knnMatches, 2)
-
         val good = knnMatches
             .filter { it.rows() >= 2 }
             .mapNotNull { m ->
@@ -327,38 +325,65 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         val ptRef2f = MatOfPoint2f(*good.map { kpRA[it.queryIdx].pt }.toTypedArray())
         val ptSrc2f = MatOfPoint2f(*good.map { kpSA[it.trainIdx].pt }.toTypedArray())
 
-        // Гомография через RANSAC (8 DOF — учитывает перспективу)
+        // ── Шаг 2: Homography + warpPerspective — устраняем перспективу ─────
         val H = Calib3d.findHomography(ptSrc2f, ptRef2f, Calib3d.RANSAC, 3.0)
         if (H.empty()) return matToBytes(ref)
 
-        val warped = Mat()
-        Imgproc.warpPerspective(src, warped, H, ref.size())
+        val coarse = Mat()
+        Imgproc.warpPerspective(src, coarse, H, ref.size())
 
-        // Маска: 1 — валидный пиксель, 0 — чёрный край после деформации
+        // Маска валидных пикселей после деформации
         val srcMask = Mat.ones(src.rows(), src.cols(), CvType.CV_8U)
         val warpedMask = Mat()
         Imgproc.warpPerspective(srcMask, warpedMask, H, ref.size(), Imgproc.INTER_NEAREST)
+
+        // ── Шаг 3: ECC refinement — субпиксельное уточнение ─────────────────
+        // После Homography остаётся только мелкий остаточный сдвиг — ECC его устраняет
+        val refF = Mat(); val coarseF = Mat()
+        refG.convertTo(refF, CvType.CV_32F)
+        val coarseG = Mat(); Imgproc.cvtColor(coarse, coarseG, Imgproc.COLOR_BGR2GRAY)
+        coarseG.convertTo(coarseF, CvType.CV_32F)
+
+        val warpMatrix = Mat.eye(2, 3, CvType.CV_32F)
+        val criteria = TermCriteria(TermCriteria.COUNT + TermCriteria.EPS, 50, 1e-4)
+        val refined = try {
+            Video.findTransformECC(refF, coarseF, warpMatrix,
+                Video.MOTION_EUCLIDEAN, criteria, Mat(), 5)
+            // Проверка: ECC не должен давать большой поворот на уже выровненных снимках
+            val angle = Math.toDegrees(Math.atan2(
+                warpMatrix.get(1, 0)[0], warpMatrix.get(0, 0)[0]))
+            if (Math.abs(angle) > 5.0) coarse  // ECC ушёл не туда — берём coarse
+            else {
+                val r = Mat()
+                Imgproc.warpAffine(coarse, r, warpMatrix, ref.size(), Imgproc.INTER_LINEAR)
+                // Уточняем маску тоже
+                Imgproc.warpAffine(warpedMask, warpedMask, warpMatrix, ref.size(),
+                    Imgproc.INTER_NEAREST)
+                r
+            }
+        } catch (e: Exception) {
+            coarse  // ECC не сошёлся — coarse достаточно
+        }
+
+        // ── Шаг 4: Взвешенное слияние по резкости ───────────────────────────
         val warpedMask64 = Mat()
         warpedMask.convertTo(warpedMask64, CvType.CV_64F)
 
-        // Карты резкости (дисперсия Лапласиана, сглаженная)
         val sharp1 = sharpnessMap(ref)
-        val sharp2raw = sharpnessMap(warped)
+        val sharp2raw = sharpnessMap(refined)
         val sharp2 = Mat(); Core.multiply(sharp2raw, warpedMask64, sharp2)
 
-        // Взвешенное слияние пикселей
-        val ref64 = Mat(); val warp64 = Mat()
+        val ref64 = Mat(); val refined64 = Mat()
         ref.convertTo(ref64, CvType.CV_64F)
-        warped.convertTo(warp64, CvType.CV_64F)
+        refined.convertTo(refined64, CvType.CV_64F)
 
         val s1List = ArrayList<Mat>().also { it.add(sharp1); it.add(sharp1); it.add(sharp1) }
         val s2List = ArrayList<Mat>().also { it.add(sharp2); it.add(sharp2); it.add(sharp2) }
         val s1c = Mat(); val s2c = Mat()
-        Core.merge(s1List, s1c)
-        Core.merge(s2List, s2c)
+        Core.merge(s1List, s1c); Core.merge(s2List, s2c)
 
         val n1 = Mat(); Core.multiply(ref64, s1c, n1)
-        val n2 = Mat(); Core.multiply(warp64, s2c, n2)
+        val n2 = Mat(); Core.multiply(refined64, s2c, n2)
         val num = Mat(); Core.add(n1, n2, num)
         val den = Mat(); Core.add(s1c, s2c, den)
         Core.add(den, Scalar(1e-6, 1e-6, 1e-6), den)
