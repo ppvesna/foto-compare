@@ -870,26 +870,95 @@ class _CompareScreenState extends State<CompareScreen>
                     ),
                   ),
                 ] else ...[
-                  // Два снимка рядом — пользователь выбирает лучший
-                  const Text('Выберите лучший снимок:',
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
+                  // Оверлей: эталон 1 (фон) + эталон 2 (двигается вручную)
+                  ClipRect(
+                    child: Container(
+                      height: 260,
+                      color: Colors.black,
+                      child: LayoutBuilder(builder: (_, c) {
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          _overlayViewerSize = Size(c.maxWidth, c.maxHeight);
+                        });
+                        return Stack(fit: StackFit.expand, children: [
+                          RepaintBoundary(
+                            key: _overlayKey,
+                            child: Stack(fit: StackFit.expand, children: [
+                              Image.memory(_refImg!, fit: BoxFit.contain),
+                              Opacity(
+                                opacity: _overlayOpacity,
+                                child: InteractiveViewer(
+                                  transformationController: _overlayCtrl,
+                                  boundaryMargin:
+                                      const EdgeInsets.all(double.infinity),
+                                  minScale: 0.1, maxScale: 6.0,
+                                  child: Image.memory(_ref2Img!,
+                                      fit: BoxFit.contain),
+                                ),
+                              ),
+                            ]),
+                          ),
+                          const IgnorePointer(
+                            child: CustomPaint(painter: _FramePainter(0.12)),
+                          ),
+                          const Positioned(left: 8, top: 8,
+                              child: _ImgLabel('Эталон 1')),
+                          const Positioned(right: 8, top: 8,
+                              child: _ImgLabel('Эталон 2 ↕↔')),
+                        ]);
+                      }),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  // Резкость как справочная информация
+                  if (_ref1Sharpness != null && _ref2Sharpness != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Row(children: [
+                        Expanded(child: Text(
+                          'Резкость 1: ${_ref1Sharpness!.toStringAsFixed(0)}',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: _ref1Sharpness! >= _ref2Sharpness!
+                                ? AppTheme.simHigh : Colors.grey),
+                        )),
+                        Expanded(child: Text(
+                          'Резкость 2: ${_ref2Sharpness!.toStringAsFixed(0)}',
+                          textAlign: TextAlign.right,
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: _ref2Sharpness! > _ref1Sharpness!
+                                ? AppTheme.simHigh : Colors.grey),
+                        )),
+                      ]),
+                    ),
                   Row(children: [
-                    Expanded(child: _SharpnessCard(
-                      bytes: _refImg!,
-                      label: 'Эталон 1',
-                      sharpness: _ref1Sharpness,
-                      other: _ref2Sharpness,
-                      onSelect: () => _selectRef(_refImg!, _ref2Img),
+                    const SizedBox(width: 90,
+                        child: Text('Прозрачность:',
+                            style: TextStyle(fontSize: 11))),
+                    Expanded(child: Slider(
+                      value: _overlayOpacity,
+                      onChanged: (v) =>
+                          setState(() => _overlayOpacity = v),
+                      activeColor: AppTheme.blue,
                     )),
-                    const SizedBox(width: 8),
-                    Expanded(child: _SharpnessCard(
-                      bytes: _ref2Img!,
-                      label: 'Эталон 2',
-                      sharpness: _ref2Sharpness,
-                      other: _ref1Sharpness,
-                      onSelect: () => _selectRef(_ref2Img!, _refImg),
-                    )),
+                    Text('${(_overlayOpacity * 100).round()}%',
+                        style: const TextStyle(fontSize: 10)),
+                  ]),
+                  Row(children: [
+                    XpBtn(
+                        label: '🗑 Убрать',
+                        danger: true,
+                        onPressed: () => setState(() {
+                              _ref2Img = null;
+                              _overlayCtrl.value = Matrix4.identity();
+                            })),
+                    const Spacer(),
+                    XpBtn(
+                        label: _stacking ? '⏳ Обработка...' : '🔀 Объединить',
+                        primary: true,
+                        onPressed: _stacking
+                            ? null
+                            : () => _selectRef(_refImg!, _ref2Img)),
                   ]),
                 ],
 
