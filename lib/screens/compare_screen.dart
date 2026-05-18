@@ -220,6 +220,13 @@ class _CompareScreenState extends State<CompareScreen>
 
   // ── Выбрать снимок: слить оба → коррекция перспективы → сохранить ──
   // ref = выбранный (лучший), src = второй; если src == null — только коррекция
+  void _openFullScreen(Uint8List bytes) {
+    Navigator.of(context).push(MaterialPageRoute<void>(
+      fullscreenDialog: true,
+      builder: (_) => _FullScreenViewer(bytes: bytes),
+    ));
+  }
+
   Future<void> _selectRef(Uint8List ref, [Uint8List? src]) async {
     setState(() { _stacking = true; });
     try {
@@ -790,6 +797,7 @@ class _CompareScreenState extends State<CompareScreen>
             child: Column(children: [
               GestureDetector(
                 onTap: () => _pickImage(true),
+                onDoubleTap: _refImg != null ? () => _openFullScreen(_refImg!) : null,
                 child: Container(
                   height: 200,
                   width: double.infinity,
@@ -1016,6 +1024,7 @@ class _CompareScreenState extends State<CompareScreen>
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
               GestureDetector(
                 onTap: () => _pickImage(false),
+                onDoubleTap: _cmpImg != null ? () => _openFullScreen(_cmpImg!) : null,
                 child: Container(
                   height: 200,
                   width: double.infinity,
@@ -1964,6 +1973,29 @@ Uint8List _averageImages(List<dynamic> args) {
     }
   }
   return Uint8List.fromList(img.encodePng(out));
+}
+
+// Полноэкранный просмотр с зумом
+class _FullScreenViewer extends StatelessWidget {
+  final Uint8List bytes;
+  const _FullScreenViewer({required this.bytes});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+        elevation: 0,
+      ),
+      body: InteractiveViewer(
+        minScale: 0.5,
+        maxScale: 12.0,
+        child: Center(child: Image.memory(bytes)),
+      ),
+    );
+  }
 }
 
 // Карточка выбора снимка с показателем резкости
