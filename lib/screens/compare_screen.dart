@@ -58,6 +58,8 @@ class _CompareScreenState extends State<CompareScreen>
 
   // Раздел 1 вкладки Сравнение: cmp1 + cmp2 → merge
   Uint8List? _cmp2Img;
+  double? _cmp1Sharpness;
+  double? _cmp2Sharpness;
   final _cmp2Ctrl = TransformationController();
   double _cmp2Opacity = 0.5;
   Size _cmp2ViewerSize = Size.zero;
@@ -259,7 +261,29 @@ class _CompareScreenState extends State<CompareScreen>
     final x = await _picker.pickImage(source: src, imageQuality: 92);
     if (x == null) return;
     final bytes = await x.readAsBytes();
-    if (mounted) setState(() { _cmp2Img = bytes; _cmp2Ctrl.value = Matrix4.identity(); });
+    if (!mounted) return;
+    setState(() { _cmp2Img = bytes; _cmp2Ctrl.value = Matrix4.identity();
+                  _cmp1Sharpness = null; _cmp2Sharpness = null; });
+    final results = await Future.wait([
+      compute(_laplacianSharpness, _cmpImg!),
+      compute(_laplacianSharpness, bytes),
+    ]);
+    if (mounted) setState(() { _cmp1Sharpness = results[0]; _cmp2Sharpness = results[1]; });
+  }
+
+  Future<void> _selectCmp(Uint8List ref, [Uint8List? src]) async {
+    setState(() => _stacking = true);
+    try {
+      final fused = src != null ? await OpenCvService.fuseImages(ref, src) : ref;
+      if (!mounted) return;
+      setState(() {
+        _cmpImg = fused; _cmpAligned = null;
+        _cmp2Img = null; _cmp2Ctrl.value = Matrix4.identity();
+        _cmp1Sharpness = null; _cmp2Sharpness = null;
+      });
+    } finally {
+      if (mounted) setState(() => _stacking = false);
+    }
   }
 
   Future<ImageSource?> _pickSource() async {
@@ -1070,56 +1094,78 @@ class _CompareScreenState extends State<CompareScreen>
                     ),
                   ),
                 ] else ...[
-                  // Overlay: фото1 (фон) + фото2 (двигается)
                   ClipRect(
                     child: Container(
-                      height: 240,
+                      height: 260,
                       color: Colors.black,
                       child: LayoutBuilder(builder: (_, c) {
                         WidgetsBinding.instance.addPostFrameCallback((_) {
                           _cmp2ViewerSize = Size(c.maxWidth, c.maxHeight);
                         });
                         return Stack(fit: StackFit.expand, children: [
-                          RepaintBoundary(
-                            key: _cmp2Key,
-                            child: Stack(fit: StackFit.expand, children: [
-                              Image.memory(_cmpImg!, fit: BoxFit.contain),
-                              Opacity(
-                                opacity: _cmp2Opacity,
-                                child: InteractiveViewer(
-                                  transformationController: _cmp2Ctrl,
-                                  boundaryMargin: const EdgeInsets.all(double.infinity),
-                                  minScale: 0.1, maxScale: 6.0,
-                                  child: Image.memory(_cmp2Img!, fit: BoxFit.contain),
-                                ),
-                              ),
-                            ]),
+                          Image.memory(_cmpImg!, fit: BoxFit.contain),
+                          Opacity(
+                            opacity: _cmp2Opacity,
+                            child: InteractiveViewer(
+                              transformationController: _cmp2Ctrl,
+                              boundaryMargin: const EdgeInsets.all(double.infinity),
+                              minScale: 0.1, maxScale: 6.0,
+                              child: Image.memory(_cmp2Img!, fit: BoxFit.contain),
+                            ),
                           ),
                           const IgnorePointer(
                             child: CustomPaint(painter: _FramePainter(0.12)),
                           ),
-                          const Positioned(left: 8, top: 8, child: _ImgLabel('Фото 1')),
-                          const Positioned(right: 8, top: 8, child: _ImgLabel('Фото 2 ↕↔')),
+                          const Positioned(left: 8, top: 8, child: _ImgLabel('Образец 1')),
+                          const Positioned(right: 8, top: 8, child: _ImgLabel('Образец 2 ↕↔')),
                         ]);
                       }),
                     ),
                   ),
                   const SizedBox(height: 6),
+                  if (_cmp1Sharpness != null && _cmp2Sharpness != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Row(children: [
+                        Expanded(child: Text(
+                          'Резкость 1: ${_cmp1Sharpness!.toStringAsFixed(0)}',
+                          style: TextStyle(fontSize: 10,
+                            color: _cmp1Sharpness! >= _cmp2Sharpness!
+                                ? AppTheme.simHigh : Colors.grey),
+                        )),
+                        Expanded(child: Text(
+                          'Резкость 2: ${_cmp2Sharpness!.toStringAsFixed(0)}',
+                          textAlign: TextAlign.right,
+                          style: TextStyle(fontSize: 10,
+                            color: _cmp2Sharpness! > _cmp1Sharpness!
+                                ? AppTheme.simHigh : Colors.grey),
+                        )),
+                      ]),
+                    ),
                   Row(children: [
-                    const SizedBox(width: 90, child: Text('Прозрачность:', style: TextStyle(fontSize: 11))),
+                    const SizedBox(width: 90,
+                        child: Text('Прозрачность:', style: TextStyle(fontSize: 11))),
                     Expanded(child: Slider(
                       value: _cmp2Opacity,
                       onChanged: (v) => setState(() => _cmp2Opacity = v),
                       activeColor: AppTheme.blue,
                     )),
-                    Text('${(_cmp2Opacity * 100).round()}%', style: const TextStyle(fontSize: 10)),
+                    Text('${(_cmp2Opacity * 100).round()}%',
+                        style: const TextStyle(fontSize: 10)),
                   ]),
                   Row(children: [
                     XpBtn(label: '🗑 Убрать', danger: true,
-                        onPressed: () => setState(() { _cmp2Img = null; _cmp2Ctrl.value = Matrix4.identity(); })),
+                        onPressed: () => setState(() {
+                          _cmp2Img = null; _cmp2Ctrl.value = Matrix4.identity();
+                          _cmp1Sharpness = null; _cmp2Sharpness = null;
+                        })),
                     const Spacer(),
-                    XpBtn(label: '🔀 OpenCV объединить', primary: true,
-                        onPressed: _stacking ? null : _mergeCmpImages),
+                    XpBtn(
+                        label: _stacking ? '⏳ Обработка...' : '🔀 Объединить',
+                        primary: true,
+                        onPressed: _stacking
+                            ? null
+                            : () => _selectCmp(_cmpImg!, _cmp2Img)),
                   ]),
                 ],
               ],
