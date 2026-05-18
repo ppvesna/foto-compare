@@ -233,7 +233,11 @@ class _CompareScreenState extends State<CompareScreen>
       final fused = src != null
           ? await OpenCvService.fuseImages(ref, src)
           : ref;
-      final flat = await OpenCvService.perspectiveCorrect(fused);
+      // perspectiveCorrect только для одиночного фото — после слияния
+      // изображение уже в ориентации эталона, повторная коррекция переворачивает
+      final flat = src == null
+          ? await OpenCvService.perspectiveCorrect(fused)
+          : fused;
       if (!mounted) return;
       setState(() {
         _refImg = flat;

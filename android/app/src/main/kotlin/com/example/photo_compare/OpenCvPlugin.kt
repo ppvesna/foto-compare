@@ -329,6 +329,22 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         val H = Calib3d.findHomography(ptSrc2f, ptRef2f, Calib3d.RANSAC, 3.0)
         if (H.empty()) return matToBytes(ref)
 
+        // Проверка гомографии: детерминант < 0 = отражение/переворот → отклоняем
+        val det = H.get(0,0)[0] * H.get(1,1)[0] - H.get(0,1)[0] * H.get(1,0)[0]
+        if (det < 0) return matToBytes(ref)
+
+        // Проверка: углы src не должны уходить далеко за пределы ref
+        val srcCorners = MatOfPoint2f(
+            Point(0.0, 0.0), Point(src.width().toDouble(), 0.0),
+            Point(src.width().toDouble(), src.height().toDouble()),
+            Point(0.0, src.height().toDouble()))
+        val dstCorners = MatOfPoint2f()
+        Core.perspectiveTransform(srcCorners, dstCorners, H)
+        val maxDim = maxOf(ref.width(), ref.height()).toDouble()
+        if (dstCorners.toArray().any {
+            it.x < -maxDim || it.x > 2 * maxDim ||
+            it.y < -maxDim || it.y > 2 * maxDim }) return matToBytes(ref)
+
         val coarse = Mat()
         Imgproc.warpPerspective(src, coarse, H, ref.size())
 
