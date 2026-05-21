@@ -365,18 +365,22 @@ class _CompareScreenState extends State<CompareScreen>
       setState(() { _result = compareResult; _comparing = false; });
       _tabs.animateTo(2);
 
-      // OpenCV SSIM — точнее MAE, обновляем результат если доступен
-      OpenCvService.ssim(ref, cmp).then((ssim) {
-        if (ssim != null && ssim > 0 && mounted && _result != null) {
+      // Lab-пирамида — точнее MAE, обновляем результат если OpenCV доступен
+      OpenCvService.compareImages(ref, cmp).then((lab) {
+        if (lab != null && mounted && _result != null) {
           final r = _result!;
           setState(() => _result = CompareResult(
-            similarity: r.similarity,
-            ssim: ssim, // OpenCV уже возвращает 0–100
-            diffPixels: r.diffPixels,
+            similarity:  r.similarity,
+            labScore:    lab.score,
+            labLevel0:   lab.level0,
+            labLevel1:   lab.level1,
+            labLevel2:   lab.level2,
+            labLevel3:   lab.level3,
+            diffPixels:  r.diffPixels,
             totalPixels: r.totalPixels,
-            refSize: r.refSize,
-            cmpSize: r.cmpSize,
-            diffImage: r.diffImage,
+            refSize:     r.refSize,
+            cmpSize:     r.cmpSize,
+            diffImage:   lab.diffImage,
           ));
         }
       }).catchError((_) {});
@@ -1204,12 +1208,14 @@ class _CompareScreenState extends State<CompareScreen>
                 style: TextStyle(fontSize: 10, color: Colors.grey))),
         const SizedBox(height: 6),
         Center(child: SimBadge(value: r.score, fontSize: 26)),
-        if (r.ssim != null)
-          Center(child: Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: Text('SSIM: ${r.ssim!.toStringAsFixed(1)}%  ·  MAE: ${r.similarity.toStringAsFixed(1)}%',
-                style: const TextStyle(fontSize: 10, color: Colors.grey)),
-          )),
+        Center(child: Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(
+            r.labScore != null
+                ? 'Lab: ${r.labScore!.toStringAsFixed(1)}%  ·  MAE: ${r.similarity.toStringAsFixed(1)}%'
+                : 'MAE: ${r.similarity.toStringAsFixed(1)}%',
+            style: const TextStyle(fontSize: 10, color: Colors.grey)),
+        )),
         const SizedBox(height: 6),
         Center(
             child: Text(

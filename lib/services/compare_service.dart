@@ -160,7 +160,12 @@ CompareResult _run(List<Uint8List> args) {
 
 class CompareResult {
   final double    similarity;
-  final double?   ssim;        // OpenCV SSIM (null если недоступен)
+  final double?   ssim;           // OpenCV SSIM (null если недоступен)
+  final double?   labScore;       // Lab-пирамида итоговый балл
+  final List<double>? labLevel0;  //   1 зона
+  final List<double>? labLevel1;  //   9 зон
+  final List<double>? labLevel2;  //  81 зона
+  final List<double>? labLevel3;  // 729 зон
   final int       diffPixels;
   final int       totalPixels;
   final String    refSize;
@@ -170,6 +175,11 @@ class CompareResult {
   const CompareResult({
     required this.similarity,
     this.ssim,
+    this.labScore,
+    this.labLevel0,
+    this.labLevel1,
+    this.labLevel2,
+    this.labLevel3,
     required this.diffPixels,
     required this.totalPixels,
     required this.refSize,
@@ -179,6 +189,6 @@ class CompareResult {
 
   double get diffPercent => diffPixels / totalPixels * 100;
 
-  // Итоговая метрика: SSIM если есть, иначе MAE
-  double get score => ssim ?? similarity;
+  // Приоритет: Lab > SSIM > MAE
+  double get score => labScore ?? ssim ?? similarity;
 }

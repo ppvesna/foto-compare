@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 import 'package:flutter/services.dart';
+import '../config/app_config.dart';
 
 /// Сервис для обработки изображений через OpenCV (нативный Android)
 /// Fallback: если OpenCV недоступен — возвращает исходные байты
@@ -94,5 +95,62 @@ class OpenCvService {
     }
   }
 
+  // ── Lab-пирамида ─────────────────────────────────
+  // Иерархическое CIELab-сравнение: 4 уровня (1/9/81/729 зон), взвешенный ΔE
+  static Future<LabCompareResult?> compareImages(
+      Uint8List ref, Uint8List cmp) async {
+    if (!_available) return null;
+    try {
+      final raw = await _channel.invokeMethod<Map>('compareImages', {
+        'reference': ref,
+        'compare':   cmp,
+        'wL':        AppConfig.compareWL,
+        'wLayer0':   AppConfig.compareWLayer0,
+        'wLayer1':   AppConfig.compareWLayer1,
+        'wLayer2':   AppConfig.compareWLayer2,
+        'wLayer3':   AppConfig.compareWLayer3,
+        'deScale':   AppConfig.compareDeScale,
+      });
+      if (raw == null) return null;
+      return LabCompareResult(
+        score:     (raw['score']     as num).toDouble(),
+        level0:    _toDoubleList(raw['level0']),
+        level1:    _toDoubleList(raw['level1']),
+        level2:    _toDoubleList(raw['level2']),
+        level3:    _toDoubleList(raw['level3']),
+        diffImage: raw['diffImage'] as Uint8List,
+      );
+    } on MissingPluginException {
+      _available = false;
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static List<double> _toDoubleList(dynamic v) {
+    if (v is Float64List) return v.toList();
+    if (v is List) return v.map((e) => (e as num).toDouble()).toList();
+    return [];
+  }
+
   static bool get isAvailable => _available;
+}
+
+class LabCompareResult {
+  final double score;           // итоговый балл 0–100
+  final List<double> level0;    //   1 зона: [ΔE]
+  final List<double> level1;    //   9 зон:  [ΔE × 9]
+  final List<double> level2;    //  81 зона: [ΔE × 81]
+  final List<double> level3;    // 729 зон:  [ΔE × 729]
+  final Uint8List diffImage;    // 270×270 PNG-визуализация по уровню 2
+
+  const LabCompareResult({
+    required this.score,
+    required this.level0,
+    required this.level1,
+    required this.level2,
+    required this.level3,
+    required this.diffImage,
+  });
 }

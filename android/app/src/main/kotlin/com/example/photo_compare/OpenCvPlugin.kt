@@ -11,6 +11,7 @@ import org.opencv.core.*
 import org.opencv.features2d.AKAZE
 import org.opencv.features2d.BFMatcher
 import org.opencv.features2d.ORB
+import org.opencv.imgcodecs.Imgcodecs
 import org.opencv.imgproc.Imgproc
 import org.opencv.video.Video
 import java.io.ByteArrayOutputStream
@@ -55,6 +56,17 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                     val ref = call.argument<ByteArray>("reference")!!
                     val src = call.argument<ByteArray>("source")!!
                     result.success(fuseImages(ref, src))
+                }
+                "compareImages" -> {
+                    val ref      = call.argument<ByteArray>("reference")!!
+                    val cmp      = call.argument<ByteArray>("compare")!!
+                    val wL       = call.argument<Double>("wL")       ?: 0.5
+                    val wLayer0  = call.argument<Double>("wLayer0")  ?: 0.5
+                    val wLayer1  = call.argument<Double>("wLayer1")  ?: 1.5
+                    val wLayer2  = call.argument<Double>("wLayer2")  ?: 2.0
+                    val wLayer3  = call.argument<Double>("wLayer3")  ?: 1.0
+                    val deScale  = call.argument<Double>("deScale")  ?: 2.0
+                    result.success(compareImages(ref, cmp, wL, wLayer0, wLayer1, wLayer2, wLayer3, deScale))
                 }
                 else -> result.notImplemented()
             }
@@ -423,6 +435,123 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         val norm = Mat()
         Core.normalize(local, norm, 0.0, 1.0, Core.NORM_MINMAX, CvType.CV_64F)
         return norm
+    }
+
+    // ── Lab-пирамида: иерархическое сравнение в CIELab ──────────────────────
+    // Уровни: 0=1зона, 1=9зон(3×3), 2=81зона(9×9), 3=729зон(27×27)
+    // Формула: ΔE = √(wL·ΔL² + Δa² + Δb²)  (в реальных единицах CIELab)
+    private fun compareImages(
+        refBytes: ByteArray, cmpBytes: ByteArray,
+        wL: Double,
+        wLayer0: Double, wLayer1: Double, wLayer2: Double, wLayer3: Double,
+        deScale: Double
+    ): Map<String, Any> {
+        val SIZE = 810  // 27×30 — делится на 1, 3, 9, 27
+
+        val refMat = bytesToMat(refBytes)
+        val cmpMat = bytesToMat(cmpBytes)
+
+        val refCrp = labFitCrop(refMat, SIZE)
+        val cmpCrp = labFitCrop(cmpMat, SIZE)
+
+        val refLab = Mat(); val cmpLab = Mat()
+        Imgproc.cvtColor(refCrp, refLab, Imgproc.COLOR_BGR2Lab)
+        Imgproc.cvtColor(cmpCrp, cmpLab, Imgproc.COLOR_BGR2Lab)
+
+        val refF = Mat(); val cmpF = Mat()
+        refLab.convertTo(refF, CvType.CV_32F)
+        cmpLab.convertTo(cmpF, CvType.CV_32F)
+
+        val refCh = ArrayList<Mat>(); Core.split(refF, refCh)
+        val cmpCh = ArrayList<Mat>(); Core.split(cmpF, cmpCh)
+
+        val de0 = zoneDE(refCh, cmpCh, SIZE, 1,  wL)   //   1 зона
+        val de1 = zoneDE(refCh, cmpCh, SIZE, 3,  wL)   //   9 зон
+        val de2 = zoneDE(refCh, cmpCh, SIZE, 9,  wL)   //  81 зона
+        val de3 = zoneDE(refCh, cmpCh, SIZE, 27, wL)   // 729 зон
+
+        fun score(de: DoubleArray) = de.map { (100.0 - it * deScale).coerceIn(0.0, 100.0) }.average()
+        val wSum = wLayer0 + wLayer1 + wLayer2 + wLayer3
+        val overall = if (wSum > 0)
+            (score(de0)*wLayer0 + score(de1)*wLayer1 + score(de2)*wLayer2 + score(de3)*wLayer3) / wSum
+        else score(de1)
+
+        return mapOf(
+            "score"     to overall.coerceIn(0.0, 100.0),
+            "level0"    to de0,
+            "level1"    to de1,
+            "level2"    to de2,
+            "level3"    to de3,
+            "diffImage" to buildZoneDiff(de2, 9, 30),   // 270×270 PNG
+        )
+    }
+
+    // Масштаб по короткой стороне + центральный кроп до size×size
+    private fun labFitCrop(src: Mat, size: Int): Mat {
+        val scale = if (src.width() < src.height()) size.toDouble() / src.width()
+                    else size.toDouble() / src.height()
+        val nw = (src.width()  * scale).toInt()
+        val nh = (src.height() * scale).toInt()
+        val resized = Mat()
+        Imgproc.resize(src, resized, Size(nw.toDouble(), nh.toDouble()))
+        val cx = ((resized.width()  - size) / 2).coerceAtLeast(0)
+        val cy = ((resized.height() - size) / 2).coerceAtLeast(0)
+        return Mat(resized, Rect(cx, cy, size, size))
+    }
+
+    // Вычисляет ΔE для каждой из grid×grid зон изображения
+    // OpenCV Lab: L∈[0,255] (реальный L*=pixel*100/255), a/b∈[0,255] (offset 128)
+    private fun zoneDE(
+        refCh: List<Mat>, cmpCh: List<Mat>,
+        size: Int, grid: Int, wL: Double
+    ): DoubleArray {
+        val zs = size / grid
+        val result = DoubleArray(grid * grid)
+        for (row in 0 until grid) {
+            for (col in 0 until grid) {
+                val rect = Rect(col * zs, row * zs, zs, zs)
+                val rL = Core.mean(Mat(refCh[0], rect)).`val`[0]
+                val ra = Core.mean(Mat(refCh[1], rect)).`val`[0]
+                val rb = Core.mean(Mat(refCh[2], rect)).`val`[0]
+                val cL = Core.mean(Mat(cmpCh[0], rect)).`val`[0]
+                val ca = Core.mean(Mat(cmpCh[1], rect)).`val`[0]
+                val cb = Core.mean(Mat(cmpCh[2], rect)).`val`[0]
+                // Перевод в реальные единицы CIELab
+                val dL = (rL - cL) * 100.0 / 255.0
+                val da = ra - ca   // смещение 128 взаимно сокращается
+                val db = rb - cb
+                result[row * grid + col] = sqrt(wL * dL * dL + da * da + db * db)
+            }
+        }
+        return result
+    }
+
+    // Визуализация diff: cellPx×cellPx пикселей на зону, PNG с прозрачностью
+    // Каналы Mat: (R, G, B, A) — PNG-декодер Flutter читает в этом порядке как RGBA
+    private fun buildZoneDiff(de: DoubleArray, grid: Int, cellPx: Int): ByteArray {
+        val sz = grid * cellPx
+        val out = Mat(sz, sz, CvType.CV_8UC4, Scalar(0.0, 0.0, 0.0, 0.0))
+        for (i in de.indices) {
+            val row = i / grid; val col = i % grid
+            val d = de[i]
+            val r: Int; val g: Int; val b: Int; val a: Int
+            when {
+                d < 2.0  -> { r=30;  g=200; b=30;  a=(d/2.0*90).toInt() }
+                d < 10.0 -> {
+                    val t = (d - 2.0) / 8.0
+                    r=(30  + (225*t)).toInt()
+                    g=(200 - (30 *t)).toInt()
+                    b=30
+                    a=(90  + (120*t)).toInt()
+                }
+                else     -> { r=220; g=20;  b=20;  a=210 }
+            }
+            out.submat(Rect(col*cellPx, row*cellPx, cellPx, cellPx))
+               .setTo(Scalar(r.toDouble(), g.toDouble(), b.toDouble(), a.toDouble()))
+        }
+        val buf = MatOfByte()
+        Imgcodecs.imencode(".png", out, buf)
+        return buf.toArray()
     }
 
     private fun bytesToMat(bytes: ByteArray): Mat {

@@ -20,6 +20,14 @@ class AppConfig {
   static const int maxImageSize = 2048;
   static const int comparisonIter = 3;
 
+  // Lab-пирамида: параметры сравнения (настраиваемые для обучения ИИ)
+  static const double compareWL      = 0.5;   // вес яркости L* в формуле ΔE
+  static const double compareWLayer0 = 0.5;   // вес уровня 0 (1 зона)
+  static const double compareWLayer1 = 1.5;   // вес уровня 1 (9 зон)
+  static const double compareWLayer2 = 2.0;   // вес уровня 2 (81 зона)
+  static const double compareWLayer3 = 1.0;   // вес уровня 3 (729 зон)
+  static const double compareDeScale = 2.0;   // ΔE → score: 100 − ΔE×deScale
+
   // Фичи
   static const bool featureAI = false;
   static const bool featureAuth = true; // ← включено
