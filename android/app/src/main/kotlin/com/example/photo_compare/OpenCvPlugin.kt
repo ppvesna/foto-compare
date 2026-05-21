@@ -71,7 +71,9 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                     val wLayer2  = call.argument<Double>("wLayer2")  ?: 2.0
                     val wLayer3  = call.argument<Double>("wLayer3")  ?: 1.0
                     val deScale  = call.argument<Double>("deScale")  ?: 2.0
-                    result.success(compareImages(ref, cmp, wL, wLayer0, wLayer1, wLayer2, wLayer3, deScale))
+                    val widthMm  = call.argument<Double>("widthMm")  ?: 100.0
+                    val heightMm = call.argument<Double>("heightMm") ?: 100.0
+                    result.success(compareImages(ref, cmp, wL, wLayer0, wLayer1, wLayer2, wLayer3, deScale, widthMm, heightMm))
                 }
                 else -> result.notImplemented()
             }
@@ -560,22 +562,33 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     }
 
     // ── Lab-пирамида: иерархическое сравнение в CIELab ──────────────────────
+    // Оба изображения приводятся к каноническому разрешению (70 л/см × Найквист).
     // Level 3 вычисляется из пикселей; Level 2/1/0 — снизу вверх через RMS.
-    // Формула ΔE на зону: √(wL·ΔL² + Δa² + Δb²)  (реальные единицы CIELab)
-    // Агрегация 9 дочерних → родитель: RMS = √(Σ ΔEᵢ² / 9)
+    // Letterbox-зоны (поля после масштабирования) исключаются из счёта.
     private fun compareImages(
         refBytes: ByteArray, cmpBytes: ByteArray,
         wL: Double,
         wLayer0: Double, wLayer1: Double, wLayer2: Double, wLayer3: Double,
-        deScale: Double
+        deScale: Double,
+        widthMm: Double, heightMm: Double
     ): Map<String, Any> {
-        val SIZE = 810  // 27×30 — делится на 1, 3, 9, 27
+        val GRID = 27
+
+        // Каноническое разрешение от физического размера печати и 70 л/см
+        val (nw, nh) = canonicalRes(widthMm, heightMm)
 
         val refMat = bytesToMat(refBytes)
         val cmpMat = bytesToMat(cmpBytes)
 
-        val refCrp = labFitCrop(refMat, SIZE)
-        val cmpCrp = labFitCrop(cmpMat, SIZE)
+        // Нормализация: масштаб до канонического размера + letterbox
+        val refCrp = normalizeToCanonical(refMat, nw, nh)
+        val cmpCrp = normalizeToCanonical(cmpMat, nw, nh)
+
+        // Маски letterbox-зон на каждом уровне
+        val lb3 = letterboxZones(refMat.width(), refMat.height(), nw, nh)
+        val lb2 = aggregateMask(lb3, GRID, 3)
+        val lb1 = aggregateMask(lb2, GRID / 3, 3)
+        val lb0 = aggregateMask(lb1, GRID / 9, 3)
 
         val refLab = Mat(); val cmpLab = Mat()
         Imgproc.cvtColor(refCrp, refLab, Imgproc.COLOR_BGR2Lab)
@@ -589,26 +602,93 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         val cmpCh = ArrayList<Mat>(); Core.split(cmpF, cmpCh)
 
         // Снизу вверх: Level 3 из пикселей, выше — RMS агрегация
-        val de3 = zoneDE(refCh, cmpCh, SIZE, 27, wL)  // 729 зон (27×27)
-        val de2 = aggregateRMS(de3, 27, 3)             //  81 зона ( 9×9 )
-        val de1 = aggregateRMS(de2,  9, 3)             //   9 зон  ( 3×3 )
-        val de0 = aggregateRMS(de1,  3, 3)             //   1 зона ( 1×1 )
+        val de3 = zoneDE(refCh, cmpCh, nw, nh, GRID, wL)
+        val de2 = aggregateRMS(de3, GRID, 3)
+        val de1 = aggregateRMS(de2, GRID / 3, 3)
+        val de0 = aggregateRMS(de1, GRID / 9, 3)
 
-        fun score(de: DoubleArray) = de.map { (100.0 - it * deScale).coerceIn(0.0, 100.0) }.average()
+        // Счёт только по активным (не letterbox) зонам
+        fun score(de: DoubleArray, lb: BooleanArray): Double {
+            val active = de.filterIndexed { i, _ -> !lb[i] }
+            if (active.isEmpty()) return 100.0
+            return active.map { (100.0 - it * deScale).coerceIn(0.0, 100.0) }.average()
+        }
+
         val wSum = wLayer0 + wLayer1 + wLayer2 + wLayer3
         val overall = if (wSum > 0)
-            (score(de0)*wLayer0 + score(de1)*wLayer1 + score(de2)*wLayer2 + score(de3)*wLayer3) / wSum
-        else score(de1)
+            (score(de0,lb0)*wLayer0 + score(de1,lb1)*wLayer1 +
+             score(de2,lb2)*wLayer2 + score(de3,lb3)*wLayer3) / wSum
+        else score(de1, lb1)
+
+        val activeCnt = lb3.count { !it }
 
         return mapOf(
-            "score"     to overall.coerceIn(0.0, 100.0),
-            "level0"    to de0,
-            "level1"    to de1,
-            "level2"    to de2,
-            "level3"    to de3,
-            "diffImage" to buildZoneDiff(de2, 9, 30),   // 270×270 PNG
+            "score"        to overall.coerceIn(0.0, 100.0),
+            "activeZones"  to activeCnt,
+            "totalZones"   to (GRID * GRID),
+            "level0"       to de0,
+            "level1"       to de1,
+            "level2"       to de2,
+            "level3"       to de3,
+            "diffImage"    to buildZoneDiff(de2, GRID / 3, 30),
         )
     }
+
+    // Каноническое разрешение: 70 л/см × 2 (Найквист) = 14 пкс/мм,
+    // округлённое до кратного 27 (для трёхуровневой пирамиды 3×3×3).
+    private fun canonicalRes(widthMm: Double, heightMm: Double): Pair<Int, Int> {
+        val pxPerMm = 14.0  // 70 л/см × 2 / 10 мм/см
+        val nw = ceil(widthMm  * pxPerMm / 27).toInt() * 27
+        val nh = ceil(heightMm * pxPerMm / 27).toInt() * 27
+        return nw to nh
+    }
+
+    // Масштабирует изображение до канонического разрешения с letterbox-полями.
+    // Всё изображение попадает в кадр (без обрезки), поля заполняются чёрным.
+    private fun normalizeToCanonical(src: Mat, nw: Int, nh: Int): Mat {
+        val scale = minOf(nw.toDouble() / src.width(), nh.toDouble() / src.height())
+        val sw = (src.width()  * scale).roundToInt()
+        val sh = (src.height() * scale).roundToInt()
+        val scaled = Mat()
+        Imgproc.resize(src, scaled, Size(sw.toDouble(), sh.toDouble()))
+        val canvas = Mat(nh, nw, src.type(), Scalar.all(0.0))
+        val x = (nw - sw) / 2; val y = (nh - sh) / 2
+        scaled.copyTo(Mat(canvas, Rect(x, y, sw, sh)))
+        return canvas
+    }
+
+    // Возвращает маску L3-зон (27×27): true = зона в letterbox-полях (>50% padding).
+    private fun letterboxZones(srcW: Int, srcH: Int, nw: Int, nh: Int): BooleanArray {
+        val scale = minOf(nw.toDouble() / srcW, nh.toDouble() / srcH)
+        val sw = (srcW * scale).roundToInt(); val sh = (srcH * scale).roundToInt()
+        val x0 = (nw - sw) / 2; val y0 = (nh - sh) / 2
+        val x1 = x0 + sw;       val y1 = y0 + sh
+        val zw = nw / 27;       val zh = nh / 27
+        return BooleanArray(27 * 27) { i ->
+            val row = i / 27; val col = i % 27
+            val zx0 = col * zw; val zy0 = row * zh
+            val zx1 = zx0 + zw; val zy1 = zy0 + zh
+            val ox = maxOf(0, minOf(zx1, x1) - maxOf(zx0, x0))
+            val oy = maxOf(0, minOf(zy1, y1) - maxOf(zy0, y0))
+            (ox * oy) < (zw * zh) / 2  // true = зона преимущественно letterbox
+        }
+    }
+
+    // Агрегирует маску снизу вверх: родительская зона = letterbox,
+    // только если ВСЕ factor×factor дочерних зон — letterbox.
+    private fun aggregateMask(mask: BooleanArray, sourceGrid: Int, factor: Int): BooleanArray {
+        val tg = sourceGrid / factor
+        return BooleanArray(tg * tg) { i ->
+            val row = i / tg; val col = i % tg
+            (0 until factor).all { dr ->
+                (0 until factor).all { dc ->
+                    mask[(row * factor + dr) * sourceGrid + (col * factor + dc)]
+                }
+            }
+        }
+    }
+
+    // ── Вспомогательные методы пирамиды ─────────────────────────────────────
 
     // Среднеквадратичная агрегация: factor×factor дочерних → 1 родительская зона
     // sourceGrid — размер входной сетки (например 27 для 27×27)
@@ -630,26 +710,14 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         return result
     }
 
-    // Масштаб по короткой стороне + центральный кроп до size×size
-    private fun labFitCrop(src: Mat, size: Int): Mat {
-        val scale = if (src.width() < src.height()) size.toDouble() / src.width()
-                    else size.toDouble() / src.height()
-        val nw = (src.width()  * scale).toInt()
-        val nh = (src.height() * scale).toInt()
-        val resized = Mat()
-        Imgproc.resize(src, resized, Size(nw.toDouble(), nh.toDouble()))
-        val cx = ((resized.width()  - size) / 2).coerceAtLeast(0)
-        val cy = ((resized.height() - size) / 2).coerceAtLeast(0)
-        return Mat(resized, Rect(cx, cy, size, size))
-    }
-
     // Вычисляет среднее ΔE по пикселям для каждой из grid×grid зон.
     // ΔE считается PER PIXEL (не от mean Lab), чтобы противоположные цвета
     // (зелёный + красный) не аннулировали друг друга при усреднении.
+    // imgW/imgH задают реальный размер изображения → зоны могут быть прямоугольными.
     // OpenCV Lab: L∈[0,255] → реальный L*=val*100/255; a,b∈[0,255] offset 128.
     private fun zoneDE(
         refCh: List<Mat>, cmpCh: List<Mat>,
-        size: Int, grid: Int, wL: Double
+        imgW: Int, imgH: Int, grid: Int, wL: Double
     ): DoubleArray {
         // Строим карту попиксельного ΔE через матричные операции OpenCV
         val dL = Mat(); Core.subtract(refCh[0], cmpCh[0], dL)
@@ -668,12 +736,13 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         val de2 = Mat(); Core.add(dL2, da2, de2); Core.add(de2, db2, de2)
         val deMap = Mat(); Core.sqrt(de2, deMap)          // попиксельная ΔE-карта
 
-        // Усредняем ΔE внутри каждой зоны
-        val zs = size / grid
+        // Зона может быть прямоугольной при несквадратном изображении
+        val zw = imgW / grid
+        val zh = imgH / grid
         val result = DoubleArray(grid * grid)
         for (row in 0 until grid) {
             for (col in 0 until grid) {
-                val rect = Rect(col * zs, row * zs, zs, zs)
+                val rect = Rect(col * zw, row * zh, zw, zh)
                 result[row * grid + col] = Core.mean(Mat(deMap, rect)).`val`[0]
             }
         }

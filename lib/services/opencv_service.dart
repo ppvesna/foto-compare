@@ -117,9 +117,14 @@ class OpenCvService {
   }
 
   // ── Lab-пирамида ─────────────────────────────────
-  // Иерархическое CIELab-сравнение: 4 уровня (1/9/81/729 зон), взвешенный ΔE
+  // Иерархическое CIELab-сравнение: 4 уровня (1/9/81/729 зон), взвешенный ΔE.
+  // Оба изображения приводятся к каноническому разрешению (70 л/см × 2 / формат).
+  // Зоны letterbox исключаются из итогового счёта.
   static Future<LabCompareResult?> compareImages(
-      Uint8List ref, Uint8List cmp) async {
+      Uint8List ref, Uint8List cmp, {
+      double widthMm  = AppConfig.printWidthMm,
+      double heightMm = AppConfig.printHeightMm,
+  }) async {
     if (!_available) return null;
     try {
       final raw = await _channel.invokeMethod<Map>('compareImages', {
@@ -131,15 +136,19 @@ class OpenCvService {
         'wLayer2':   AppConfig.compareWLayer2,
         'wLayer3':   AppConfig.compareWLayer3,
         'deScale':   AppConfig.compareDeScale,
+        'widthMm':   widthMm,
+        'heightMm':  heightMm,
       });
       if (raw == null) return null;
       return LabCompareResult(
-        score:     (raw['score']     as num).toDouble(),
-        level0:    _toDoubleList(raw['level0']),
-        level1:    _toDoubleList(raw['level1']),
-        level2:    _toDoubleList(raw['level2']),
-        level3:    _toDoubleList(raw['level3']),
-        diffImage: raw['diffImage'] as Uint8List,
+        score:        (raw['score']       as num).toDouble(),
+        activeZones:  (raw['activeZones'] as num).toInt(),
+        totalZones:   (raw['totalZones']  as num).toInt(),
+        level0:       _toDoubleList(raw['level0']),
+        level1:       _toDoubleList(raw['level1']),
+        level2:       _toDoubleList(raw['level2']),
+        level3:       _toDoubleList(raw['level3']),
+        diffImage:    raw['diffImage'] as Uint8List,
       );
     } on MissingPluginException {
       _available = false;
@@ -159,7 +168,9 @@ class OpenCvService {
 }
 
 class LabCompareResult {
-  final double score;           // итоговый балл 0–100
+  final double score;           // итоговый балл 0–100 (только активные зоны)
+  final int activeZones;        // зон участвовало в счёте (не letterbox)
+  final int totalZones;         // всего зон L3 (всегда 729)
   final List<double> level0;    //   1 зона: [ΔE]
   final List<double> level1;    //   9 зон:  [ΔE × 9]
   final List<double> level2;    //  81 зона: [ΔE × 81]
@@ -168,6 +179,8 @@ class LabCompareResult {
 
   const LabCompareResult({
     required this.score,
+    required this.activeZones,
+    required this.totalZones,
     required this.level0,
     required this.level1,
     required this.level2,

@@ -20,6 +20,11 @@ class AppConfig {
   static const int maxImageSize = 2048;
   static const int comparisonIter = 3;
 
+  // Физический размер печати — основа для нативного разрешения (70 л/см)
+  // Меняется под конкретный формат: этикетка, A5, A4 и т.д.
+  static const double printWidthMm  = 100.0;  // ширина в мм (дефолт: 10×10 см)
+  static const double printHeightMm = 100.0;  // высота в мм
+
   // Lab-пирамида: параметры сравнения (настраиваемые для обучения ИИ)
   static const double compareWL      = 0.5;   // вес яркости L* в формуле ΔE
   static const double compareWLayer0 = 0.5;   // вес уровня 0 (1 зона)
