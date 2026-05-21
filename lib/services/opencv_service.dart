@@ -95,6 +95,27 @@ class OpenCvService {
     }
   }
 
+  // ── Сшивка двух кадров с перекрытием ─────────────
+  // Каскадный поиск перекрытия через Lab-пирамиду, затем пиксельная склейка.
+  // Возвращает склеенное изображение или null если OpenCV недоступен.
+  static Future<Uint8List?> stitchImages(
+      Uint8List imageA, Uint8List imageB) async {
+    if (!_available) return null;
+    try {
+      final result = await _channel.invokeMethod<Uint8List>('stitchImages', {
+        'imageA': imageA,
+        'imageB': imageB,
+        'wL':     AppConfig.compareWL,
+      });
+      return result;
+    } on MissingPluginException {
+      _available = false;
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   // ── Lab-пирамида ─────────────────────────────────
   // Иерархическое CIELab-сравнение: 4 уровня (1/9/81/729 зон), взвешенный ΔE
   static Future<LabCompareResult?> compareImages(

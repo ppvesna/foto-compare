@@ -57,8 +57,13 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                     val src = call.argument<ByteArray>("source")!!
                     result.success(fuseImages(ref, src))
                 }
-                "compareImages" -> {
-                    val ref      = call.argument<ByteArray>("reference")!!
+                "stitchImages" -> {
+                    val imgA = call.argument<ByteArray>("imageA")!!
+                    val imgB = call.argument<ByteArray>("imageB")!!
+                    val wL   = call.argument<Double>("wL") ?: 0.5
+                    result.success(stitchImages(imgA, imgB, wL))
+                }
+                "compareImages" -> {                    val ref      = call.argument<ByteArray>("reference")!!
                     val cmp      = call.argument<ByteArray>("compare")!!
                     val wL       = call.argument<Double>("wL")       ?: 0.5
                     val wLayer0  = call.argument<Double>("wLayer0")  ?: 0.5
@@ -435,6 +440,123 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         val norm = Mat()
         Core.normalize(local, norm, 0.0, 1.0, Core.NORM_MINMAX, CvType.CV_64F)
         return norm
+    }
+
+    // ── Сшивка двух кадров с перекрытием ────────────────────────────────────
+    // Каскадный поиск перекрытия через Lab-пирамиду (L3→L2→L1),
+    // затем пиксельная склейка с линейным блендингом.
+    private fun stitchImages(aBytes: ByteArray, bBytes: ByteArray, wL: Double): ByteArray {
+        val aOrig = bytesToMat(aBytes)
+        val bOrig = bytesToMat(bBytes)
+
+        val H    = 810   // рабочая высота (делится на 27)
+        val ZONE = 30    // пикселей в одной зоне Level 3
+
+        // Нормализуем высоту, сохраняем ширину пропорционально
+        val aW = (aOrig.width().toDouble() * H / aOrig.height()).toInt()
+        val bW = (bOrig.width().toDouble() * H / bOrig.height()).toInt()
+        val aMat = Mat(); Imgproc.resize(aOrig, aMat, Size(aW.toDouble(), H.toDouble()))
+        val bMat = Mat(); Imgproc.resize(bOrig, bMat, Size(bW.toDouble(), H.toDouble()))
+
+        // Lab-каналы в float
+        fun toLabCh(mat: Mat): List<Mat> {
+            val lab = Mat(); Imgproc.cvtColor(mat, lab, Imgproc.COLOR_BGR2Lab)
+            val f = Mat(); lab.convertTo(f, CvType.CV_32F)
+            val ch = ArrayList<Mat>(); Core.split(f, ch); return ch
+        }
+        val aCh = toLabCh(aMat)
+        val bCh = toLabCh(bMat)
+
+        val minOvlp = ZONE * 3                    // минимум 90 px
+        val maxOvlp = minOf(aW, bW) * 2 / 3      // максимум 2/3 ширины
+
+        // Среднее ΔE между правым краем A и левым краем B при перекрытии ovlp px
+        fun overlapDE(ovlp: Int): Double {
+            val w  = ovlp.coerceIn(1, minOf(aW, bW))
+            val aX = aW - w
+            val dL = Mat(); Core.subtract(
+                Mat(aCh[0], Rect(aX, 0, w, H)), Mat(bCh[0], Rect(0, 0, w, H)), dL)
+            dL.convertTo(dL, CvType.CV_64F, 100.0 / 255.0)
+            val da = Mat(); Core.subtract(
+                Mat(aCh[1], Rect(aX, 0, w, H)), Mat(bCh[1], Rect(0, 0, w, H)), da)
+            da.convertTo(da, CvType.CV_64F)
+            val db = Mat(); Core.subtract(
+                Mat(aCh[2], Rect(aX, 0, w, H)), Mat(bCh[2], Rect(0, 0, w, H)), db)
+            db.convertTo(db, CvType.CV_64F)
+            val dL2 = Mat(); Core.multiply(dL, dL, dL2, wL)
+            val da2 = Mat(); Core.multiply(da, da, da2)
+            val db2 = Mat(); Core.multiply(db, db, db2)
+            val de2 = Mat(); Core.add(dL2, da2, de2); Core.add(de2, db2, de2)
+            val deMap = Mat(); Core.sqrt(de2, deMap)
+            return Core.mean(deMap).`val`[0]
+        }
+
+        // Поиск минимума ΔE на диапазоне [from..to] с шагом step
+        fun searchBest(from: Int, to: Int, step: Int): Int {
+            var best = from; var bestDE = Double.MAX_VALUE
+            var x = from.coerceAtLeast(minOvlp)
+            while (x <= to.coerceAtMost(maxOvlp)) {
+                val de = overlapDE(x)
+                if (de < bestDE) { bestDE = de; best = x }
+                x += step
+            }
+            return best
+        }
+
+        // Каскад: Level 1 (шаг 270px) → Level 2 (90px) → Level 3 (30px)
+        var ovlp = searchBest(minOvlp, maxOvlp, ZONE * 9)
+        ovlp = searchBest(ovlp - ZONE * 9, ovlp + ZONE * 9, ZONE * 3)
+        ovlp = searchBest(ovlp - ZONE * 3, ovlp + ZONE * 3, ZONE)
+
+        return stitchAtOverlap(aMat, bMat, ovlp)
+    }
+
+    // Склеивает A и B с известным перекрытием overlapW пикселей.
+    // В зоне перекрытия — линейный градиентный блендинг A→B.
+    private fun stitchAtOverlap(aMat: Mat, bMat: Mat, overlapW: Int): ByteArray {
+        val H    = aMat.rows()
+        val aW   = aMat.cols()
+        val bW   = bMat.cols()
+        val outW = aW + bW - overlapW
+
+        val out = Mat(H, outW, CvType.CV_8UC3, Scalar.all(0.0))
+
+        // Полностью копируем A
+        aMat.copyTo(Mat(out, Rect(0, 0, aW, H)))
+
+        // Уникальная часть B (правее зоны перекрытия)
+        val bUniqueW = bW - overlapW
+        if (bUniqueW > 0) {
+            Mat(bMat, Rect(overlapW, 0, bUniqueW, H))
+                .copyTo(Mat(out, Rect(aW, 0, bUniqueW, H)))
+        }
+
+        // Блендинг: float-версии полосы перекрытия
+        val aOvlp = Mat()
+        Mat(aMat, Rect(aW - overlapW, 0, overlapW, H)).convertTo(aOvlp, CvType.CV_32FC3)
+        val bOvlp = Mat()
+        Mat(bMat, Rect(0, 0, overlapW, H)).convertTo(bOvlp, CvType.CV_32FC3)
+
+        // Градиент alphaB: 0 → 1 слева направо по ширине перекрытия
+        val aRow = FloatArray(overlapW) { col -> col.toFloat() / overlapW }
+        val alphaB1 = Mat(1, overlapW, CvType.CV_32F); alphaB1.put(0, 0, aRow)
+        val alphaB  = Mat(); Core.repeat(alphaB1, H, 1, alphaB)
+        val alphaA  = Mat(); Core.subtract(
+            Mat(H, overlapW, CvType.CV_32F, Scalar(1.0)), alphaB, alphaA)
+
+        // Расширяем до 3 каналов
+        val wA3 = Mat(); Core.merge(arrayListOf(alphaA, alphaA.clone(), alphaA.clone()), wA3)
+        val wB3 = Mat(); Core.merge(arrayListOf(alphaB, alphaB.clone(), alphaB.clone()), wB3)
+
+        val blendF = Mat()
+        val pa = Mat(); Core.multiply(aOvlp, wA3, pa)
+        val pb = Mat(); Core.multiply(bOvlp, wB3, pb)
+        Core.add(pa, pb, blendF)
+
+        val blend8 = Mat(); blendF.convertTo(blend8, CvType.CV_8UC3)
+        blend8.copyTo(Mat(out, Rect(aW - overlapW, 0, overlapW, H)))
+
+        return matToBytes(out)
     }
 
     // ── Lab-пирамида: иерархическое сравнение в CIELab ──────────────────────
