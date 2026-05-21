@@ -521,28 +521,38 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         return Mat(resized, Rect(cx, cy, size, size))
     }
 
-    // Вычисляет ΔE для каждой из grid×grid зон изображения
-    // OpenCV Lab: L∈[0,255] (реальный L*=pixel*100/255), a/b∈[0,255] (offset 128)
+    // Вычисляет среднее ΔE по пикселям для каждой из grid×grid зон.
+    // ΔE считается PER PIXEL (не от mean Lab), чтобы противоположные цвета
+    // (зелёный + красный) не аннулировали друг друга при усреднении.
+    // OpenCV Lab: L∈[0,255] → реальный L*=val*100/255; a,b∈[0,255] offset 128.
     private fun zoneDE(
         refCh: List<Mat>, cmpCh: List<Mat>,
         size: Int, grid: Int, wL: Double
     ): DoubleArray {
+        // Строим карту попиксельного ΔE через матричные операции OpenCV
+        val dL = Mat(); Core.subtract(refCh[0], cmpCh[0], dL)
+        dL.convertTo(dL, CvType.CV_64F, 100.0 / 255.0)  // реальные единицы L*
+
+        val da = Mat(); Core.subtract(refCh[1], cmpCh[1], da)
+        da.convertTo(da, CvType.CV_64F)                   // a* (offset 128 взаимно сокращается)
+
+        val db = Mat(); Core.subtract(refCh[2], cmpCh[2], db)
+        db.convertTo(db, CvType.CV_64F)                   // b*
+
+        // ΔE² = wL·ΔL² + Δa² + Δb²
+        val dL2 = Mat(); Core.multiply(dL, dL, dL2, wL)
+        val da2 = Mat(); Core.multiply(da, da, da2)
+        val db2 = Mat(); Core.multiply(db, db, db2)
+        val de2 = Mat(); Core.add(dL2, da2, de2); Core.add(de2, db2, de2)
+        val deMap = Mat(); Core.sqrt(de2, deMap)          // попиксельная ΔE-карта
+
+        // Усредняем ΔE внутри каждой зоны
         val zs = size / grid
         val result = DoubleArray(grid * grid)
         for (row in 0 until grid) {
             for (col in 0 until grid) {
                 val rect = Rect(col * zs, row * zs, zs, zs)
-                val rL = Core.mean(Mat(refCh[0], rect)).`val`[0]
-                val ra = Core.mean(Mat(refCh[1], rect)).`val`[0]
-                val rb = Core.mean(Mat(refCh[2], rect)).`val`[0]
-                val cL = Core.mean(Mat(cmpCh[0], rect)).`val`[0]
-                val ca = Core.mean(Mat(cmpCh[1], rect)).`val`[0]
-                val cb = Core.mean(Mat(cmpCh[2], rect)).`val`[0]
-                // Перевод в реальные единицы CIELab
-                val dL = (rL - cL) * 100.0 / 255.0
-                val da = ra - ca   // смещение 128 взаимно сокращается
-                val db = rb - cb
-                result[row * grid + col] = sqrt(wL * dL * dL + da * da + db * db)
+                result[row * grid + col] = Core.mean(Mat(deMap, rect)).`val`[0]
             }
         }
         return result
