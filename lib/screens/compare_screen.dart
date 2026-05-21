@@ -1,9 +1,7 @@
 import 'dart:math';
 import 'dart:typed_data';
-import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import '../config/app_theme.dart';
@@ -50,8 +48,6 @@ class _CompareScreenState extends State<CompareScreen>
   bool _refAiLoading = false;
 
   // Ручное наложение на вкладке Эталон (ref1 + ref2)
-  final _overlayKey  = GlobalKey();
-  final _cmp2Key     = GlobalKey();
   final _overlayCtrl = TransformationController();
   double _overlayOpacity = 0.5;
   Size _overlayViewerSize = Size.zero;
@@ -62,7 +58,6 @@ class _CompareScreenState extends State<CompareScreen>
   double? _cmp2Sharpness;
   final _cmp2Ctrl = TransformationController();
   double _cmp2Opacity = 0.5;
-  Size _cmp2ViewerSize = Size.zero;
 
   // Раздел 2 вкладки Сравнение: ref + cmp → compare
   final _cmpOverlayCtrl = TransformationController();
@@ -169,21 +164,6 @@ class _CompareScreenState extends State<CompareScreen>
     return Uint8List.fromList(img.encodePng(cropped));
   }
 
-
-  // ── Объединение двух снимков сравнения ────────────
-  Future<void> _mergeCmpImages() async {
-    if (_cmpImg == null || _cmp2Img == null) return;
-    setState(() => _stacking = true);
-    try {
-      final merged = await _captureFrameRegion(_cmp2Key);
-      if (merged == null) return;
-      if (mounted) setState(() { _cmpImg = merged; _cmpAligned = null; _cmp2Img = null; _cmp2Ctrl.value = Matrix4.identity(); });
-    } catch (e) {
-      if (mounted) xpDlg(context, 'Ошибка', e.toString());
-    } finally {
-      if (mounted) setState(() => _stacking = false);
-    }
-  }
 
   // ── Совместить фото с эталоном и сравнить ────────
   Future<void> _applyCmpAndCompare() async {
@@ -301,63 +281,6 @@ class _CompareScreenState extends State<CompareScreen>
           onTap: () => Navigator.pop(context, ImageSource.camera)),
       ]),
     );
-  }
-
-  // ── Объединение двух эталонов ────────────────────
-  Future<void> _mergeRefImages() async {
-    if (_refImg == null || _ref2Img == null) return;
-    setState(() => _stacking = true);
-    try {
-      final merged = await _captureFrameRegion(_overlayKey);
-      if (merged == null || !mounted) return;
-      final now = DateTime.now();
-      final label =
-          '${now.day.toString().padLeft(2,'0')}.${now.month.toString().padLeft(2,'0')}.${now.year}';
-      await ReferenceStorage.save(merged, label: label);
-      setState(() {
-        _refImg        = merged;
-        _refAligned    = null;
-        _ref2Img       = null;
-        _savedRefLabel = label;
-        _overlayCtrl.value = Matrix4.identity();
-      });
-      xpDlg(context, 'Готово', 'Два снимка объединены и сохранены как эталон.');
-    } catch (e) {
-      if (mounted) xpDlg(context, 'Ошибка', e.toString());
-    } finally {
-      if (mounted) setState(() => _stacking = false);
-    }
-  }
-
-  // Захватывает RepaintBoundary и обрезает по рамке (12% с каждого края)
-  Future<Uint8List?> _captureFrameRegion(GlobalKey key) async {
-    final ctx = key.currentContext;
-    if (ctx == null) return null;
-    final boundary = ctx.findRenderObject() as RenderRepaintBoundary?;
-    if (boundary == null) return null;
-
-    final dpr = MediaQuery.of(context).devicePixelRatio;
-    final uiImg = await boundary.toImage(pixelRatio: dpr);
-
-    const margin = 0.12;
-    final w = uiImg.width, h = uiImg.height;
-    final mx = (w * margin).round(), my = (h * margin).round();
-
-    final recorder = ui.PictureRecorder();
-    final canvas = Canvas(recorder);
-    canvas.drawImageRect(
-      uiImg,
-      Rect.fromLTRB(mx.toDouble(), my.toDouble(),
-          (w - mx).toDouble(), (h - my).toDouble()),
-      Rect.fromLTWH(0, 0,
-          (w - 2 * mx).toDouble(), (h - 2 * my).toDouble()),
-      Paint(),
-    );
-    final cropped = await recorder
-        .endRecording()
-        .toImage(w - 2 * mx, h - 2 * my);
-    final bd = await cropped.toByteData(format: ui.ImageByteFormat.png);
-    return bd?.buffer.asUint8List();
   }
 
   // ── AI анализ качества эталона ───────────────────
@@ -917,7 +840,6 @@ class _CompareScreenState extends State<CompareScreen>
                         });
                         return Stack(fit: StackFit.expand, children: [
                           RepaintBoundary(
-                            key: _overlayKey,
                             child: Stack(fit: StackFit.expand, children: [
                               Image.memory(_refImg!, fit: BoxFit.contain),
                               Opacity(
@@ -977,8 +899,8 @@ class _CompareScreenState extends State<CompareScreen>
                           setState(() => _overlayOpacity = v),
                       activeColor: AppTheme.blue,
                     )),
-                    Text('${(_overlayOpacity * 100).round()}%',
-                        style: const TextStyle(fontSize: 10)),
+                    SizedBox(width: 36, child: Text('${(_overlayOpacity * 100).round()}%',
+                        style: const TextStyle(fontSize: 10))),
                   ]),
                   Row(children: [
                     XpBtn(
@@ -1098,28 +1020,23 @@ class _CompareScreenState extends State<CompareScreen>
                     child: Container(
                       height: 260,
                       color: Colors.black,
-                      child: LayoutBuilder(builder: (_, c) {
-                        WidgetsBinding.instance.addPostFrameCallback((_) {
-                          _cmp2ViewerSize = Size(c.maxWidth, c.maxHeight);
-                        });
-                        return Stack(fit: StackFit.expand, children: [
-                          Image.memory(_cmpImg!, fit: BoxFit.contain),
-                          Opacity(
-                            opacity: _cmp2Opacity,
-                            child: InteractiveViewer(
-                              transformationController: _cmp2Ctrl,
-                              boundaryMargin: const EdgeInsets.all(double.infinity),
-                              minScale: 0.1, maxScale: 6.0,
-                              child: Image.memory(_cmp2Img!, fit: BoxFit.contain),
-                            ),
+                      child: Stack(fit: StackFit.expand, children: [
+                        Image.memory(_cmpImg!, fit: BoxFit.contain),
+                        Opacity(
+                          opacity: _cmp2Opacity,
+                          child: InteractiveViewer(
+                            transformationController: _cmp2Ctrl,
+                            boundaryMargin: const EdgeInsets.all(double.infinity),
+                            minScale: 0.1, maxScale: 6.0,
+                            child: Image.memory(_cmp2Img!, fit: BoxFit.contain),
                           ),
-                          const IgnorePointer(
-                            child: CustomPaint(painter: _FramePainter(0.12)),
-                          ),
-                          const Positioned(left: 8, top: 8, child: _ImgLabel('Образец 1')),
-                          const Positioned(right: 8, top: 8, child: _ImgLabel('Образец 2 ↕↔')),
-                        ]);
-                      }),
+                        ),
+                        const IgnorePointer(
+                          child: CustomPaint(painter: _FramePainter(0.12)),
+                        ),
+                        const Positioned(left: 8, top: 8, child: _ImgLabel('Образец 1')),
+                        const Positioned(right: 8, top: 8, child: _ImgLabel('Образец 2 ↕↔')),
+                      ]),
                     ),
                   ),
                   const SizedBox(height: 6),
@@ -1150,8 +1067,8 @@ class _CompareScreenState extends State<CompareScreen>
                       onChanged: (v) => setState(() => _cmp2Opacity = v),
                       activeColor: AppTheme.blue,
                     )),
-                    Text('${(_cmp2Opacity * 100).round()}%',
-                        style: const TextStyle(fontSize: 10)),
+                    SizedBox(width: 36, child: Text('${(_cmp2Opacity * 100).round()}%',
+                        style: const TextStyle(fontSize: 10))),
                   ]),
                   Row(children: [
                     XpBtn(label: '🗑 Убрать', danger: true,
@@ -1213,7 +1130,7 @@ class _CompareScreenState extends State<CompareScreen>
                     onChanged: (v) => setState(() => _cmpOverlayOpacity = v),
                     activeColor: AppTheme.blue,
                   )),
-                  Text('${(_cmpOverlayOpacity * 100).round()}%', style: const TextStyle(fontSize: 10)),
+                  SizedBox(width: 36, child: Text('${(_cmpOverlayOpacity * 100).round()}%', style: const TextStyle(fontSize: 10))),
                 ]),
                 Row(children: [
                   XpBtn(label: '📐 Перспектива', onPressed: _fixPerspective),
@@ -2182,69 +2099,3 @@ class _BarcodeIssue {
   const _BarcodeIssue.warning(this.title, this.detail) : isError = false;
 }
 
-// Объединение двух снимков с учётом ручного наложения из overlay (isolate)
-// Применяет transform второго изображения и усредняет пиксели
-Uint8List _mergeWithOverlayTransform(Map<String, dynamic> args) {
-  final img1bytes = args['img1'] as Uint8List;
-  final img2bytes = args['img2'] as Uint8List;
-  final tStorage  = (args['transform'] as List).cast<double>();
-  final vw = (args['vw'] as num).toDouble();
-  final vh = (args['vh'] as num).toDouble();
-
-  final decoded1 = img.decodeImage(img1bytes);
-  final decoded2 = img.decodeImage(img2bytes);
-  if (decoded1 == null || decoded2 == null) return img1bytes;
-
-  final w1 = decoded1.width.toDouble();
-  final h1 = decoded1.height.toDouble();
-  final w2 = decoded2.width.toDouble();
-  final h2 = decoded2.height.toDouble();
-
-  // BoxFit.contain масштаб и смещение для каждого изображения в viewer
-  final scale1 = min(vw / w1, vh / h1);
-  final offX1  = (vw - w1 * scale1) / 2;
-  final offY1  = (vh - h1 * scale1) / 2;
-
-  final scale2 = min(vw / w2, vh / h2);
-  final offX2  = (vw - w2 * scale2) / 2;
-  final offY2  = (vh - h2 * scale2) / 2;
-
-  // InteractiveViewer transform (scale + translate, column-major Matrix4)
-  // storage[0]=sx, storage[5]=sy, storage[12]=tx, storage[13]=ty
-  final sx = tStorage[0];
-  final sy = tStorage[5];
-  final tx = tStorage[12];
-  final ty = tStorage[13];
-
-  final out = img.Image(width: decoded1.width, height: decoded1.height);
-
-  for (int y = 0; y < decoded1.height; y++) {
-    for (int x = 0; x < decoded1.width; x++) {
-      final p1 = decoded1.getPixel(x, y);
-
-      // Пиксель ref1 → координаты viewer
-      final vx = x * scale1 + offX1;
-      final vy = y * scale1 + offY1;
-
-      // Инверсный transform (viewer → child ref2)
-      final cx = (vx - tx) / sx;
-      final cy = (vy - ty) / sy;
-
-      // child ref2 → пиксель ref2
-      final ix2 = ((cx - offX2) / scale2).round();
-      final iy2 = ((cy - offY2) / scale2).round();
-
-      if (ix2 >= 0 && ix2 < decoded2.width && iy2 >= 0 && iy2 < decoded2.height) {
-        final p2 = decoded2.getPixel(ix2, iy2);
-        out.setPixelRgb(x, y,
-          (p1.r.toInt() + p2.r.toInt()) ~/ 2,
-          (p1.g.toInt() + p2.g.toInt()) ~/ 2,
-          (p1.b.toInt() + p2.b.toInt()) ~/ 2);
-      } else {
-        out.setPixelRgb(x, y, p1.r.toInt(), p1.g.toInt(), p1.b.toInt());
-      }
-    }
-  }
-
-  return Uint8List.fromList(img.encodePng(out));
-}
