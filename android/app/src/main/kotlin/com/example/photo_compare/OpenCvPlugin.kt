@@ -438,8 +438,9 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     }
 
     // ── Lab-пирамида: иерархическое сравнение в CIELab ──────────────────────
-    // Уровни: 0=1зона, 1=9зон(3×3), 2=81зона(9×9), 3=729зон(27×27)
-    // Формула: ΔE = √(wL·ΔL² + Δa² + Δb²)  (в реальных единицах CIELab)
+    // Level 3 вычисляется из пикселей; Level 2/1/0 — снизу вверх через RMS.
+    // Формула ΔE на зону: √(wL·ΔL² + Δa² + Δb²)  (реальные единицы CIELab)
+    // Агрегация 9 дочерних → родитель: RMS = √(Σ ΔEᵢ² / 9)
     private fun compareImages(
         refBytes: ByteArray, cmpBytes: ByteArray,
         wL: Double,
@@ -465,10 +466,11 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         val refCh = ArrayList<Mat>(); Core.split(refF, refCh)
         val cmpCh = ArrayList<Mat>(); Core.split(cmpF, cmpCh)
 
-        val de0 = zoneDE(refCh, cmpCh, SIZE, 1,  wL)   //   1 зона
-        val de1 = zoneDE(refCh, cmpCh, SIZE, 3,  wL)   //   9 зон
-        val de2 = zoneDE(refCh, cmpCh, SIZE, 9,  wL)   //  81 зона
-        val de3 = zoneDE(refCh, cmpCh, SIZE, 27, wL)   // 729 зон
+        // Снизу вверх: Level 3 из пикселей, выше — RMS агрегация
+        val de3 = zoneDE(refCh, cmpCh, SIZE, 27, wL)  // 729 зон (27×27)
+        val de2 = aggregateRMS(de3, 27, 3)             //  81 зона ( 9×9 )
+        val de1 = aggregateRMS(de2,  9, 3)             //   9 зон  ( 3×3 )
+        val de0 = aggregateRMS(de1,  3, 3)             //   1 зона ( 1×1 )
 
         fun score(de: DoubleArray) = de.map { (100.0 - it * deScale).coerceIn(0.0, 100.0) }.average()
         val wSum = wLayer0 + wLayer1 + wLayer2 + wLayer3
@@ -484,6 +486,26 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             "level3"    to de3,
             "diffImage" to buildZoneDiff(de2, 9, 30),   // 270×270 PNG
         )
+    }
+
+    // Среднеквадратичная агрегация: factor×factor дочерних → 1 родительская зона
+    // sourceGrid — размер входной сетки (например 27 для 27×27)
+    private fun aggregateRMS(de: DoubleArray, sourceGrid: Int, factor: Int): DoubleArray {
+        val tg = sourceGrid / factor
+        val result = DoubleArray(tg * tg)
+        for (row in 0 until tg) {
+            for (col in 0 until tg) {
+                var sumSq = 0.0
+                for (dr in 0 until factor) {
+                    for (dc in 0 until factor) {
+                        val v = de[(row * factor + dr) * sourceGrid + (col * factor + dc)]
+                        sumSq += v * v
+                    }
+                }
+                result[row * tg + col] = sqrt(sumSq / (factor * factor))
+            }
+        }
+        return result
     }
 
     // Масштаб по короткой стороне + центральный кроп до size×size
