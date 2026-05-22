@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 import 'dart:ui' as ui;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
 import '../config/app_theme.dart';
@@ -57,15 +58,15 @@ class _CropFrameScreenState extends State<CropFrameScreen> {
   }
 
   Future<void> _loadImageSize() async {
-    final decoded = await ui.instantiateImageCodec(widget.imageBytes);
-    final frame = await decoded.getNextFrame();
-    setState(() {
-      _imgSize = ui.Size(
-        frame.image.width.toDouble(),
-        frame.image.height.toDouble(),
-      );
-      _loading = false;
-    });
+    // Use img.decodeImage (same as _onConfirm) so EXIF rotation is applied
+    // and _imgSize matches the visual dimensions shown by Image.memory
+    final decoded = await compute((bytes) => img.decodeImage(bytes), widget.imageBytes);
+    if (decoded != null && mounted) {
+      setState(() {
+        _imgSize = ui.Size(decoded.width.toDouble(), decoded.height.toDouble());
+        _loading = false;
+      });
+    }
   }
 
   // Рамка в пикселях виджета
