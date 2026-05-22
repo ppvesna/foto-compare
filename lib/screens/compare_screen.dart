@@ -70,7 +70,7 @@ class _CompareScreenState extends State<CompareScreen>
 
   bool   _stacking   = false;
   bool   _showDiffL3 = false;
-  double _overlayOpacity = 0.5; // прозрачность образца в наложении
+  double _resultOpacity = 0.5; // прозрачность образца в наложении на вкладке Результат
 
   final _history = [
     {'file': 'photo_001.jpg', 'sim': 87.4, 'date': '16.04.2026'},
@@ -1288,7 +1288,7 @@ class _CompareScreenState extends State<CompareScreen>
                   child: Stack(fit: StackFit.expand, children: [
                     Image.memory(_refImg!, fit: BoxFit.contain),
                     Opacity(
-                      opacity: _overlayOpacity,
+                      opacity: _resultOpacity,
                       child: Image.memory(_cmpAligned ?? _cmpImg!, fit: BoxFit.contain),
                     ),
                   ]),
@@ -1297,8 +1297,8 @@ class _CompareScreenState extends State<CompareScreen>
                 Row(children: [
                   const Text('Эталон', style: TextStyle(fontSize: 10)),
                   Expanded(child: Slider(
-                    value: _overlayOpacity,
-                    onChanged: (v) => setState(() => _overlayOpacity = v),
+                    value: _resultOpacity,
+                    onChanged: (v) => setState(() => _resultOpacity = v),
                     activeColor: AppTheme.blue,
                   )),
                   const Text('Образец', style: TextStyle(fontSize: 10)),
