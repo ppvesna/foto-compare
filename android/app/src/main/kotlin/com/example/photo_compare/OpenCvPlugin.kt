@@ -252,10 +252,8 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                 if (!H.empty()) {
                     // Переводим в affine 2×3, масштабируем сдвиг до полного размера
                     val aff = Mat(2, 3, CvType.CV_32F)
-                    aff.put(0,0, H.get(0,0)[0].toFloat(), H.get(0,1)[0].toFloat(),
-                                 (H.get(0,2)[0] / sc).toFloat())
-                    aff.put(1,0, H.get(1,0)[0].toFloat(), H.get(1,1)[0].toFloat(),
-                                 (H.get(1,2)[0] / sc).toFloat())
+                    aff.put(0,0, H.get(0,0)[0], H.get(0,1)[0], H.get(0,2)[0] / sc)
+                    aff.put(1,0, H.get(1,0)[0], H.get(1,1)[0], H.get(1,2)[0] / sc)
                     coarseWarp = aff
                 }
             }
@@ -289,7 +287,7 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                     eccWarp.put(0,0,1.0); eccWarp.put(0,1,0.0)
                     eccWarp.put(1,0,0.0); eccWarp.put(1,1,1.0)
                 }
-            } catch (_: Exception) {}
+            } catch (ignored: Exception) {}
             if (lvl > 0) {
                 eccWarp.put(0, 2, eccWarp.get(0,2)[0] * 2.0)
                 eccWarp.put(1, 2, eccWarp.get(1,2)[0] * 2.0)
@@ -300,7 +298,7 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             val refined = Mat()
             Imgproc.warpAffine(coarse, refined, eccWarp, ref.size(), Imgproc.INTER_LINEAR)
             matToBytes(refined)
-        } catch (_: Exception) {
+        } catch (ignored: Exception) {
             matToBytes(coarse)
         }
     }
