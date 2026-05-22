@@ -69,6 +69,7 @@ class _CompareScreenState extends State<CompareScreen>
   static const double _framePad = 0.10;
 
   bool   _stacking   = false; // идёт усреднение серии
+  bool   _showDiffL3 = false; // показывать детальный уровень 27×27
 
   final _history = [
     {'file': 'photo_001.jpg', 'sim': 87.4, 'date': '16.04.2026'},
@@ -381,7 +382,9 @@ class _CompareScreenState extends State<CompareScreen>
             totalPixels: r.totalPixels,
             refSize:     r.refSize,
             cmpSize:     r.cmpSize,
-            diffImage:   lab.diffImage,
+            diffL1:      lab.diffL1,
+            diffL2:      lab.diffL2,
+            diffL3:      lab.diffL3,
           ));
         }
       }).catchError((_) {});
@@ -1271,28 +1274,50 @@ class _CompareScreenState extends State<CompareScreen>
                 _tableRow('Дата:', dateStr),
               ],
             )),
-        if (r.diffImage != null)
+        if (r.diffL1 != null || r.diffL2 != null)
           XpGroup(
               label: 'Карта различий',
-              child: Column(children: [
-                Container(
-                  height: 200,
-                  color: Colors.black,
-                  child: Stack(fit: StackFit.expand, children: [
-                    if (_refAligned != null || _refImg != null)
-                      Image.memory(
-                          _refAligned ?? _refImg!, fit: BoxFit.contain),
-                    Image.memory(r.diffImage!, fit: BoxFit.contain),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                // Легенда ΔE
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(children: [
+                    _legendItem(const Color(0xFF1EC81E), 'ΔE < 3'),
+                    const SizedBox(width: 10),
+                    _legendItem(const Color(0xFFE8A000), 'ΔE 3–6'),
+                    const SizedBox(width: 10),
+                    _legendItem(const Color(0xFFDC1414), 'ΔE > 6'),
                   ]),
                 ),
-                const SizedBox(height: 8),
-                Row(children: [
-                  _legendItem(const Color(0xFF1ED21E), 'Небольшие (4–20%)'),
-                  const SizedBox(width: 8),
-                  _legendItem(const Color(0xFFFFAA00), 'Средние (20–45%)'),
-                  const SizedBox(width: 8),
-                  _legendItem(const Color(0xFFF01414), 'Сильные (>45%)'),
-                ]),
+                // Уровень 1 — крупные зоны (3×3)
+                if (r.diffL1 != null) ...[
+                  const Text('Уровень 1 — общий тон (3×3)',
+                      style: TextStyle(fontSize: 10, color: Colors.grey)),
+                  const SizedBox(height: 4),
+                  _diffOverlay(r.diffL1!),
+                  const SizedBox(height: 12),
+                ],
+                // Уровень 2 — средние зоны (9×9)
+                if (r.diffL2 != null) ...[
+                  const Text('Уровень 2 — детали (9×9)',
+                      style: TextStyle(fontSize: 10, color: Colors.grey)),
+                  const SizedBox(height: 4),
+                  _diffOverlay(r.diffL2!),
+                  const SizedBox(height: 12),
+                ],
+                // Уровень 3 — детали (27×27) по запросу
+                if (r.diffL3 != null && _showDiffL3) ...[
+                  const Text('Уровень 3 — тонкие детали (27×27)',
+                      style: TextStyle(fontSize: 10, color: Colors.grey)),
+                  const SizedBox(height: 4),
+                  _diffOverlay(r.diffL3!),
+                  const SizedBox(height: 8),
+                ],
+                if (r.diffL3 != null)
+                  Center(child: XpBtn(
+                    label: _showDiffL3 ? 'Скрыть детали' : '🔍 Детали 27×27',
+                    onPressed: () => setState(() => _showDiffL3 = !_showDiffL3),
+                  )),
               ])),
         if (_refBarcodes.isNotEmpty || _cmpBarcodes.isNotEmpty)
           XpGroup(
@@ -1883,13 +1908,21 @@ class _CompareScreenState extends State<CompareScreen>
   }
 
   Widget _legendItem(Color color, String label) => Row(children: [
-        Container(
-          width: 12, height: 12,
-          color: color,
-        ),
+        Container(width: 12, height: 12, color: color),
         const SizedBox(width: 4),
         Text(label, style: const TextStyle(fontSize: 10)),
       ]);
+
+  // Карта ΔE поверх эталона
+  Widget _diffOverlay(Uint8List diffPng) => Container(
+        height: 200,
+        color: Colors.black,
+        child: Stack(fit: StackFit.expand, children: [
+          if (_refAligned != null || _refImg != null)
+            Image.memory(_refAligned ?? _refImg!, fit: BoxFit.contain),
+          Image.memory(diffPng, fit: BoxFit.contain),
+        ]),
+      );
 
   Widget _histCell(String text, {int flex = 1, bool bold = false}) =>
       Expanded(

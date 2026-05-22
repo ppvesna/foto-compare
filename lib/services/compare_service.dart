@@ -154,7 +154,9 @@ CompareResult _run(List<Uint8List> args) {
     totalPixels: maxSize * maxSize,
     refSize:     '${imgRef.width}×${imgRef.height}',
     cmpSize:     '${imgCmp.width}×${imgCmp.height}',
-    diffImage:   _buildDiffImage(r2, c2),
+    diffL1:      null,
+    diffL2:      _buildDiffImage(r2, c2),
+    diffL3:      null,
   );
 }
 
@@ -170,7 +172,9 @@ class CompareResult {
   final int       totalPixels;
   final String    refSize;
   final String    cmpSize;
-  final Uint8List? diffImage;
+  final Uint8List? diffL1;        // PNG карта L1 3×3  крупные зоны
+  final Uint8List? diffL2;        // PNG карта L2 9×9  средние зоны
+  final Uint8List? diffL3;        // PNG карта L3 27×27 детали
 
   const CompareResult({
     required this.similarity,
@@ -184,7 +188,9 @@ class CompareResult {
     required this.totalPixels,
     required this.refSize,
     required this.cmpSize,
-    this.diffImage,
+    this.diffL1,
+    this.diffL2,
+    this.diffL3,
   });
 
   double get diffPercent => diffPixels / totalPixels * 100;

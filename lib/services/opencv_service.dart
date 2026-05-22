@@ -148,7 +148,9 @@ class OpenCvService {
         level1:       _toDoubleList(raw['level1']),
         level2:       _toDoubleList(raw['level2']),
         level3:       _toDoubleList(raw['level3']),
-        diffImage:    raw['diffImage'] as Uint8List,
+        diffL1:       raw['diffL1'] as Uint8List,
+        diffL2:       raw['diffL2'] as Uint8List,
+        diffL3:       raw['diffL3'] as Uint8List,
       );
     } on MissingPluginException {
       _available = false;
@@ -175,7 +177,9 @@ class LabCompareResult {
   final List<double> level1;    //   9 зон:  [ΔE × 9]
   final List<double> level2;    //  81 зона: [ΔE × 81]
   final List<double> level3;    // 729 зон:  [ΔE × 729]
-  final Uint8List diffImage;    // 270×270 PNG-визуализация по уровню 2
+  final Uint8List diffL1;       // 270×270 PNG — L1 3×3  крупные зоны
+  final Uint8List diffL2;       // 270×270 PNG — L2 9×9  средние зоны
+  final Uint8List diffL3;       // 270×270 PNG — L3 27×27 детали (по запросу)
 
   const LabCompareResult({
     required this.score,
@@ -185,6 +189,8 @@ class LabCompareResult {
     required this.level1,
     required this.level2,
     required this.level3,
-    required this.diffImage,
+    required this.diffL1,
+    required this.diffL2,
+    required this.diffL3,
   });
 }

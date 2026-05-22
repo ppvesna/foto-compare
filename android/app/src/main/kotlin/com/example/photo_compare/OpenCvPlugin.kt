@@ -633,7 +633,10 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             "level1"       to de1,
             "level2"       to de2,
             "level3"       to de3,
-            "diffImage"    to buildZoneDiff(de2, GRID / 3, 30),
+            // Карты различий по уровням: L1 крупные зоны, L2 средние, L3 детали (по запросу)
+            "diffL1"       to buildZoneDiff(de1, GRID / 9, 90),  // 3×3,  ячейка 90px
+            "diffL2"       to buildZoneDiff(de2, GRID / 3, 30),  // 9×9,  ячейка 30px
+            "diffL3"       to buildZoneDiff(de3, GRID,     10),  // 27×27, ячейка 10px
         )
     }
 
@@ -894,26 +897,31 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
     // Визуализация diff: cellPx×cellPx пикселей на зону, PNG с прозрачностью
     // Каналы Mat: (R, G, B, A) — PNG-декодер Flutter читает в этом порядке как RGBA
+    // Строит PNG-карту ΔE по зонам.
+    // Пороги: ΔE<3 зелёный, 3-6 жёлтый, >6 красный.
+    // Scalar порядок: BGRA (OpenCV) — imencode конвертирует в RGBA для PNG.
     private fun buildZoneDiff(de: DoubleArray, grid: Int, cellPx: Int): ByteArray {
         val sz = grid * cellPx
         val out = Mat(sz, sz, CvType.CV_8UC4, Scalar(0.0, 0.0, 0.0, 0.0))
         for (i in de.indices) {
             val row = i / grid; val col = i % grid
             val d = de[i]
+            // r, g, b — логические цвета; в Scalar ставим (b, g, r, a) т.к. OpenCV BGRA
             val r: Int; val g: Int; val b: Int; val a: Int
             when {
-                d < 2.0  -> { r=30;  g=200; b=30;  a=(d/2.0*90).toInt() }
-                d < 10.0 -> {
-                    val t = (d - 2.0) / 8.0
+                d < 3.0  -> { r=30;  g=200; b=30;  a=(d/3.0*100).toInt().coerceIn(20,100) }
+                d < 6.0  -> {
+                    val t = (d - 3.0) / 3.0
                     r=(30  + (225*t)).toInt()
-                    g=(200 - (30 *t)).toInt()
+                    g=(200 - (50 *t)).toInt()
                     b=30
-                    a=(90  + (120*t)).toInt()
+                    a=(100 + (120*t)).toInt()
                 }
-                else     -> { r=220; g=20;  b=20;  a=210 }
+                else     -> { r=220; g=20;  b=20;  a=220 }
             }
+            // Scalar(B, G, R, A) — OpenCV channel order
             out.submat(Rect(col*cellPx, row*cellPx, cellPx, cellPx))
-               .setTo(Scalar(r.toDouble(), g.toDouble(), b.toDouble(), a.toDouble()))
+               .setTo(Scalar(b.toDouble(), g.toDouble(), r.toDouble(), a.toDouble()))
         }
         val buf = MatOfByte()
         Imgcodecs.imencode(".png", out, buf)
