@@ -788,20 +788,84 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         return LchMaps(L, C, ua, ub, lClass, cClass, hClass)
     }
 
+    // Иерархическая маска доминирующего сегмента в зоне rect.
+    // Шаг 1: находим доминирующий C-класс (0=чёрный, 1=серый, 2=яркий)
+    // Шаг 2: среди пикселей domC — доминирующий L-класс (0..3)
+    // Шаг 3: если domC==2 (яркий) — среди domC+domL — доминирующий H-класс (0..4)
+    // Возвращает CV_8U маску пикселей доминирующего сегмента.
+    private fun dominantMask(maps: LchMaps, rect: Rect): Mat {
+        fun crop8u(m: Mat) = Mat(m, rect)
+
+        // Шаг 1: доминирующий C-класс
+        val cc = crop8u(maps.cClass)
+        var domC = 0; var bestC = 0
+        for (cls in 0..2) {
+            val tmp = Mat(); Core.compare(cc, Scalar(cls.toDouble()), tmp, Core.CMP_EQ)
+            val cnt = Core.countNonZero(tmp); tmp.release()
+            if (cnt > bestC) { bestC = cnt; domC = cls }
+        }
+        val maskC = Mat(); Core.compare(cc, Scalar(domC.toDouble()), maskC, Core.CMP_EQ)
+
+        // Шаг 2: доминирующий L-класс среди domC
+        val lc = crop8u(maps.lClass)
+        var domL = 0; var bestL = 0
+        for (cls in 0..3) {
+            val tmp = Mat(); Core.compare(lc, Scalar(cls.toDouble()), tmp, Core.CMP_EQ)
+            val combined = Mat(); Core.bitwise_and(tmp, maskC, combined)
+            val cnt = Core.countNonZero(combined)
+            combined.release(); tmp.release()
+            if (cnt > bestL) { bestL = cnt; domL = cls }
+        }
+        val maskCL = Mat(); val tmpL = Mat()
+        Core.compare(lc, Scalar(domL.toDouble()), tmpL, Core.CMP_EQ)
+        Core.bitwise_and(maskC, tmpL, maskCL)
+        maskC.release(); tmpL.release()
+
+        if (domC != 2) return maskCL  // ахроматический: H-класс не нужен
+
+        // Шаг 3: доминирующий H-класс среди domC+domL
+        val hc = crop8u(maps.hClass)
+        var domH = 0; var bestH = 0
+        for (cls in 0..4) {
+            val tmp = Mat(); Core.compare(hc, Scalar(cls.toDouble()), tmp, Core.CMP_EQ)
+            val combined = Mat(); Core.bitwise_and(tmp, maskCL, combined)
+            val cnt = Core.countNonZero(combined)
+            combined.release(); tmp.release()
+            if (cnt > bestH) { bestH = cnt; domH = cls }
+        }
+        val maskCLH = Mat(); val tmpH = Mat()
+        Core.compare(hc, Scalar(domH.toDouble()), tmpH, Core.CMP_EQ)
+        Core.bitwise_and(maskCL, tmpH, maskCLH)
+        maskCL.release(); tmpH.release()
+        return maskCLH
+    }
+
+    // Среднее значение матрицы в зоне rect с маской mask (CV_8U).
+    private fun maskedMean(mat: Mat, rect: Rect, mask: Mat): Double {
+        val roi = Mat(mat, rect)
+        return Core.mean(roi, mask).`val`[0]
+    }
+
     // ΔE между двумя зонами в пространстве LCH.
+    // Использует dominantMask для каждого изображения независимо, чтобы
+    // не смешивать несовместимые цвета при усреднении (красный + зелёный ≠ серый).
     // Формула: √(wL·ΔL² + max(Δa_lch² + Δb_lch², ΔC²))
-    // max() защищает от взаимоотмены: если красный + зелёный → ua=0 (серый по вектору),
-    // то ΔC = C_ref − C_cmp всё равно обнаружит разницу с ахроматической зоной.
     private fun lchZoneDE(ref: LchMaps, cmp: LchMaps, rect: Rect, wL: Double): Double {
-        fun m(mat: Mat) = Core.mean(Mat(mat, rect)).`val`[0]
+        val maskR = dominantMask(ref, rect)
+        val maskC = dominantMask(cmp, rect)
 
-        val lR = m(ref.L); val cR = m(ref.C); val uaR = m(ref.ua); val ubR = m(ref.ub)
-        val lC = m(cmp.L); val cC = m(cmp.C); val uaC = m(cmp.ua); val ubC = m(cmp.ub)
+        fun mr(mat: Mat) = maskedMean(mat, rect, maskR)
+        fun mc(mat: Mat) = maskedMean(mat, rect, maskC)
 
-        val dL = (lR - lC) * (100.0 / 255.0)  // ΔL в реальных L* единицах
-        val da = cR * uaR - cC * uaC           // Δa_lch = C·cos(h) разница
-        val db = cR * ubR - cC * ubC           // Δb_lch = C·sin(h) разница
-        val dC = cR - cC                       // ΔChroma (скалярная)
+        val lR = mr(ref.L); val cR = mr(ref.C); val uaR = mr(ref.ua); val ubR = mr(ref.ub)
+        val lC = mc(cmp.L); val cC = mc(cmp.C); val uaC = mc(cmp.ua); val ubC = mc(cmp.ub)
+
+        maskR.release(); maskC.release()
+
+        val dL = (lR - lC) * (100.0 / 255.0)
+        val da = cR * uaR - cC * uaC
+        val db = cR * ubR - cC * ubC
+        val dC = cR - cC
 
         val chromaTerm = maxOf(da * da + db * db, dC * dC)
         return sqrt(wL * dL * dL + chromaTerm)
