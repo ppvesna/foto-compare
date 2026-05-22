@@ -710,44 +710,117 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         return result
     }
 
-    // Вычисляет среднее ΔE по пикселям для каждой из grid×grid зон.
-    // ΔE считается PER PIXEL (не от mean Lab), чтобы противоположные цвета
-    // (зелёный + красный) не аннулировали друг друга при усреднении.
-    // imgW/imgH задают реальный размер изображения → зоны могут быть прямоугольными.
-    // OpenCV Lab: L∈[0,255] → реальный L*=val*100/255; a,b∈[0,255] offset 128.
+    // ── LCH зонный дескриптор ────────────────────────────────────────────────
+    // Каждая зона описывается тремя осями:
+    //   L — яркость (4 класса: чёрный/тёмный/светлый/белый)
+    //   C — насыщенность (3 класса: чёрный/серый/яркий)
+    //   H — оттенок (5 секторов: красный/жёлтый/зелёный/синий/пурпурный)
+    // ΔE использует LCH-реконструкцию + защиту от взаимоотмены цветов.
+
+    private class LchMaps(
+        val L:      Mat,  // CV_64F, яркость [0,255]
+        val C:      Mat,  // CV_64F, насыщенность = √(a²+b²)
+        val ua:     Mat,  // CV_64F, cos оттенка (единичный вектор)
+        val ub:     Mat,  // CV_64F, sin оттенка
+        val lClass: Mat,  // CV_8U, L-класс [0..3]
+        val cClass: Mat,  // CV_8U, C-класс [0..2]
+        val hClass: Mat,  // CV_8U, H-класс [0..4]
+    ) {
+        fun release() {
+            L.release(); C.release(); ua.release(); ub.release()
+            lClass.release(); cClass.release(); hClass.release()
+        }
+    }
+
+    // Предвычисляет LCH-карты и карты классов для одного Lab-изображения.
+    // ch[0]=L, ch[1]=a, ch[2]=b — CV_32F, L∈[0,255], a/b∈[0,255] (нейтраль=128).
+    private fun lchMaps(ch: List<Mat>): LchMaps {
+        val L = Mat(); ch[0].convertTo(L, CvType.CV_64F)
+        // Центрируем a,b вокруг 0: нейтральный цвет → (0, 0)
+        val a = Mat(); ch[1].convertTo(a, CvType.CV_64F); Core.subtract(a, Scalar(128.0), a)
+        val b = Mat(); ch[2].convertTo(b, CvType.CV_64F); Core.subtract(b, Scalar(128.0), b)
+
+        val C = Mat(); Core.magnitude(a, b, C)               // насыщенность
+        val h = Mat(); Core.phase(a, b, h, true)              // оттенок atan2(b,a) в [0°,360°)
+
+        val Cs = Mat(); Core.add(C, Scalar(1e-6), Cs)        // защита от деления на 0
+        val ua = Mat(); Core.divide(a, Cs, ua)               // единичный вектор x
+        val ub = Mat(); Core.divide(b, Cs, ub)               // единичный вектор y
+        Cs.release(); a.release(); b.release()
+
+        // ── L-классы (4 уровня, [0..3]) ─────────────────────────────────
+        // 0 Чёрный:  L* <  25  (L_ocv <  64)
+        // 1 Тёмный:  L* 25-50  (L_ocv  64-128)
+        // 2 Светлый: L* 50-75  (L_ocv 128-191)
+        // 3 Белый:   L* > 75   (L_ocv ≥ 191)
+        val lClass = Mat(L.size(), CvType.CV_8U, Scalar(0.0))
+        fun lc(thresh: Double, cls: Int) {
+            val m = Mat(); Core.compare(L, Scalar(thresh), m, Core.CMP_GE)
+            lClass.setTo(Scalar(cls.toDouble()), m); m.release()
+        }
+        lc(64.0, 1); lc(128.0, 2); lc(191.0, 3)
+
+        // ── C-классы (3 уровня, [0..2]) ─────────────────────────────────
+        // 0 Чёрный: L_ocv < 64 (приоритет над C)
+        // 1 Серый:  C < 25 (ахроматический)
+        // 2 Яркий:  C ≥ 25 (насыщенный цвет)
+        val cClass = Mat(C.size(), CvType.CV_8U, Scalar(1.0))           // дефолт: серый
+        val mv = Mat(); Core.compare(C, Scalar(25.0), mv, Core.CMP_GE)
+        cClass.setTo(Scalar(2.0), mv); mv.release()                      // яркий
+        val mb = Mat(); Core.compare(L, Scalar(64.0), mb, Core.CMP_LT)
+        cClass.setTo(Scalar(0.0), mb); mb.release()                      // чёрный (перекрывает)
+
+        // ── H-классы (5 секторов по 72°, [0..4]) ────────────────────────
+        // 0 Красный:   [0°,36°) ∪ [324°,360°)  — дефолт
+        // 1 Жёлтый:   [36°,108°)
+        // 2 Зелёный:  [108°,180°)
+        // 3 Синий:    [180°,252°)
+        // 4 Пурпурный:[252°,324°)
+        val hClass = Mat(h.size(), CvType.CV_8U, Scalar(0.0))           // дефолт: красный
+        fun hc(lo: Double, hi: Double, cls: Int) {
+            val m = Mat(); Core.inRange(h, Scalar(lo), Scalar(hi), m)
+            hClass.setTo(Scalar(cls.toDouble()), m); m.release()
+        }
+        hc(36.0, 108.0, 1); hc(108.0, 180.0, 2)
+        hc(180.0, 252.0, 3); hc(252.0, 324.0, 4)
+        h.release()
+
+        return LchMaps(L, C, ua, ub, lClass, cClass, hClass)
+    }
+
+    // ΔE между двумя зонами в пространстве LCH.
+    // Формула: √(wL·ΔL² + max(Δa_lch² + Δb_lch², ΔC²))
+    // max() защищает от взаимоотмены: если красный + зелёный → ua=0 (серый по вектору),
+    // то ΔC = C_ref − C_cmp всё равно обнаружит разницу с ахроматической зоной.
+    private fun lchZoneDE(ref: LchMaps, cmp: LchMaps, rect: Rect, wL: Double): Double {
+        fun m(mat: Mat) = Core.mean(Mat(mat, rect)).`val`[0]
+
+        val lR = m(ref.L); val cR = m(ref.C); val uaR = m(ref.ua); val ubR = m(ref.ub)
+        val lC = m(cmp.L); val cC = m(cmp.C); val uaC = m(cmp.ua); val ubC = m(cmp.ub)
+
+        val dL = (lR - lC) * (100.0 / 255.0)  // ΔL в реальных L* единицах
+        val da = cR * uaR - cC * uaC           // Δa_lch = C·cos(h) разница
+        val db = cR * ubR - cC * ubC           // Δb_lch = C·sin(h) разница
+        val dC = cR - cC                       // ΔChroma (скалярная)
+
+        val chromaTerm = maxOf(da * da + db * db, dC * dC)
+        return sqrt(wL * dL * dL + chromaTerm)
+    }
+
+    // Вычисляет ΔE для каждой из grid×grid зон через LCH-дескрипторы.
+    // imgW/imgH — каноническое разрешение (зоны могут быть прямоугольными).
     private fun zoneDE(
         refCh: List<Mat>, cmpCh: List<Mat>,
         imgW: Int, imgH: Int, grid: Int, wL: Double
     ): DoubleArray {
-        // Строим карту попиксельного ΔE через матричные операции OpenCV
-        val dL = Mat(); Core.subtract(refCh[0], cmpCh[0], dL)
-        dL.convertTo(dL, CvType.CV_64F, 100.0 / 255.0)  // реальные единицы L*
-
-        val da = Mat(); Core.subtract(refCh[1], cmpCh[1], da)
-        da.convertTo(da, CvType.CV_64F)                   // a* (offset 128 взаимно сокращается)
-
-        val db = Mat(); Core.subtract(refCh[2], cmpCh[2], db)
-        db.convertTo(db, CvType.CV_64F)                   // b*
-
-        // ΔE² = wL·ΔL² + Δa² + Δb²
-        val dL2 = Mat(); Core.multiply(dL, dL, dL2, wL)
-        val da2 = Mat(); Core.multiply(da, da, da2)
-        val db2 = Mat(); Core.multiply(db, db, db2)
-        val de2 = Mat(); Core.add(dL2, da2, de2); Core.add(de2, db2, de2)
-        val deMap = Mat(); Core.sqrt(de2, deMap)          // попиксельная ΔE-карта
-
-        // Зона может быть прямоугольной при несквадратном изображении
-        val zw = imgW / grid
-        val zh = imgH / grid
-        val result = DoubleArray(grid * grid)
-        for (row in 0 until grid) {
-            for (col in 0 until grid) {
-                val rect = Rect(col * zw, row * zh, zw, zh)
-                result[row * grid + col] = Core.mean(Mat(deMap, rect)).`val`[0]
-            }
-        }
-        return result
+        val zw = imgW / grid; val zh = imgH / grid
+        val ref = lchMaps(refCh); val cmp = lchMaps(cmpCh)
+        return DoubleArray(grid * grid) { i ->
+            val row = i / grid; val col = i % grid
+            lchZoneDE(ref, cmp, Rect(col * zw, row * zh, zw, zh), wL)
+        }.also { ref.release(); cmp.release() }
     }
+
 
     // Визуализация diff: cellPx×cellPx пикселей на зону, PNG с прозрачностью
     // Каналы Mat: (R, G, B, A) — PNG-декодер Flutter читает в этом порядке как RGBA
