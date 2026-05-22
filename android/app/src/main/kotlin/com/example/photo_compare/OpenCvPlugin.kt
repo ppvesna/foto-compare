@@ -584,8 +584,11 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         val refCrp = normalizeToCanonical(refMat, nw, nh)
         val cmpCrp = normalizeToCanonical(cmpMat, nw, nh)
 
-        // Маски letterbox-зон на каждом уровне
-        val lb3 = letterboxZones(refMat.width(), refMat.height(), nw, nh)
+        // Маски пустых зон (letterbox + незаснятые края после сшивки).
+        // Зона исключается если в ней нет контента (>50% чёрных пикселей) хотя бы в одном из двух.
+        val emptyRef = emptyZones(refCrp, GRID)
+        val emptyСmp = emptyZones(cmpCrp, GRID)
+        val lb3 = BooleanArray(GRID * GRID) { i -> emptyRef[i] || emptyСmp[i] }
         val lb2 = aggregateMask(lb3, GRID, 3)
         val lb1 = aggregateMask(lb2, GRID / 3, 3)
         val lb0 = aggregateMask(lb1, GRID / 9, 3)
@@ -657,21 +660,24 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         return canvas
     }
 
-    // Возвращает маску L3-зон (27×27): true = зона в letterbox-полях (>50% padding).
-    private fun letterboxZones(srcW: Int, srcH: Int, nw: Int, nh: Int): BooleanArray {
-        val scale = minOf(nw.toDouble() / srcW, nh.toDouble() / srcH)
-        val sw = (srcW * scale).roundToInt(); val sh = (srcH * scale).roundToInt()
-        val x0 = (nw - sw) / 2; val y0 = (nh - sh) / 2
-        val x1 = x0 + sw;       val y1 = y0 + sh
-        val zw = nw / 27;       val zh = nh / 27
-        return BooleanArray(27 * 27) { i ->
-            val row = i / 27; val col = i % 27
-            val zx0 = col * zw; val zy0 = row * zh
-            val zx1 = zx0 + zw; val zy1 = zy0 + zh
-            val ox = maxOf(0, minOf(zx1, x1) - maxOf(zx0, x0))
-            val oy = maxOf(0, minOf(zy1, y1) - maxOf(zy0, y0))
-            (ox * oy) < (zw * zh) / 2  // true = зона преимущественно letterbox
-        }
+    // Пиксельная маска пустых зон: true = зона пустая (нет контента).
+    // Зона считается пустой если >50% пикселей имеют яркость L_ocv < 20 (почти чёрный).
+    // Покрывает: letterbox-поля, незаснятые края после сшивки, stitching-gaps.
+    private fun emptyZones(mat: Mat, grid: Int): BooleanArray {
+        val gray = Mat()
+        // Используем только L-канал (после BGR→Lab преобразования) или просто серый
+        Imgproc.cvtColor(mat, gray, Imgproc.COLOR_BGR2GRAY)
+        val zw = mat.width()  / grid
+        val zh = mat.height() / grid
+        val threshold = 20.0
+        return BooleanArray(grid * grid) { i ->
+            val row = i / grid; val col = i % grid
+            val roi = Mat(gray, Rect(col * zw, row * zh, zw, zh))
+            val black = Mat(); Core.compare(roi, Scalar(threshold), black, Core.CMP_LT)
+            val blackCount = Core.countNonZero(black)
+            black.release()
+            blackCount > (zw * zh) / 2   // true = зона пустая
+        }.also { gray.release() }
     }
 
     // Агрегирует маску снизу вверх: родительская зона = letterbox,
