@@ -1319,7 +1319,7 @@ class _CompareScreenState extends State<CompareScreen>
                   height: 220,
                   color: Colors.black,
                   child: Stack(fit: StackFit.expand, children: [
-                    Image.memory(_refImg!, fit: BoxFit.contain),
+                    Image.memory(_refAligned ?? _refImg!, fit: BoxFit.contain),
                     Opacity(
                       opacity: _resultOpacity,
                       child: Image.memory(_cmpAligned ?? _cmpImg!, fit: BoxFit.contain),
