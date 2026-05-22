@@ -68,8 +68,9 @@ class _CompareScreenState extends State<CompareScreen>
   // Отступ рамки (10% с каждой стороны = 80% центральная зона)
   static const double _framePad = 0.10;
 
-  bool   _stacking   = false; // идёт усреднение серии
-  bool   _showDiffL3 = false; // показывать детальный уровень 27×27
+  bool   _stacking   = false;
+  bool   _showDiffL3 = false;
+  double _overlayOpacity = 0.5; // прозрачность образца в наложении
 
   final _history = [
     {'file': 'photo_001.jpg', 'sim': 87.4, 'date': '16.04.2026'},
@@ -372,19 +373,21 @@ class _CompareScreenState extends State<CompareScreen>
         if (lab != null && mounted && _result != null) {
           final r = _result!;
           setState(() => _result = CompareResult(
-            similarity:  r.similarity,
-            labScore:    lab.score,
-            labLevel0:   lab.level0,
-            labLevel1:   lab.level1,
-            labLevel2:   lab.level2,
-            labLevel3:   lab.level3,
-            diffPixels:  r.diffPixels,
-            totalPixels: r.totalPixels,
-            refSize:     r.refSize,
-            cmpSize:     r.cmpSize,
-            diffL1:      lab.diffL1,
-            diffL2:      lab.diffL2,
-            diffL3:      lab.diffL3,
+            similarity:    r.similarity,
+            labScore:      lab.score,
+            labLevel0:     lab.level0,
+            labLevel1:     lab.level1,
+            labLevel2:     lab.level2,
+            labLevel3:     lab.level3,
+            shiftDL:       lab.shiftDL,
+            shiftDA:       lab.shiftDA,
+            shiftDB:       lab.shiftDB,
+            refCanonical:  lab.refCanonical,
+            diffPixels:    r.diffPixels,
+            totalPixels:   r.totalPixels,
+            refSize:       r.refSize,
+            cmpSize:       r.cmpSize,
+            diffL3:        lab.diffL3,
           ));
         }
       }).catchError((_) {});
@@ -1274,50 +1277,64 @@ class _CompareScreenState extends State<CompareScreen>
                 _tableRow('Дата:', dateStr),
               ],
             )),
-        if (r.diffL1 != null || r.diffL2 != null)
+        // ── Наложение: эталон + образец с ползунком ──
+        if (_refImg != null && _cmpImg != null)
+          XpGroup(
+              label: 'Наложение',
+              child: Column(children: [
+                Container(
+                  height: 220,
+                  color: Colors.black,
+                  child: Stack(fit: StackFit.expand, children: [
+                    Image.memory(_refImg!, fit: BoxFit.contain),
+                    Opacity(
+                      opacity: _overlayOpacity,
+                      child: Image.memory(_cmpAligned ?? _cmpImg!, fit: BoxFit.contain),
+                    ),
+                  ]),
+                ),
+                const SizedBox(height: 4),
+                Row(children: [
+                  const Text('Эталон', style: TextStyle(fontSize: 10)),
+                  Expanded(child: Slider(
+                    value: _overlayOpacity,
+                    onChanged: (v) => setState(() => _overlayOpacity = v),
+                    activeColor: AppTheme.blue,
+                  )),
+                  const Text('Образец', style: TextStyle(fontSize: 10)),
+                ]),
+              ])),
+
+        // ── Анализ цвета (уровень 0 — глобальный) ──
+        if (r.shiftDL != null || r.shiftDA != null)
+          XpGroup(
+              label: 'Цветовой анализ',
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(_colorComment(r.shiftDL, r.shiftDA, r.shiftDB),
+                    style: const TextStyle(fontSize: 12, height: 1.5)),
+              ])),
+
+        // ── Карта различий (уровень 3: 27×27 детали) ──
+        if (r.diffL3 != null)
           XpGroup(
               label: 'Карта различий',
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                // Легенда ΔE
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Row(children: [
-                    _legendItem(const Color(0xFF1EC81E), 'ΔE < 3'),
-                    const SizedBox(width: 10),
-                    _legendItem(const Color(0xFFE8A000), 'ΔE 3–6'),
-                    const SizedBox(width: 10),
-                    _legendItem(const Color(0xFFDC1414), 'ΔE > 6'),
-                  ]),
-                ),
-                // Уровень 1 — крупные зоны (3×3)
-                if (r.diffL1 != null) ...[
-                  const Text('Уровень 1 — общий тон (3×3)',
-                      style: TextStyle(fontSize: 10, color: Colors.grey)),
-                  const SizedBox(height: 4),
-                  _diffOverlay(r.diffL1!),
-                  const SizedBox(height: 12),
-                ],
-                // Уровень 2 — средние зоны (9×9)
-                if (r.diffL2 != null) ...[
-                  const Text('Уровень 2 — детали (9×9)',
-                      style: TextStyle(fontSize: 10, color: Colors.grey)),
-                  const SizedBox(height: 4),
-                  _diffOverlay(r.diffL2!),
-                  const SizedBox(height: 12),
-                ],
-                // Уровень 3 — детали (27×27) по запросу
-                if (r.diffL3 != null && _showDiffL3) ...[
-                  const Text('Уровень 3 — тонкие детали (27×27)',
-                      style: TextStyle(fontSize: 10, color: Colors.grey)),
-                  const SizedBox(height: 4),
-                  _diffOverlay(r.diffL3!),
-                  const SizedBox(height: 8),
-                ],
-                if (r.diffL3 != null)
-                  Center(child: XpBtn(
-                    label: _showDiffL3 ? 'Скрыть детали' : '🔍 Детали 27×27',
+                Row(children: [
+                  _legendItem(const Color(0xFF1EC81E), 'ΔE < 3'),
+                  const SizedBox(width: 10),
+                  _legendItem(const Color(0xFFE8A000), 'ΔE 3–6'),
+                  const SizedBox(width: 10),
+                  _legendItem(const Color(0xFFDC1414), 'ΔE > 6'),
+                  const Spacer(),
+                  XpBtn(
+                    label: _showDiffL3 ? 'Скрыть' : '🔍 Показать',
                     onPressed: () => setState(() => _showDiffL3 = !_showDiffL3),
-                  )),
+                  ),
+                ]),
+                if (_showDiffL3) ...[
+                  const SizedBox(height: 8),
+                  _diffOverlay(r.diffL3!, r.refCanonical),
+                ],
               ])),
         if (_refBarcodes.isNotEmpty || _cmpBarcodes.isNotEmpty)
           XpGroup(
@@ -1913,16 +1930,42 @@ class _CompareScreenState extends State<CompareScreen>
         Text(label, style: const TextStyle(fontSize: 10)),
       ]);
 
-  // Карта ΔE поверх эталона
-  Widget _diffOverlay(Uint8List diffPng) => Container(
-        height: 200,
+  // Карта ΔE поверх канонического ref — оба одного размера, наложение точное.
+  Widget _diffOverlay(Uint8List diffPng, Uint8List? canonRef) => Container(
+        height: 220,
         color: Colors.black,
         child: Stack(fit: StackFit.expand, children: [
-          if (_refAligned != null || _refImg != null)
-            Image.memory(_refAligned ?? _refImg!, fit: BoxFit.contain),
+          if (canonRef != null)
+            Image.memory(canonRef, fit: BoxFit.contain)
+          else if (_refImg != null)
+            Image.memory(_refImg!, fit: BoxFit.contain),
           Image.memory(diffPng, fit: BoxFit.contain),
         ]),
       );
+
+  // Текстовый комментарий о цветовом сдвиге образца относительно эталона.
+  // da > 0 → образец краснее; da < 0 → зеленее
+  // db > 0 → образец желтее;  db < 0 → синее
+  // dL > 0 → образец темнее;  dL < 0 → светлее
+  String _colorComment(double? dL, double? da, double? db) {
+    if (dL == null && da == null && db == null) return 'Нет данных';
+    final parts = <String>[];
+    final thresh = 3.0; // порог значимости в единицах OpenCV Lab
+    if (dL != null && dL.abs() > 2.0) {
+      parts.add(dL > 0 ? 'образец темнее на ${dL.abs().toStringAsFixed(1)} L*'
+                       : 'образец светлее на ${dL.abs().toStringAsFixed(1)} L*');
+    }
+    if (da != null && da.abs() > thresh) {
+      parts.add(da > 0 ? 'смещение в красный (+${da.toStringAsFixed(1)} a*)'
+                       : 'смещение в зелёный (${da.toStringAsFixed(1)} a*)');
+    }
+    if (db != null && db.abs() > thresh) {
+      parts.add(db > 0 ? 'смещение в жёлтый (+${db.toStringAsFixed(1)} b*)'
+                       : 'смещение в синий (${db.toStringAsFixed(1)} b*)');
+    }
+    if (parts.isEmpty) return 'Общий тон в норме (глобальный сдвиг < порога)';
+    return parts.join(' · ');
+  }
 
   Widget _histCell(String text, {int flex = 1, bool bold = false}) =>
       Expanded(

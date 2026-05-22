@@ -148,8 +148,10 @@ class OpenCvService {
         level1:       _toDoubleList(raw['level1']),
         level2:       _toDoubleList(raw['level2']),
         level3:       _toDoubleList(raw['level3']),
-        diffL1:       raw['diffL1'] as Uint8List,
-        diffL2:       raw['diffL2'] as Uint8List,
+        shiftDL:      (raw['shiftDL'] as num).toDouble(),
+        shiftDA:      (raw['shiftDA'] as num).toDouble(),
+        shiftDB:      (raw['shiftDB'] as num).toDouble(),
+        refCanonical: raw['refCanonical'] as Uint8List,
         diffL3:       raw['diffL3'] as Uint8List,
       );
     } on MissingPluginException {
@@ -177,9 +179,11 @@ class LabCompareResult {
   final List<double> level1;    //   9 зон:  [ΔE × 9]
   final List<double> level2;    //  81 зона: [ΔE × 81]
   final List<double> level3;    // 729 зон:  [ΔE × 729]
-  final Uint8List diffL1;       // 270×270 PNG — L1 3×3  крупные зоны
-  final Uint8List diffL2;       // 270×270 PNG — L2 9×9  средние зоны
-  final Uint8List diffL3;       // 270×270 PNG — L3 27×27 детали (по запросу)
+  final double shiftDL;         // глобальный сдвиг яркости L* (ref − cmp)
+  final double shiftDA;         // глобальный сдвиг a* (+ красный, − зелёный)
+  final double shiftDB;         // глобальный сдвиг b* (+ жёлтый, − синий)
+  final Uint8List refCanonical; // каноническое ref-изображение для наложения diff
+  final Uint8List diffL3;       // PNG карта L3 27×27 детали
 
   const LabCompareResult({
     required this.score,
@@ -189,8 +193,10 @@ class LabCompareResult {
     required this.level1,
     required this.level2,
     required this.level3,
-    required this.diffL1,
-    required this.diffL2,
+    required this.shiftDL,
+    required this.shiftDA,
+    required this.shiftDB,
+    required this.refCanonical,
     required this.diffL3,
   });
 }

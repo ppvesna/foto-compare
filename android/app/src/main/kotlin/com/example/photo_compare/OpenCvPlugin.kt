@@ -625,6 +625,15 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
         val activeCnt = lb3.count { !it }
 
+        // Глобальный цветовой сдвиг: средние Lab ref − cmp по всему изображению.
+        // Разность не зависит от letterbox (одинаковый у обоих).
+        val mRL = Core.mean(refCh[0]).`val`[0]; val mCL = Core.mean(cmpCh[0]).`val`[0]
+        val mRA = Core.mean(refCh[1]).`val`[0]; val mCA = Core.mean(cmpCh[1]).`val`[0]
+        val mRB = Core.mean(refCh[2]).`val`[0]; val mCB = Core.mean(cmpCh[2]).`val`[0]
+        val dL = (mRL - mCL) * (100.0 / 255.0)
+        val da = (mRA - mCA)          // в единицах OpenCV a* (нейтраль = 128)
+        val db = (mRB - mCB)          // b* аналогично
+
         return mapOf(
             "score"        to overall.coerceIn(0.0, 100.0),
             "activeZones"  to activeCnt,
@@ -633,10 +642,14 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             "level1"       to de1,
             "level2"       to de2,
             "level3"       to de3,
-            // Карты различий по уровням: L1 крупные зоны, L2 средние, L3 детали (по запросу)
-            "diffL1"       to buildZoneDiff(de1, GRID / 9, 90),  // 3×3,  ячейка 90px
-            "diffL2"       to buildZoneDiff(de2, GRID / 3, 30),  // 9×9,  ячейка 30px
-            "diffL3"       to buildZoneDiff(de3, GRID,     10),  // 27×27, ячейка 10px
+            // Цветовой сдвиг для текстовых комментариев
+            "shiftDL"      to dL,
+            "shiftDA"      to da,
+            "shiftDB"      to db,
+            // Каноническое ref-изображение для корректного наложения diff-карты
+            "refCanonical" to matToBytes(refCrp),
+            // Diff-карта L3 (27×27 детали). L1 и L2 → только текст.
+            "diffL3"       to buildZoneDiff(de3, GRID, nw, nh),
         )
     }
 
@@ -897,16 +910,16 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
     // Визуализация diff: cellPx×cellPx пикселей на зону, PNG с прозрачностью
     // Каналы Mat: (R, G, B, A) — PNG-декодер Flutter читает в этом порядке как RGBA
-    // Строит PNG-карту ΔE по зонам.
+    // Строит PNG-карту ΔE. Размер выходного изображения = nw × nh (как canonical),
+    // чтобы diff точно накладывался на canonical ref.
     // Пороги: ΔE<3 зелёный, 3-6 жёлтый, >6 красный.
     // Scalar порядок: BGRA (OpenCV) — imencode конвертирует в RGBA для PNG.
-    private fun buildZoneDiff(de: DoubleArray, grid: Int, cellPx: Int): ByteArray {
-        val sz = grid * cellPx
-        val out = Mat(sz, sz, CvType.CV_8UC4, Scalar(0.0, 0.0, 0.0, 0.0))
+    private fun buildZoneDiff(de: DoubleArray, grid: Int, nw: Int, nh: Int): ByteArray {
+        val cw = nw / grid; val ch = nh / grid   // ширина и высота одной ячейки
+        val out = Mat(nh, nw, CvType.CV_8UC4, Scalar(0.0, 0.0, 0.0, 0.0))
         for (i in de.indices) {
             val row = i / grid; val col = i % grid
             val d = de[i]
-            // r, g, b — логические цвета; в Scalar ставим (b, g, r, a) т.к. OpenCV BGRA
             val r: Int; val g: Int; val b: Int; val a: Int
             when {
                 d < 3.0  -> { r=30;  g=200; b=30;  a=(d/3.0*100).toInt().coerceIn(20,100) }
@@ -920,7 +933,7 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                 else     -> { r=220; g=20;  b=20;  a=220 }
             }
             // Scalar(B, G, R, A) — OpenCV channel order
-            out.submat(Rect(col*cellPx, row*cellPx, cellPx, cellPx))
+            out.submat(Rect(col*cw, row*ch, cw, ch))
                .setTo(Scalar(b.toDouble(), g.toDouble(), r.toDouble(), a.toDouble()))
         }
         val buf = MatOfByte()

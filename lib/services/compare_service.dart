@@ -154,26 +154,26 @@ CompareResult _run(List<Uint8List> args) {
     totalPixels: maxSize * maxSize,
     refSize:     '${imgRef.width}×${imgRef.height}',
     cmpSize:     '${imgCmp.width}×${imgCmp.height}',
-    diffL1:      null,
-    diffL2:      _buildDiffImage(r2, c2),
-    diffL3:      null,
+    diffL3:      _buildDiffImage(r2, c2),
   );
 }
 
 class CompareResult {
   final double    similarity;
-  final double?   ssim;           // OpenCV SSIM (null если недоступен)
-  final double?   labScore;       // Lab-пирамида итоговый балл
-  final List<double>? labLevel0;  //   1 зона
-  final List<double>? labLevel1;  //   9 зон
-  final List<double>? labLevel2;  //  81 зона
-  final List<double>? labLevel3;  // 729 зон
+  final double?   ssim;
+  final double?   labScore;
+  final List<double>? labLevel0;
+  final List<double>? labLevel1;
+  final List<double>? labLevel2;
+  final List<double>? labLevel3;
+  final double?   shiftDL;        // глобальный сдвиг L*
+  final double?   shiftDA;        // глобальный сдвиг a*
+  final double?   shiftDB;        // глобальный сдвиг b*
+  final Uint8List? refCanonical;  // каноническое ref для наложения diff
   final int       diffPixels;
   final int       totalPixels;
   final String    refSize;
   final String    cmpSize;
-  final Uint8List? diffL1;        // PNG карта L1 3×3  крупные зоны
-  final Uint8List? diffL2;        // PNG карта L2 9×9  средние зоны
   final Uint8List? diffL3;        // PNG карта L3 27×27 детали
 
   const CompareResult({
@@ -184,12 +184,14 @@ class CompareResult {
     this.labLevel1,
     this.labLevel2,
     this.labLevel3,
+    this.shiftDL,
+    this.shiftDA,
+    this.shiftDB,
+    this.refCanonical,
     required this.diffPixels,
     required this.totalPixels,
     required this.refSize,
     required this.cmpSize,
-    this.diffL1,
-    this.diffL2,
     this.diffL3,
   });
 
