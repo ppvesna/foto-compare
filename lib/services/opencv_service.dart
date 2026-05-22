@@ -42,6 +42,23 @@ class OpenCvService {
     }
   }
 
+  // ── Пирамидное выравнивание (L3→L2→L1→L0) ────────
+  // После ручного совмещения — машинное уточнение по пикселям.
+  static Future<Uint8List> alignPyramid(
+      Uint8List reference, Uint8List source) async {
+    if (!_available) return source;
+    try {
+      final result = await _channel.invokeMethod<Uint8List>(
+          'alignPyramid', {'reference': reference, 'source': source});
+      return result ?? source;
+    } on MissingPluginException {
+      _available = false;
+      return source;
+    } catch (_) {
+      return source;
+    }
+  }
+
   // ── SSIM сравнение ────────────────────────────────
   // Structural Similarity Index — точнее чем MAE для восприятия качества печати
   static Future<double?> ssim(Uint8List ref, Uint8List cmp) async {

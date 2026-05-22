@@ -43,6 +43,11 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                     val src = call.argument<ByteArray>("source")!!
                     result.success(alignImages(ref, src))
                 }
+                "alignPyramid" -> {
+                    val ref = call.argument<ByteArray>("reference")!!
+                    val src = call.argument<ByteArray>("source")!!
+                    result.success(alignPyramid(ref, src))
+                }
                 "ssim" -> {
                     val ref = call.argument<ByteArray>("reference")!!
                     val cmp = call.argument<ByteArray>("compare")!!
@@ -204,6 +209,61 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             Imgproc.warpAffine(src, aligned, warpMatrix, ref.size(), Imgproc.INTER_LINEAR)
             matToBytes(aligned)
         } catch (e: Exception) {
+            matToBytes(src)
+        }
+    }
+
+    // Пирамидное выравнивание: грубо (уровень 3, 1/8 разрешения) → точно (уровень 0, полный).
+    // Каждый уровень берёт матрицу от предыдущего как начальное приближение.
+    // MOTION_EUCLIDEAN: только сдвиг + поворот — стабильно для съёмки с руки.
+    private fun alignPyramid(refBytes: ByteArray, srcBytes: ByteArray): ByteArray {
+        val ref = bytesToMat(refBytes)
+        val src = bytesToMat(srcBytes)
+
+        val refGray = Mat(); Imgproc.cvtColor(ref, refGray, Imgproc.COLOR_BGR2GRAY)
+        val srcGray = Mat(); Imgproc.cvtColor(src, srcGray, Imgproc.COLOR_BGR2GRAY)
+
+        // Строим пирамиду: index 0 = полный размер, index 3 = 1/8
+        val numLevels = 4
+        val pyrRef = ArrayList<Mat>(numLevels)
+        val pyrSrc = ArrayList<Mat>(numLevels)
+        pyrRef.add(refGray); pyrSrc.add(srcGray)
+        repeat(numLevels - 1) {
+            val r = Mat(); Imgproc.pyrDown(pyrRef.last(), r); pyrRef.add(r)
+            val s = Mat(); Imgproc.pyrDown(pyrSrc.last(), s); pyrSrc.add(s)
+        }
+
+        // Начинаем с единичной матрицы на самом грубом уровне
+        val warp = Mat.eye(2, 3, CvType.CV_32F)
+        val criteria = TermCriteria(TermCriteria.COUNT + TermCriteria.EPS, 50, 1e-4)
+
+        // Уровень 3 → 2 → 1 → 0 (от грубого к точному)
+        for (lvl in numLevels - 1 downTo 0) {
+            val rF = Mat(); pyrRef[lvl].convertTo(rF, CvType.CV_32F)
+            val sF = Mat(); pyrSrc[lvl].convertTo(sF, CvType.CV_32F)
+
+            try {
+                Video.findTransformECC(rF, sF, warp, Video.MOTION_EUCLIDEAN, criteria, Mat(), 5)
+                // Сброс если ECC ушёл далеко (поворот > 20°)
+                val angle = Math.toDegrees(Math.atan2(warp.get(1,0)[0], warp.get(0,0)[0]))
+                if (Math.abs(angle) > 20.0) {
+                    warp.put(0,0, 1.0); warp.put(0,1, 0.0)
+                    warp.put(1,0, 0.0); warp.put(1,1, 1.0)
+                }
+            } catch (_: Exception) { /* не сошёлся — используем текущую матрицу */ }
+
+            // Масштабируем сдвиг ×2 для перехода на следующий (вдвое точнее) уровень
+            if (lvl > 0) {
+                warp.put(0, 2, warp.get(0, 2)[0] * 2.0)
+                warp.put(1, 2, warp.get(1, 2)[0] * 2.0)
+            }
+        }
+
+        return try {
+            val aligned = Mat()
+            Imgproc.warpAffine(src, aligned, warp, ref.size(), Imgproc.INTER_LINEAR)
+            matToBytes(aligned)
+        } catch (_: Exception) {
             matToBytes(src)
         }
     }

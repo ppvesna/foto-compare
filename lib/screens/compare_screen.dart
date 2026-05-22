@@ -68,9 +68,10 @@ class _CompareScreenState extends State<CompareScreen>
   // Отступ рамки (10% с каждой стороны = 80% центральная зона)
   static const double _framePad = 0.10;
 
-  bool   _stacking   = false;
-  bool   _showDiffL3 = false;
-  double _resultOpacity = 0.5; // прозрачность образца в наложении на вкладке Результат
+  bool   _stacking      = false;
+  bool   _showDiffL3    = false;
+  bool   _autoAligning  = false; // идёт пирамидное выравнивание
+  double _resultOpacity = 0.5;
 
   final _history = [
     {'file': 'photo_001.jpg', 'sim': 87.4, 'date': '16.04.2026'},
@@ -422,6 +423,20 @@ class _CompareScreenState extends State<CompareScreen>
       if (mounted) xpDlg(context, 'Ошибка сравнения', e.toString());
     } finally {
       if (mounted) setState(() => _comparing = false);
+    }
+  }
+
+  // ── Пирамидное авто-выравнивание L3→L2→L1→L0 ────
+  Future<void> _autoAlign() async {
+    final ref = _refAligned ?? _refImg;
+    final cmp = _cmpAligned ?? _cmpImg;
+    if (ref == null || cmp == null) return;
+    setState(() => _autoAligning = true);
+    try {
+      final aligned = await OpenCvService.alignPyramid(ref, cmp);
+      if (mounted) setState(() { _cmpAligned = aligned; });
+    } finally {
+      if (mounted) setState(() => _autoAligning = false);
     }
   }
 
@@ -1174,6 +1189,24 @@ class _CompareScreenState extends State<CompareScreen>
                   ],
                   const Spacer(),
                   XpBtn(label: '⟳', onPressed: () => setState(() => _cmpOverlayCtrl.value = Matrix4.identity())),
+                ]),
+                const SizedBox(height: 6),
+                // Шаг 2: авто-выравнивание по пикселям (L3→L2→L1→L0)
+                Row(children: [
+                  Expanded(child: _autoAligning
+                    ? const Row(children: [
+                        SizedBox(width: 16, height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2)),
+                        SizedBox(width: 8),
+                        Text('Авто-выравнивание L3→L2→L1→L0…',
+                            style: TextStyle(fontSize: 11, color: Colors.grey)),
+                      ])
+                    : XpBtn(
+                        label: '⚙ Авто L3→L2→L1→L0',
+                        primary: true,
+                        onPressed: (_refImg != null && _cmpImg != null && !_comparing)
+                            ? _autoAlign : null,
+                      )),
                 ]),
               ])),
         ],
