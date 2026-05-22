@@ -13,6 +13,7 @@ import '../services/ai_compare_service.dart';
 import '../services/barcode_service.dart';
 import '../services/ocr_service.dart';
 import '../config/app_config.dart';
+import '../widgets/crop_frame_screen.dart';
 
 class CompareScreen extends StatefulWidget {
   const CompareScreen({super.key});
@@ -418,6 +419,22 @@ class _CompareScreenState extends State<CompareScreen>
     }
   }
 
+  // ── Кроп рамкой ──────────────────────────────────
+  Future<void> _cropImage(bool isRef) async {
+    final src = isRef ? _refImg : _cmpImg;
+    if (src == null) return;
+    final result = await CropFrameScreen.show(
+      context, src,
+      title: isRef ? 'Рамка — Эталон' : 'Рамка — Образец',
+    );
+    if (result != null && mounted) {
+      setState(() {
+        if (isRef) { _refImg = result; _refAligned = null; }
+        else        { _cmpImg = result; _cmpAligned = null; }
+      });
+    }
+  }
+
   // ── Выбор фото ───────────────────────────────────
   Future<void> _pickImage(bool isRef) async {
     final result = await showModalBottomSheet<String>(
@@ -804,6 +821,10 @@ class _CompareScreenState extends State<CompareScreen>
               label: '💾 Сохранить эталон',
               primary: true,
               onPressed: _refImg != null ? _saveReference : null)),
+          const SizedBox(width: 6),
+          XpBtn(
+              label: '✂ Рамка',
+              onPressed: _refImg != null ? () => _cropImage(true) : null),
         ]),
 
         // ── Эталон 2 ─────────────────────────────────
@@ -1156,6 +1177,10 @@ class _CompareScreenState extends State<CompareScreen>
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
           XpBtn(label: '‹ Эталон', onPressed: () => _tabs.animateTo(0)),
           Row(children: [
+            if (_cmpImg != null) ...[
+              XpBtn(label: '✂ Рамка', onPressed: () => _cropImage(false)),
+              const SizedBox(width: 6),
+            ],
             if (_result != null) ...[
               SimBadge(value: _result!.score),
               const SizedBox(width: 8),
