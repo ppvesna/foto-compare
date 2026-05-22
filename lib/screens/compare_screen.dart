@@ -1044,7 +1044,11 @@ class _CompareScreenState extends State<CompareScreen>
 
               // Образец 2 — для объединения
               if (_cmpImg != null) ...[
-                const SizedBox(height: 8),
+                const SizedBox(height: 6),
+                Row(children: [
+                  XpBtn(label: '✂ Рамка', onPressed: () => _cropImage(false)),
+                ]),
+                const SizedBox(height: 4),
                 const Divider(),
                 const SizedBox(height: 6),
                 if (_cmp2Img == null) ...[
@@ -1216,10 +1220,6 @@ class _CompareScreenState extends State<CompareScreen>
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
           XpBtn(label: '‹ Эталон', onPressed: () => _tabs.animateTo(0)),
           Row(children: [
-            if (_cmpImg != null) ...[
-              XpBtn(label: '✂ Рамка', onPressed: () => _cropImage(false)),
-              const SizedBox(width: 6),
-            ],
             if (_result != null) ...[
               SimBadge(value: _result!.score),
               const SizedBox(width: 8),

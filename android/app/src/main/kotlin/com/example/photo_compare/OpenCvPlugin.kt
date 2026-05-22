@@ -213,9 +213,9 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         }
     }
 
-    // Пирамидное выравнивание: грубо (уровень 3, 1/8 разрешения) → точно (уровень 0, полный).
-    // Каждый уровень берёт матрицу от предыдущего как начальное приближение.
-    // MOTION_EUCLIDEAN: только сдвиг + поворот — стабильно для съёмки с руки.
+    // Пирамидное выравнивание для съёмки с руки.
+    // Шаг 1: AKAZE — грубое совмещение при любых смещениях, поворотах, масштабе.
+    // Шаг 2: ECC-пирамида L3→L0 — субпиксельное уточнение.
     private fun alignPyramid(refBytes: ByteArray, srcBytes: ByteArray): ByteArray {
         val ref = bytesToMat(refBytes)
         val src = bytesToMat(srcBytes)
@@ -223,48 +223,85 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         val refGray = Mat(); Imgproc.cvtColor(ref, refGray, Imgproc.COLOR_BGR2GRAY)
         val srcGray = Mat(); Imgproc.cvtColor(src, srcGray, Imgproc.COLOR_BGR2GRAY)
 
-        // Строим пирамиду: index 0 = полный размер, index 3 = 1/8
+        // ── Шаг 1: AKAZE — работает без ручного совмещения ──────────────────
+        // Масштабируем до 800px для скорости
+        val maxSide = 800.0
+        val sc = minOf(maxSide / ref.width(), maxSide / ref.height(), 1.0)
+        val rS = Mat(); val sS = Mat()
+        Imgproc.resize(refGray, rS, Size(ref.width()*sc, ref.height()*sc))
+        Imgproc.resize(srcGray, sS, Size(src.width()*sc, src.height()*sc))
+
+        val akaze = AKAZE.create()
+        val kpR = MatOfKeyPoint(); val kpS = MatOfKeyPoint()
+        val dR = Mat(); val dS = Mat()
+        akaze.detectAndCompute(rS, Mat(), kpR, dR)
+        akaze.detectAndCompute(sS, Mat(), kpS, dS)
+
+        // Начальная матрица — единица (нет предварительного совмещения)
+        var coarseWarp: Mat? = null
+        if (!dR.empty() && !dS.empty()) {
+            val matcher = BFMatcher.create(BFMatcher.BRUTEFORCE_HAMMING, true)
+            val matches = MatOfDMatch(); matcher.match(dR, dS, matches)
+            val good = matches.toList().sortedBy { it.distance }.take(80)
+            if (good.size >= 8) {
+                val ptR = MatOfPoint2f(); val ptS = MatOfPoint2f()
+                val kpRList = kpR.toList(); val kpSList = kpS.toList()
+                ptR.fromList(good.map { kpRList[it.queryIdx].pt })
+                ptS.fromList(good.map { kpSList[it.trainIdx].pt })
+                val H = Calib3d.findHomography(ptS, ptR, Calib3d.RANSAC, 3.0)
+                if (!H.empty()) {
+                    // Переводим в affine 2×3, масштабируем сдвиг до полного размера
+                    val aff = Mat(2, 3, CvType.CV_32F)
+                    aff.put(0,0, H.get(0,0)[0].toFloat(), H.get(0,1)[0].toFloat(),
+                                 (H.get(0,2)[0] / sc).toFloat())
+                    aff.put(1,0, H.get(1,0)[0].toFloat(), H.get(1,1)[0].toFloat(),
+                                 (H.get(1,2)[0] / sc).toFloat())
+                    coarseWarp = aff
+                }
+            }
+        }
+
+        // Применяем грубое совмещение
+        val coarse = Mat()
+        val initWarp = coarseWarp ?: Mat.eye(2, 3, CvType.CV_32F)
+        Imgproc.warpAffine(src, coarse, initWarp, ref.size(), Imgproc.INTER_LINEAR)
+        val coarseGray = Mat(); Imgproc.cvtColor(coarse, coarseGray, Imgproc.COLOR_BGR2GRAY)
+
+        // ── Шаг 2: ECC-пирамида L3→L0 (субпиксельное уточнение) ─────────────
         val numLevels = 4
         val pyrRef = ArrayList<Mat>(numLevels)
         val pyrSrc = ArrayList<Mat>(numLevels)
-        pyrRef.add(refGray); pyrSrc.add(srcGray)
+        pyrRef.add(refGray); pyrSrc.add(coarseGray)
         repeat(numLevels - 1) {
             val r = Mat(); Imgproc.pyrDown(pyrRef.last(), r); pyrRef.add(r)
             val s = Mat(); Imgproc.pyrDown(pyrSrc.last(), s); pyrSrc.add(s)
         }
 
-        // Начинаем с единичной матрицы на самом грубом уровне
-        val warp = Mat.eye(2, 3, CvType.CV_32F)
+        val eccWarp = Mat.eye(2, 3, CvType.CV_32F)
         val criteria = TermCriteria(TermCriteria.COUNT + TermCriteria.EPS, 50, 1e-4)
-
-        // Уровень 3 → 2 → 1 → 0 (от грубого к точному)
         for (lvl in numLevels - 1 downTo 0) {
             val rF = Mat(); pyrRef[lvl].convertTo(rF, CvType.CV_32F)
             val sF = Mat(); pyrSrc[lvl].convertTo(sF, CvType.CV_32F)
-
             try {
-                Video.findTransformECC(rF, sF, warp, Video.MOTION_EUCLIDEAN, criteria, Mat(), 5)
-                // Сброс если ECC ушёл далеко (поворот > 20°)
-                val angle = Math.toDegrees(Math.atan2(warp.get(1,0)[0], warp.get(0,0)[0]))
-                if (Math.abs(angle) > 20.0) {
-                    warp.put(0,0, 1.0); warp.put(0,1, 0.0)
-                    warp.put(1,0, 0.0); warp.put(1,1, 1.0)
+                Video.findTransformECC(rF, sF, eccWarp, Video.MOTION_EUCLIDEAN, criteria, Mat(), 5)
+                val angle = Math.toDegrees(Math.atan2(eccWarp.get(1,0)[0], eccWarp.get(0,0)[0]))
+                if (Math.abs(angle) > 15.0) {
+                    eccWarp.put(0,0,1.0); eccWarp.put(0,1,0.0)
+                    eccWarp.put(1,0,0.0); eccWarp.put(1,1,1.0)
                 }
-            } catch (_: Exception) { /* не сошёлся — используем текущую матрицу */ }
-
-            // Масштабируем сдвиг ×2 для перехода на следующий (вдвое точнее) уровень
+            } catch (_: Exception) {}
             if (lvl > 0) {
-                warp.put(0, 2, warp.get(0, 2)[0] * 2.0)
-                warp.put(1, 2, warp.get(1, 2)[0] * 2.0)
+                eccWarp.put(0, 2, eccWarp.get(0,2)[0] * 2.0)
+                eccWarp.put(1, 2, eccWarp.get(1,2)[0] * 2.0)
             }
         }
 
         return try {
-            val aligned = Mat()
-            Imgproc.warpAffine(src, aligned, warp, ref.size(), Imgproc.INTER_LINEAR)
-            matToBytes(aligned)
+            val refined = Mat()
+            Imgproc.warpAffine(coarse, refined, eccWarp, ref.size(), Imgproc.INTER_LINEAR)
+            matToBytes(refined)
         } catch (_: Exception) {
-            matToBytes(src)
+            matToBytes(coarse)
         }
     }
 
