@@ -841,7 +841,9 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         // C: 7 классов (CIE C*)
         val C_BOUNDS  = doubleArrayOf(0.0,3.0,11.0,21.0,36.0,51.0,71.0,Double.MAX_VALUE)
         val C_CENTERS = doubleArrayOf(1.0,6.5,15.5,28.0,43.0,60.5,80.0)
-        // H: 12 секторов по 30°, центры в радианах
+        // H: 12 секторов по 30°
+        val H_BOUNDS  = DoubleArray(13) { it * 30.0 }           // 0°,30°,60°,...,360°
+        val H_CENTERS = DoubleArray(12) { 15.0 + it * 30.0 }    // 15°,45°,...,345°
         val H_RAD     = DoubleArray(12) { Math.toRadians(15.0 + it * 30.0) }
         const val SIZE = 803
 
