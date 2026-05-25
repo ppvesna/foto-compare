@@ -832,55 +832,55 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         return result
     }
 
-    // ── 803-сегментное LCH пространство ─────────────────────────────────────
-    // L*: 11 классов [0-100]; C: 7 классов; H: 12 секторов по 30°.
-    // Ахроматические (C0): 11 сегментов.
-    // Хроматические (C1-C6): 11 × 6 × 12 = 792 сегмента. Итого: 803.
-    // Каждый сегмент — фиксированная точка в LCH-пространстве.
-    // ΔE вычисляется между центрами доминирующих сегментов зоны.
+    // ── Palette — таблица 803 цветовых сегментов LCH ────────────────────────
+    // Ахроматические (C0): 11; хроматические (C1-C6): 11×6×12 = 792. Итого: 803.
+    object Palette {
+        // L*: 11 классов [0-100]
+        val L_BOUNDS  = doubleArrayOf(0.0,9.0,18.0,27.0,36.0,45.0,54.0,63.0,72.0,81.0,90.0,101.0)
+        val L_CENTERS = doubleArrayOf(4.0,13.0,22.0,31.0,40.0,49.0,58.0,67.0,76.0,85.0,95.0)
+        // C: 7 классов (CIE C*)
+        val C_BOUNDS  = doubleArrayOf(0.0,3.0,11.0,21.0,36.0,51.0,71.0,Double.MAX_VALUE)
+        val C_CENTERS = doubleArrayOf(1.0,6.5,15.5,28.0,43.0,60.5,80.0)
+        // H: 12 секторов по 30°, центры в радианах
+        val H_RAD     = DoubleArray(12) { Math.toRadians(15.0 + it * 30.0) }
+        const val SIZE = 803
 
-    private val LS_BOUNDS  = doubleArrayOf(0.0,9.0,18.0,27.0,36.0,45.0,54.0,63.0,72.0,81.0,90.0,101.0)
-    private val LS_CENTERS = doubleArrayOf(4.0,13.0,22.0,31.0,40.0,49.0,58.0,67.0,76.0,85.0,95.0)
-    private val CR_BOUNDS  = doubleArrayOf(0.0,3.0,11.0,21.0,36.0,51.0,71.0,Double.MAX_VALUE)
-    private val CR_CENTERS = doubleArrayOf(1.0,6.5,15.5,28.0,43.0,60.5,80.0)
-    private val HC_RAD     = DoubleArray(12) { Math.toRadians(15.0 + it * 30.0) }
-    private val N_SEG      = 803
+        fun lClass(lStar: Double): Int {
+            for (i in 1 until L_BOUNDS.size) if (lStar < L_BOUNDS[i]) return i - 1; return 10
+        }
+        fun cClass(c: Double): Int {
+            for (i in 1 until C_BOUNDS.size) if (c < C_BOUNDS[i]) return i - 1; return 6
+        }
+        fun hClass(hDeg: Double): Int =
+            (((hDeg % 360 + 360) % 360) / 30).toInt().coerceIn(0, 11)
 
-    private fun lStarClass(lStar: Double): Int {
-        for (i in 1 until LS_BOUNDS.size) if (lStar < LS_BOUNDS[i]) return i - 1; return 10
+        // ID: ахроматический → 0-10; хроматический → 11-802
+        fun id(lc: Int, cc: Int, hc: Int): Int =
+            if (cc == 0) lc else 11 + lc * 72 + (cc - 1) * 12 + hc
+
+        // Центр сегмента: (L* [0-100], C [CIE], H [радианы])
+        fun center(id: Int): Triple<Double, Double, Double> = if (id < 11)
+            Triple(L_CENTERS[id], C_CENTERS[0], 0.0)
+        else {
+            val i = id - 11
+            Triple(L_CENTERS[i / 72], C_CENTERS[(i % 72) / 12 + 1], H_RAD[i % 12])
+        }
     }
-    private fun chromaClass(c: Double): Int {
-        for (i in 1 until CR_BOUNDS.size) if (c < CR_BOUNDS[i]) return i - 1; return 6
-    }
-    private fun hueClass(hDeg: Double): Int =
-        (((hDeg % 360 + 360) % 360) / 30).toInt().coerceIn(0, 11)
 
-    // ID сегмента: ахроматический (cc==0) → 0-10; хроматический → 11-802
-    private fun segId(lc: Int, cc: Int, hc: Int): Int =
-        if (cc == 0) lc else 11 + lc * 72 + (cc - 1) * 12 + hc
-
-    // Центр сегмента: (L* [0-100], C [CIE], H [радианы])
-    private fun segCenter(id: Int): Triple<Double, Double, Double> = if (id < 11)
-        Triple(LS_CENTERS[id], CR_CENTERS[0], 0.0)
-    else {
-        val i = id - 11
-        Triple(LS_CENTERS[i / 72], CR_CENTERS[(i % 72) / 12 + 1], HC_RAD[i % 12])
-    }
-
-    // ΔE*ab между центрами двух сегментов
+    // ΔE*ab между центрами двух сегментов Palette
     private fun segDE(idR: Int, idC: Int, wL: Double): Double {
-        val (lR, cR, hR) = segCenter(idR)
-        val (lC, cC, hC) = segCenter(idC)
+        val (lR, cR, hR) = Palette.center(idR)
+        val (lC, cC, hC) = Palette.center(idC)
         val dL = lR - lC
         val da = cR * cos(hR) - cC * cos(hC)
         val db = cR * sin(hR) - cC * sin(hC)
         return sqrt(wL * dL * dL + da * da + db * db)
     }
 
-    // Доминирующий сегмент зоны: гистограмма 803 бинов → максимум.
+    // Доминирующий сегмент зоны: гистограмма Palette.SIZE бинов → максимум.
     // lab — байтовый массив Mat CV_8UC3 (OpenCV Lab: L∈[0,255], a/b∈[0,255] нейтраль=128).
     private fun dominantSeg(lab: ByteArray, imgW: Int, zx: Int, zy: Int, zw: Int, zh: Int): Int {
-        val hist = IntArray(N_SEG)
+        val hist = IntArray(Palette.SIZE)
         for (dy in 0 until zh) {
             val rowBase = (zy + dy) * imgW
             for (dx in 0 until zw) {
@@ -889,11 +889,11 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                 val ac    = (lab[p + 1].toInt() and 0xFF) - 128.0
                 val bc    = (lab[p + 2].toInt() and 0xFF) - 128.0
                 val c     = sqrt(ac * ac + bc * bc)
-                val cc    = chromaClass(c)
+                val cc    = Palette.cClass(c)
                 val hDeg  = if (cc > 0) {
                     var h = Math.toDegrees(atan2(bc, ac)); if (h < 0) h += 360.0; h
                 } else 0.0
-                hist[segId(lStarClass(lStar), cc, if (cc == 0) 0 else hueClass(hDeg))]++
+                hist[Palette.id(Palette.lClass(lStar), cc, if (cc == 0) 0 else Palette.hClass(hDeg))]++
             }
         }
         return hist.indices.maxByOrNull { hist[it] } ?: 0
