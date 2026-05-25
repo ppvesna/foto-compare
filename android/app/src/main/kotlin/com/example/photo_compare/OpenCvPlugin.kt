@@ -869,20 +869,41 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         }
     }
 
-    // ΔE*ab между центрами двух сегментов Palette
-    private fun segDE(idR: Int, idC: Int, wL: Double): Double {
-        val (lR, cR, hR) = Palette.center(idR)
-        val (lC, cC, hC) = Palette.center(idC)
-        val dL = lR - lC
-        val da = cR * cos(hR) - cC * cos(hC)
-        val db = cR * sin(hR) - cC * sin(hC)
+    // Дескриптор зоны: реальные LCH + сегмент палитры
+    private data class ZoneColors(
+        val l1: Double, val c1: Double, val h1: Double,  // доминирующий (реальный LCH)
+        val l2: Double, val c2: Double, val h2: Double,  // второй (реальный LCH, если есть)
+        val hasSecond: Boolean,
+        val palId: Int                                    // сегмент палитры доминирующего
+    )
+
+    // ΔE*ab между двумя реальными LCH-значениями
+    private fun lchDE(l1: Double, c1: Double, h1: Double,
+                      l2: Double, c2: Double, h2: Double, wL: Double): Double {
+        val dL = l1 - l2
+        val da = c1 * cos(h1) - c2 * cos(h2)
+        val db = c1 * sin(h1) - c2 * sin(h2)
         return sqrt(wL * dL * dL + da * da + db * db)
     }
 
-    // Доминирующий сегмент зоны: гистограмма Palette.SIZE бинов → максимум.
-    // lab — байтовый массив Mat CV_8UC3 (OpenCV Lab: L∈[0,255], a/b∈[0,255] нейтраль=128).
-    private fun dominantSeg(lab: ByteArray, imgW: Int, zx: Int, zy: Int, zw: Int, zh: Int): Int {
-        val hist = IntArray(Palette.SIZE)
+    // ΔE*ab между центрами двух сегментов Palette (для diff-карты, сшивки)
+    private fun segDE(idR: Int, idC: Int, wL: Double): Double {
+        val (lR, cR, hR) = Palette.center(idR)
+        val (lC, cC, hC) = Palette.center(idC)
+        return lchDE(lR, cR, hR, lC, cC, hC, wL)
+    }
+
+    // Дескриптор зоны: доминирующий цвет + второй (если ΔE > 15 и > 20%) + сегмент палитры.
+    // lab — байтовый массив Mat CV_8UC3 (L∈[0,255], a/b∈[0,255] нейтраль=128).
+    private fun zoneDescriptor(lab: ByteArray, imgW: Int,
+                                zx: Int, zy: Int, zw: Int, zh: Int): ZoneColors {
+        val cnt    = IntArray(Palette.SIZE)
+        val sumL   = DoubleArray(Palette.SIZE)
+        val sumC   = DoubleArray(Palette.SIZE)
+        val sumSin = DoubleArray(Palette.SIZE)
+        val sumCos = DoubleArray(Palette.SIZE)
+        val total  = zw * zh
+
         for (dy in 0 until zh) {
             val rowBase = (zy + dy) * imgW
             for (dx in 0 until zw) {
@@ -895,26 +916,71 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                 val hDeg  = if (cc > 0) {
                     var h = Math.toDegrees(atan2(bc, ac)); if (h < 0) h += 360.0; h
                 } else 0.0
-                hist[Palette.id(Palette.lClass(lStar), cc, if (cc == 0) 0 else Palette.hClass(hDeg))]++
+                val hRad  = Math.toRadians(hDeg)
+                val id    = Palette.id(Palette.lClass(lStar), cc,
+                                       if (cc == 0) 0 else Palette.hClass(hDeg))
+                cnt[id]++; sumL[id] += lStar; sumC[id] += c
+                if (cc > 0) { sumSin[id] += sin(hRad); sumCos[id] += cos(hRad) }
             }
         }
-        return hist.indices.maxByOrNull { hist[it] } ?: 0
+
+        // Топ-2 сегмента по количеству пикселей
+        val ranked = cnt.indices.filter { cnt[it] > 0 }.sortedByDescending { cnt[it] }
+        val id1 = ranked[0]; val n1 = cnt[id1]
+        val l1 = sumL[id1] / n1; val c1 = sumC[id1] / n1
+        val h1 = if (id1 >= 11) {
+            val h = atan2(sumSin[id1], sumCos[id1]); if (h < 0) h + 2 * Math.PI else h
+        } else 0.0
+
+        // Второй цвет: > 20% пикселей и ΔE от доминирующего > 15
+        var hasSecond = false; var l2 = 0.0; var c2 = 0.0; var h2 = 0.0
+        if (ranked.size > 1) {
+            val id2 = ranked[1]; val n2 = cnt[id2]
+            if (n2.toDouble() / total > 0.20) {
+                val (lc1, cc1, hc1) = Palette.center(id1)
+                val (lc2, cc2, hc2) = Palette.center(id2)
+                val dl = lc1 - lc2
+                val da = cc1 * cos(hc1) - cc2 * cos(hc2)
+                val db = cc1 * sin(hc1) - cc2 * sin(hc2)
+                if (sqrt(dl * dl + da * da + db * db) > 15.0) {
+                    hasSecond = true
+                    l2 = sumL[id2] / n2; c2 = sumC[id2] / n2
+                    h2 = if (id2 >= 11) {
+                        val h = atan2(sumSin[id2], sumCos[id2]); if (h < 0) h + 2 * Math.PI else h
+                    } else 0.0
+                }
+            }
+        }
+        return ZoneColors(l1, c1, h1, l2, c2, h2, hasSecond, id1)
     }
 
-    // ΔE для каждой зоны grid×grid через 803-сегментные LCH-дескрипторы.
+    // ΔE зоны: учитывает оба цвета.
+    // Если второй цвет только у одного — штраф 30% за отсутствующий цвет.
+    private fun zoneColorDE(ref: ZoneColors, cmp: ZoneColors, wL: Double): Double {
+        val de1 = lchDE(ref.l1, ref.c1, ref.h1, cmp.l1, cmp.c1, cmp.h1, wL)
+        return when {
+            ref.hasSecond && cmp.hasSecond ->
+                (de1 + lchDE(ref.l2, ref.c2, ref.h2, cmp.l2, cmp.c2, cmp.h2, wL)) / 2.0
+            ref.hasSecond ->
+                de1 * 0.7 + lchDE(ref.l2, ref.c2, ref.h2, cmp.l1, cmp.c1, cmp.h1, wL) * 0.3
+            cmp.hasSecond ->
+                de1 * 0.7 + lchDE(ref.l1, ref.c1, ref.h1, cmp.l2, cmp.c2, cmp.h2, wL) * 0.3
+            else -> de1
+        }
+    }
+
+    // ΔE для каждой зоны grid×grid через ZoneColors-дескрипторы.
     // refLab / cmpLab — Mat CV_8UC3 канонического разрешения.
-    private fun zoneDE(
-        refLab: Mat, cmpLab: Mat,
-        imgW: Int, imgH: Int, grid: Int, wL: Double
-    ): DoubleArray {
+    private fun zoneDE(refLab: Mat, cmpLab: Mat,
+                       imgW: Int, imgH: Int, grid: Int, wL: Double): DoubleArray {
         val zw = imgW / grid; val zh = imgH / grid
         val refArr = ByteArray(imgW * imgH * 3); refLab.get(0, 0, refArr)
         val cmpArr = ByteArray(imgW * imgH * 3); cmpLab.get(0, 0, cmpArr)
         return DoubleArray(grid * grid) { i ->
             val row = i / grid; val col = i % grid
-            segDE(
-                dominantSeg(refArr, imgW, col * zw, row * zh, zw, zh),
-                dominantSeg(cmpArr, imgW, col * zw, row * zh, zw, zh),
+            zoneColorDE(
+                zoneDescriptor(refArr, imgW, col * zw, row * zh, zw, zh),
+                zoneDescriptor(cmpArr, imgW, col * zw, row * zh, zw, zh),
                 wL
             )
         }
