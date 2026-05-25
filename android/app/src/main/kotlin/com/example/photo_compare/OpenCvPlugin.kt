@@ -702,15 +702,8 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         Imgproc.cvtColor(refCrp, refLab, Imgproc.COLOR_BGR2Lab)
         Imgproc.cvtColor(cmpCrp, cmpLab, Imgproc.COLOR_BGR2Lab)
 
-        val refF = Mat(); val cmpF = Mat()
-        refLab.convertTo(refF, CvType.CV_32F)
-        cmpLab.convertTo(cmpF, CvType.CV_32F)
-
-        val refCh = ArrayList<Mat>(); Core.split(refF, refCh)
-        val cmpCh = ArrayList<Mat>(); Core.split(cmpF, cmpCh)
-
         // Снизу вверх: Level 3 из пикселей, выше — RMS агрегация
-        val de3 = zoneDE(refCh, cmpCh, nw, nh, GRID, wL)
+        val de3 = zoneDE(refLab, cmpLab, nw, nh, GRID, wL)
         val de2 = aggregateRMS(de3, GRID, 3)
         val de1 = aggregateRMS(de2, GRID / 3, 3)
         val de0 = aggregateRMS(de1, GRID / 9, 3)
@@ -732,9 +725,11 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
         // Глобальный цветовой сдвиг: средние Lab ref − cmp по всему изображению.
         // Разность не зависит от letterbox (одинаковый у обоих).
-        val mRL = Core.mean(refCh[0]).`val`[0]; val mCL = Core.mean(cmpCh[0]).`val`[0]
-        val mRA = Core.mean(refCh[1]).`val`[0]; val mCA = Core.mean(cmpCh[1]).`val`[0]
-        val mRB = Core.mean(refCh[2]).`val`[0]; val mCB = Core.mean(cmpCh[2]).`val`[0]
+        val refLabCh = ArrayList<Mat>(); Core.split(refLab, refLabCh)
+        val cmpLabCh = ArrayList<Mat>(); Core.split(cmpLab, cmpLabCh)
+        val mRL = Core.mean(refLabCh[0]).`val`[0]; val mCL = Core.mean(cmpLabCh[0]).`val`[0]
+        val mRA = Core.mean(refLabCh[1]).`val`[0]; val mCA = Core.mean(cmpLabCh[1]).`val`[0]
+        val mRB = Core.mean(refLabCh[2]).`val`[0]; val mCB = Core.mean(cmpLabCh[2]).`val`[0]
         val dL = (mRL - mCL) * (100.0 / 255.0)
         val da = (mRA - mCA)          // в единицах OpenCV a* (нейтраль = 128)
         val db = (mRB - mCB)          // b* аналогично
@@ -837,179 +832,90 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         return result
     }
 
-    // ── LCH зонный дескриптор ────────────────────────────────────────────────
-    // Каждая зона описывается тремя осями:
-    //   L — яркость (4 класса: чёрный/тёмный/светлый/белый)
-    //   C — насыщенность (3 класса: чёрный/серый/яркий)
-    //   H — оттенок (5 секторов: красный/жёлтый/зелёный/синий/пурпурный)
-    // ΔE использует LCH-реконструкцию + защиту от взаимоотмены цветов.
+    // ── 803-сегментное LCH пространство ─────────────────────────────────────
+    // L*: 11 классов [0-100]; C: 7 классов; H: 12 секторов по 30°.
+    // Ахроматические (C0): 11 сегментов.
+    // Хроматические (C1-C6): 11 × 6 × 12 = 792 сегмента. Итого: 803.
+    // Каждый сегмент — фиксированная точка в LCH-пространстве.
+    // ΔE вычисляется между центрами доминирующих сегментов зоны.
 
-    private class LchMaps(
-        val L:      Mat,  // CV_64F, яркость [0,255]
-        val C:      Mat,  // CV_64F, насыщенность = √(a²+b²)
-        val ua:     Mat,  // CV_64F, cos оттенка (единичный вектор)
-        val ub:     Mat,  // CV_64F, sin оттенка
-        val lClass: Mat,  // CV_8U, L-класс [0..3]
-        val cClass: Mat,  // CV_8U, C-класс [0..2]
-        val hClass: Mat,  // CV_8U, H-класс [0..4]
-    ) {
-        fun release() {
-            L.release(); C.release(); ua.release(); ub.release()
-            lClass.release(); cClass.release(); hClass.release()
-        }
+    private val LS_BOUNDS  = doubleArrayOf(0.0,9.0,18.0,27.0,36.0,45.0,54.0,63.0,72.0,81.0,90.0,101.0)
+    private val LS_CENTERS = doubleArrayOf(4.0,13.0,22.0,31.0,40.0,49.0,58.0,67.0,76.0,85.0,95.0)
+    private val CR_BOUNDS  = doubleArrayOf(0.0,3.0,11.0,21.0,36.0,51.0,71.0,Double.MAX_VALUE)
+    private val CR_CENTERS = doubleArrayOf(1.0,6.5,15.5,28.0,43.0,60.5,80.0)
+    private val HC_RAD     = DoubleArray(12) { Math.toRadians(15.0 + it * 30.0) }
+    private val N_SEG      = 803
+
+    private fun lStarClass(lStar: Double): Int {
+        for (i in 1 until LS_BOUNDS.size) if (lStar < LS_BOUNDS[i]) return i - 1; return 10
+    }
+    private fun chromaClass(c: Double): Int {
+        for (i in 1 until CR_BOUNDS.size) if (c < CR_BOUNDS[i]) return i - 1; return 6
+    }
+    private fun hueClass(hDeg: Double): Int =
+        (((hDeg % 360 + 360) % 360) / 30).toInt().coerceIn(0, 11)
+
+    // ID сегмента: ахроматический (cc==0) → 0-10; хроматический → 11-802
+    private fun segId(lc: Int, cc: Int, hc: Int): Int =
+        if (cc == 0) lc else 11 + lc * 72 + (cc - 1) * 12 + hc
+
+    // Центр сегмента: (L* [0-100], C [CIE], H [радианы])
+    private fun segCenter(id: Int): Triple<Double, Double, Double> = if (id < 11)
+        Triple(LS_CENTERS[id], CR_CENTERS[0], 0.0)
+    else {
+        val i = id - 11
+        Triple(LS_CENTERS[i / 72], CR_CENTERS[(i % 72) / 12 + 1], HC_RAD[i % 12])
     }
 
-    // Предвычисляет LCH-карты и карты классов для одного Lab-изображения.
-    // ch[0]=L, ch[1]=a, ch[2]=b — CV_32F, L∈[0,255], a/b∈[0,255] (нейтраль=128).
-    private fun lchMaps(ch: List<Mat>): LchMaps {
-        val L = Mat(); ch[0].convertTo(L, CvType.CV_64F)
-        // Центрируем a,b вокруг 0: нейтральный цвет → (0, 0)
-        val a = Mat(); ch[1].convertTo(a, CvType.CV_64F); Core.subtract(a, Scalar(128.0), a)
-        val b = Mat(); ch[2].convertTo(b, CvType.CV_64F); Core.subtract(b, Scalar(128.0), b)
-
-        val C = Mat(); Core.magnitude(a, b, C)               // насыщенность
-        val h = Mat(); Core.phase(a, b, h, true)              // оттенок atan2(b,a) в [0°,360°)
-
-        val Cs = Mat(); Core.add(C, Scalar(1e-6), Cs)        // защита от деления на 0
-        val ua = Mat(); Core.divide(a, Cs, ua)               // единичный вектор x
-        val ub = Mat(); Core.divide(b, Cs, ub)               // единичный вектор y
-        Cs.release(); a.release(); b.release()
-
-        // ── L-классы (4 уровня, [0..3]) ─────────────────────────────────
-        // 0 Чёрный:  L* <  25  (L_ocv <  64)
-        // 1 Тёмный:  L* 25-50  (L_ocv  64-128)
-        // 2 Светлый: L* 50-75  (L_ocv 128-191)
-        // 3 Белый:   L* > 75   (L_ocv ≥ 191)
-        val lClass = Mat(L.size(), CvType.CV_8U, Scalar(0.0))
-        fun lc(thresh: Double, cls: Int) {
-            val m = Mat(); Core.compare(L, Scalar(thresh), m, Core.CMP_GE)
-            lClass.setTo(Scalar(cls.toDouble()), m); m.release()
-        }
-        lc(64.0, 1); lc(128.0, 2); lc(191.0, 3)
-
-        // ── C-классы (3 уровня, [0..2]) ─────────────────────────────────
-        // 0 Чёрный: L_ocv < 64 (приоритет над C)
-        // 1 Серый:  C < 25 (ахроматический)
-        // 2 Яркий:  C ≥ 25 (насыщенный цвет)
-        val cClass = Mat(C.size(), CvType.CV_8U, Scalar(1.0))           // дефолт: серый
-        val mv = Mat(); Core.compare(C, Scalar(25.0), mv, Core.CMP_GE)
-        cClass.setTo(Scalar(2.0), mv); mv.release()                      // яркий
-        val mb = Mat(); Core.compare(L, Scalar(64.0), mb, Core.CMP_LT)
-        cClass.setTo(Scalar(0.0), mb); mb.release()                      // чёрный (перекрывает)
-
-        // ── H-классы (5 секторов по 72°, [0..4]) ────────────────────────
-        // 0 Красный:   [0°,36°) ∪ [324°,360°)  — дефолт
-        // 1 Жёлтый:   [36°,108°)
-        // 2 Зелёный:  [108°,180°)
-        // 3 Синий:    [180°,252°)
-        // 4 Пурпурный:[252°,324°)
-        val hClass = Mat(h.size(), CvType.CV_8U, Scalar(0.0))           // дефолт: красный
-        fun hc(lo: Double, hi: Double, cls: Int) {
-            val m = Mat(); Core.inRange(h, Scalar(lo), Scalar(hi), m)
-            hClass.setTo(Scalar(cls.toDouble()), m); m.release()
-        }
-        hc(36.0, 108.0, 1); hc(108.0, 180.0, 2)
-        hc(180.0, 252.0, 3); hc(252.0, 324.0, 4)
-        h.release()
-
-        return LchMaps(L, C, ua, ub, lClass, cClass, hClass)
+    // ΔE*ab между центрами двух сегментов
+    private fun segDE(idR: Int, idC: Int, wL: Double): Double {
+        val (lR, cR, hR) = segCenter(idR)
+        val (lC, cC, hC) = segCenter(idC)
+        val dL = lR - lC
+        val da = cR * cos(hR) - cC * cos(hC)
+        val db = cR * sin(hR) - cC * sin(hC)
+        return sqrt(wL * dL * dL + da * da + db * db)
     }
 
-    // Иерархическая маска доминирующего сегмента в зоне rect.
-    // Шаг 1: находим доминирующий C-класс (0=чёрный, 1=серый, 2=яркий)
-    // Шаг 2: среди пикселей domC — доминирующий L-класс (0..3)
-    // Шаг 3: если domC==2 (яркий) — среди domC+domL — доминирующий H-класс (0..4)
-    // Возвращает CV_8U маску пикселей доминирующего сегмента.
-    private fun dominantMask(maps: LchMaps, rect: Rect): Mat {
-        fun crop8u(m: Mat) = Mat(m, rect)
-
-        // Шаг 1: доминирующий C-класс
-        val cc = crop8u(maps.cClass)
-        var domC = 0; var bestC = 0
-        for (cls in 0..2) {
-            val tmp = Mat(); Core.compare(cc, Scalar(cls.toDouble()), tmp, Core.CMP_EQ)
-            val cnt = Core.countNonZero(tmp); tmp.release()
-            if (cnt > bestC) { bestC = cnt; domC = cls }
+    // Доминирующий сегмент зоны: гистограмма 803 бинов → максимум.
+    // lab — байтовый массив Mat CV_8UC3 (OpenCV Lab: L∈[0,255], a/b∈[0,255] нейтраль=128).
+    private fun dominantSeg(lab: ByteArray, imgW: Int, zx: Int, zy: Int, zw: Int, zh: Int): Int {
+        val hist = IntArray(N_SEG)
+        for (dy in 0 until zh) {
+            val rowBase = (zy + dy) * imgW
+            for (dx in 0 until zw) {
+                val p     = (rowBase + zx + dx) * 3
+                val lStar = (lab[p].toInt() and 0xFF) * (100.0 / 255.0)
+                val ac    = (lab[p + 1].toInt() and 0xFF) - 128.0
+                val bc    = (lab[p + 2].toInt() and 0xFF) - 128.0
+                val c     = sqrt(ac * ac + bc * bc)
+                val cc    = chromaClass(c)
+                val hDeg  = if (cc > 0) {
+                    var h = Math.toDegrees(atan2(bc, ac)); if (h < 0) h += 360.0; h
+                } else 0.0
+                hist[segId(lStarClass(lStar), cc, if (cc == 0) 0 else hueClass(hDeg))]++
+            }
         }
-        val maskC = Mat(); Core.compare(cc, Scalar(domC.toDouble()), maskC, Core.CMP_EQ)
-
-        // Шаг 2: доминирующий L-класс среди domC
-        val lc = crop8u(maps.lClass)
-        var domL = 0; var bestL = 0
-        for (cls in 0..3) {
-            val tmp = Mat(); Core.compare(lc, Scalar(cls.toDouble()), tmp, Core.CMP_EQ)
-            val combined = Mat(); Core.bitwise_and(tmp, maskC, combined)
-            val cnt = Core.countNonZero(combined)
-            combined.release(); tmp.release()
-            if (cnt > bestL) { bestL = cnt; domL = cls }
-        }
-        val maskCL = Mat(); val tmpL = Mat()
-        Core.compare(lc, Scalar(domL.toDouble()), tmpL, Core.CMP_EQ)
-        Core.bitwise_and(maskC, tmpL, maskCL)
-        maskC.release(); tmpL.release()
-
-        if (domC != 2) return maskCL  // ахроматический: H-класс не нужен
-
-        // Шаг 3: доминирующий H-класс среди domC+domL
-        val hc = crop8u(maps.hClass)
-        var domH = 0; var bestH = 0
-        for (cls in 0..4) {
-            val tmp = Mat(); Core.compare(hc, Scalar(cls.toDouble()), tmp, Core.CMP_EQ)
-            val combined = Mat(); Core.bitwise_and(tmp, maskCL, combined)
-            val cnt = Core.countNonZero(combined)
-            combined.release(); tmp.release()
-            if (cnt > bestH) { bestH = cnt; domH = cls }
-        }
-        val maskCLH = Mat(); val tmpH = Mat()
-        Core.compare(hc, Scalar(domH.toDouble()), tmpH, Core.CMP_EQ)
-        Core.bitwise_and(maskCL, tmpH, maskCLH)
-        maskCL.release(); tmpH.release()
-        return maskCLH
+        return hist.indices.maxByOrNull { hist[it] } ?: 0
     }
 
-    // Среднее значение матрицы в зоне rect с маской mask (CV_8U).
-    private fun maskedMean(mat: Mat, rect: Rect, mask: Mat): Double {
-        val roi = Mat(mat, rect)
-        return Core.mean(roi, mask).`val`[0]
-    }
-
-    // ΔE между двумя зонами в пространстве LCH.
-    // Использует dominantMask для каждого изображения независимо, чтобы
-    // не смешивать несовместимые цвета при усреднении (красный + зелёный ≠ серый).
-    // Формула: √(wL·ΔL² + max(Δa_lch² + Δb_lch², ΔC²))
-    private fun lchZoneDE(ref: LchMaps, cmp: LchMaps, rect: Rect, wL: Double): Double {
-        val maskR = dominantMask(ref, rect)
-        val maskC = dominantMask(cmp, rect)
-
-        fun mr(mat: Mat) = maskedMean(mat, rect, maskR)
-        fun mc(mat: Mat) = maskedMean(mat, rect, maskC)
-
-        val lR = mr(ref.L); val cR = mr(ref.C); val uaR = mr(ref.ua); val ubR = mr(ref.ub)
-        val lC = mc(cmp.L); val cC = mc(cmp.C); val uaC = mc(cmp.ua); val ubC = mc(cmp.ub)
-
-        maskR.release(); maskC.release()
-
-        val dL = (lR - lC) * (100.0 / 255.0)
-        val da = cR * uaR - cC * uaC
-        val db = cR * ubR - cC * ubC
-        val dC = cR - cC
-
-        val chromaTerm = maxOf(da * da + db * db, dC * dC)
-        return sqrt(wL * dL * dL + chromaTerm)
-    }
-
-    // Вычисляет ΔE для каждой из grid×grid зон через LCH-дескрипторы.
-    // imgW/imgH — каноническое разрешение (зоны могут быть прямоугольными).
+    // ΔE для каждой зоны grid×grid через 803-сегментные LCH-дескрипторы.
+    // refLab / cmpLab — Mat CV_8UC3 канонического разрешения.
     private fun zoneDE(
-        refCh: List<Mat>, cmpCh: List<Mat>,
+        refLab: Mat, cmpLab: Mat,
         imgW: Int, imgH: Int, grid: Int, wL: Double
     ): DoubleArray {
         val zw = imgW / grid; val zh = imgH / grid
-        val ref = lchMaps(refCh); val cmp = lchMaps(cmpCh)
+        val refArr = ByteArray(imgW * imgH * 3); refLab.get(0, 0, refArr)
+        val cmpArr = ByteArray(imgW * imgH * 3); cmpLab.get(0, 0, cmpArr)
         return DoubleArray(grid * grid) { i ->
             val row = i / grid; val col = i % grid
-            lchZoneDE(ref, cmp, Rect(col * zw, row * zh, zw, zh), wL)
-        }.also { ref.release(); cmp.release() }
+            segDE(
+                dominantSeg(refArr, imgW, col * zw, row * zh, zw, zh),
+                dominantSeg(cmpArr, imgW, col * zw, row * zh, zw, zh),
+                wL
+            )
+        }
     }
 
 
