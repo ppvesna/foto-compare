@@ -394,10 +394,15 @@ class _CompareScreenState extends State<CompareScreen>
       }).catchError((_) {});
 
       // Фаза 2: штрихкоды + OCR — фоном, обновляем результат когда готово
-      Future<OcrResult> ocrSafe(Uint8List b) => OcrService.recognize(b)
-          .timeout(const Duration(seconds: 15),
-              onTimeout: () => OcrResult('', [], error: 'Таймаут OCR'))
-          .catchError((Object e) => OcrResult('', [], error: e.toString()));
+      Future<OcrResult> ocrSafe(Uint8List b) async {
+        try {
+          return await OcrService.recognize(b)
+              .timeout(const Duration(seconds: 15),
+                  onTimeout: () => OcrResult('', [], error: 'Таймаут OCR'));
+        } catch (e) {
+          return OcrResult('', [], error: e.toString());
+        }
+      }
 
       final extras = await Future.wait([
         BarcodeService.scanImage(ref)
