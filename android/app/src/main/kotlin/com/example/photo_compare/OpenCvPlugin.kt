@@ -214,8 +214,9 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     }
 
     // Пирамидное выравнивание для съёмки с руки.
-    // Шаг 1: AKAZE — грубое совмещение при любых смещениях, поворотах, масштабе.
-    // Шаг 2: ECC-пирамида L3→L0 — субпиксельное уточнение.
+    // Шаг 1: AKAZE + Lowe ratio test → полная гомография → warpPerspective.
+    //   Обрабатывает сдвиг, поворот и перспективную деформацию.
+    // Шаг 2: ECC-пирамида L3→L0 — субпиксельное уточнение остатка.
     private fun alignPyramid(refBytes: ByteArray, srcBytes: ByteArray): ByteArray {
         val ref = bytesToMat(refBytes)
         val src = bytesToMat(srcBytes)
@@ -223,13 +224,11 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         val refGray = Mat(); Imgproc.cvtColor(ref, refGray, Imgproc.COLOR_BGR2GRAY)
         val srcGray = Mat(); Imgproc.cvtColor(src, srcGray, Imgproc.COLOR_BGR2GRAY)
 
-        // ── Шаг 1: AKAZE — работает без ручного совмещения ──────────────────
-        // Масштабируем до 800px для скорости
-        val maxSide = 800.0
+        // ── Шаг 1: AKAZE + полная гомография ────────────────────────────────
+        val maxSide = 1000.0
         val sc = minOf(maxSide / ref.width(), maxSide / ref.height(), 1.0)
-        val rS = Mat(); val sS = Mat()
-        Imgproc.resize(refGray, rS, Size(ref.width()*sc, ref.height()*sc))
-        Imgproc.resize(srcGray, sS, Size(src.width()*sc, src.height()*sc))
+        val rS = Mat(); Imgproc.resize(refGray, rS, Size(ref.width() * sc, ref.height() * sc))
+        val sS = Mat(); Imgproc.resize(srcGray, sS, Size(src.width() * sc, src.height() * sc))
 
         val akaze = AKAZE.create()
         val kpR = MatOfKeyPoint(); val kpS = MatOfKeyPoint()
@@ -237,35 +236,45 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         akaze.detectAndCompute(rS, Mat(), kpR, dR)
         akaze.detectAndCompute(sS, Mat(), kpS, dS)
 
-        // Начальная матрица — единица (нет предварительного совмещения)
-        var coarseWarp: Mat? = null
-        if (!dR.empty() && !dS.empty()) {
-            val matcher = BFMatcher.create(BFMatcher.BRUTEFORCE_HAMMING, true)
-            val matches = MatOfDMatch(); matcher.match(dR, dS, matches)
-            val good = matches.toList().sortedBy { it.distance }.take(80)
+        var homography: Mat? = null
+        if (!dR.empty() && !dS.empty() && dR.rows() >= 8 && dS.rows() >= 8) {
+            // Lowe's ratio test: отбраковывает неоднозначные совпадения
+            val matcher = BFMatcher.create(BFMatcher.BRUTEFORCE_HAMMING)
+            val knn = ArrayList<MatOfDMatch>()
+            matcher.knnMatch(dR, dS, knn, 2)
+            val good = knn.filter { it.rows() >= 2 }.mapNotNull { m ->
+                m.toArray().let { if (it[0].distance < 0.75f * it[1].distance) it[0] else null }
+            }
             if (good.size >= 8) {
-                val ptR = MatOfPoint2f(); val ptS = MatOfPoint2f()
-                val kpRList = kpR.toList(); val kpSList = kpS.toList()
-                ptR.fromList(good.map { kpRList[it.queryIdx].pt })
-                ptS.fromList(good.map { kpSList[it.trainIdx].pt })
-                val H = Calib3d.findHomography(ptS, ptR, Calib3d.RANSAC, 3.0)
-                if (!H.empty()) {
-                    // Переводим в affine 2×3, масштабируем сдвиг до полного размера
-                    val aff = Mat(2, 3, CvType.CV_32F)
-                    aff.put(0,0, H.get(0,0)[0], H.get(0,1)[0], H.get(0,2)[0] / sc)
-                    aff.put(1,0, H.get(1,0)[0], H.get(1,1)[0], H.get(1,2)[0] / sc)
-                    coarseWarp = aff
+                val kpRL = kpR.toList(); val kpSL = kpS.toList()
+                val ptR = MatOfPoint2f(); ptR.fromList(good.map { kpRL[it.queryIdx].pt })
+                val ptS = MatOfPoint2f(); ptS.fromList(good.map { kpSL[it.trainIdx].pt })
+                val Hraw = Calib3d.findHomography(ptS, ptR, Calib3d.RANSAC, 3.0)
+                if (!Hraw.empty()) {
+                    // Масштабируем гомографию к полному разрешению:
+                    // H_full = diag(1/sc,1/sc,1) · Hraw · diag(sc,sc,1)
+                    // → tx,ty /= sc; h20,h21 *= sc; остальное без изменений
+                    val Hd = Mat(); Hraw.convertTo(Hd, CvType.CV_64F)
+                    Hd.put(0, 2, Hd.get(0,2)[0] / sc)
+                    Hd.put(1, 2, Hd.get(1,2)[0] / sc)
+                    Hd.put(2, 0, Hd.get(2,0)[0] * sc)
+                    Hd.put(2, 1, Hd.get(2,1)[0] * sc)
+                    homography = Hd
                 }
             }
         }
 
-        // Применяем грубое совмещение
+        // warpPerspective: обрабатывает и поворот, и перспективу, и сдвиг
         val coarse = Mat()
-        val initWarp = coarseWarp ?: Mat.eye(2, 3, CvType.CV_32F)
-        Imgproc.warpAffine(src, coarse, initWarp, ref.size(), Imgproc.INTER_LINEAR)
+        if (homography != null) {
+            Imgproc.warpPerspective(src, coarse, homography, ref.size(), Imgproc.INTER_LINEAR)
+        } else {
+            src.copyTo(coarse)
+        }
         val coarseGray = Mat(); Imgproc.cvtColor(coarse, coarseGray, Imgproc.COLOR_BGR2GRAY)
 
         // ── Шаг 2: ECC-пирамида L3→L0 (субпиксельное уточнение) ─────────────
+        // AKAZE уже дал грубое совмещение — ECC устраняет только остаток (< 3°)
         val numLevels = 4
         val pyrRef = ArrayList<Mat>(numLevels)
         val pyrSrc = ArrayList<Mat>(numLevels)
@@ -282,10 +291,11 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             val sF = Mat(); pyrSrc[lvl].convertTo(sF, CvType.CV_32F)
             try {
                 Video.findTransformECC(rF, sF, eccWarp, Video.MOTION_EUCLIDEAN, criteria, Mat(), 5)
+                // После AKAZE остаток малый; если ECC уходит далеко — сбрасываем
                 val angle = Math.toDegrees(Math.atan2(eccWarp.get(1,0)[0], eccWarp.get(0,0)[0]))
-                if (Math.abs(angle) > 15.0) {
-                    eccWarp.put(0,0,1.0); eccWarp.put(0,1,0.0)
-                    eccWarp.put(1,0,0.0); eccWarp.put(1,1,1.0)
+                if (Math.abs(angle) > 3.0) {
+                    eccWarp.put(0,0, 1.0); eccWarp.put(0,1, 0.0); eccWarp.put(0,2, 0.0)
+                    eccWarp.put(1,0, 0.0); eccWarp.put(1,1, 1.0); eccWarp.put(1,2, 0.0)
                 }
             } catch (ignored: Exception) {}
             if (lvl > 0) {
