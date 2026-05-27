@@ -112,6 +112,28 @@ class OpenCvService {
     }
   }
 
+  // ── Нарезка на модули 100×100 мм ─────────────────
+  // Возвращает список модулей 1404×1404 пкс каждый.
+  // Крайние модули дополняются белым если размер не кратен 100 мм.
+  static Future<List<Uint8List>> splitModules(
+      Uint8List bytes, double widthMm, double heightMm) async {
+    if (!_available) return [bytes];
+    try {
+      final result = await _channel.invokeMethod<List>('splitModules', {
+        'bytes':    bytes,
+        'widthMm':  widthMm,
+        'heightMm': heightMm,
+      });
+      if (result == null) return [bytes];
+      return result.map((e) => e as Uint8List).toList();
+    } on MissingPluginException {
+      _available = false;
+      return [bytes];
+    } catch (_) {
+      return [bytes];
+    }
+  }
+
   // ── Сшивка двух кадров с перекрытием ─────────────
   // Каскадный поиск перекрытия через Lab-пирамиду, затем пиксельная склейка.
   // Возвращает склеенное изображение или null если OpenCV недоступен.

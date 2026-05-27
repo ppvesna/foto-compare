@@ -68,6 +68,12 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                     val wL   = call.argument<Double>("wL") ?: 0.5
                     result.success(stitchImages(imgA, imgB, wL))
                 }
+                "splitModules" -> {
+                    val bytes    = call.argument<ByteArray>("bytes")!!
+                    val widthMm  = call.argument<Double>("widthMm")  ?: 100.0
+                    val heightMm = call.argument<Double>("heightMm") ?: 100.0
+                    result.success(splitModules(bytes, widthMm, heightMm))
+                }
                 "compareImages" -> {                    val ref      = call.argument<ByteArray>("reference")!!
                     val cmp      = call.argument<ByteArray>("compare")!!
                     val wL       = call.argument<Double>("wL")       ?: 0.5
@@ -777,23 +783,64 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     }
 
     // Пиксельная маска пустых зон: true = зона пустая (нет контента).
-    // Зона считается пустой если >50% пикселей имеют яркость L_ocv < 20 (почти чёрный).
-    // Покрывает: letterbox-поля, незаснятые края после сшивки, stitching-gaps.
+    // Зона считается пустой если >50% пикселей — чёрные (L < 20) или белые (L > 235).
+    // Покрывает: letterbox (чёрный), белый паддинг модулей, края после сшивки.
     private fun emptyZones(mat: Mat, grid: Int): BooleanArray {
         val gray = Mat()
-        // Используем только L-канал (после BGR→Lab преобразования) или просто серый
         Imgproc.cvtColor(mat, gray, Imgproc.COLOR_BGR2GRAY)
         val zw = mat.width()  / grid
         val zh = mat.height() / grid
-        val threshold = 20.0
         return BooleanArray(grid * grid) { i ->
             val row = i / grid; val col = i % grid
             val roi = Mat(gray, Rect(col * zw, row * zh, zw, zh))
-            val black = Mat(); Core.compare(roi, Scalar(threshold), black, Core.CMP_LT)
-            val blackCount = Core.countNonZero(black)
-            black.release()
-            blackCount > (zw * zh) / 2   // true = зона пустая
+            val black = Mat(); Core.compare(roi, Scalar(20.0),  black, Core.CMP_LT)
+            val white = Mat(); Core.compare(roi, Scalar(235.0), white, Core.CMP_GT)
+            val empty = Mat(); Core.bitwise_or(black, white, empty)
+            val emptyCount = Core.countNonZero(empty)
+            black.release(); white.release(); empty.release()
+            emptyCount > (zw * zh) / 2
         }.also { gray.release() }
+    }
+
+    // Нарезает изображение на модули 100×100 мм, каждый → 1404×1404 пкс.
+    // Крайние модули (если размер не кратен 100 мм) дополняются белым.
+    // Возвращает список байтов модулей: [col0row0, col1row0, ..., colNrowM].
+    private fun splitModules(bytes: ByteArray, widthMm: Double, heightMm: Double): List<ByteArray> {
+        val img  = bytesToMat(bytes)
+        val scaleX = img.width().toDouble()  / widthMm
+        val scaleY = img.height().toDouble() / heightMm
+        val (nw, nh) = canonicalRes(100.0, 100.0)          // 1404×1404
+        val modPxW = (100.0 * scaleX).roundToInt()
+        val modPxH = (100.0 * scaleY).roundToInt()
+        val cols = ceil(widthMm  / 100.0).toInt()
+        val rows = ceil(heightMm / 100.0).toInt()
+
+        val modules = mutableListOf<ByteArray>()
+        for (row in 0 until rows) {
+            for (col in 0 until cols) {
+                val x0 = (col * 100.0 * scaleX).roundToInt()
+                val y0 = (row * 100.0 * scaleY).roundToInt()
+                val w  = (minOf((col + 1) * 100.0 * scaleX, img.width().toDouble())
+                          .roundToInt() - x0).coerceAtLeast(0)
+                val h  = (minOf((row + 1) * 100.0 * scaleY, img.height().toDouble())
+                          .roundToInt() - y0).coerceAtLeast(0)
+
+                // Белый холст 100×100 мм в пикселях оригинала
+                val canvas = Mat(modPxH, modPxW, CvType.CV_8UC3, Scalar(255.0, 255.0, 255.0))
+                if (w > 0 && h > 0) {
+                    Mat(img, Rect(x0, y0, w, h)).copyTo(Mat(canvas, Rect(0, 0, w, h)))
+                }
+
+                // Масштаб → 1404×1404
+                val canonical = Mat()
+                Imgproc.resize(canvas, canonical, Size(nw.toDouble(), nh.toDouble()),
+                    0.0, 0.0, Imgproc.INTER_AREA)
+                modules.add(matToBytes(canonical))
+                canvas.release(); canonical.release()
+            }
+        }
+        img.release()
+        return modules
     }
 
     // Агрегирует маску снизу вверх: родительская зона = letterbox,
