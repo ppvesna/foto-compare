@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/app_config.dart';
 import '../database/local_database.dart';
-import 'api/api_service.dart';
+import 'supabase_service.dart';
 
-/// Сервис синхронизации локальной БД с сервером.
+/// Сервис синхронизации локальной БД с Supabase.
 /// Стратегия: сначала пишем локально, потом фоново синхронизируем.
 class SyncService {
   static final SyncService _i = SyncService._();
@@ -71,60 +73,108 @@ class SyncService {
     required String op,
     required String syncId,
   }) async {
-    final db = LocalDatabase();
-    final api = ApiService();
+    final localDb = LocalDatabase();
+    final sb = SupabaseService();
+    final client = Supabase.instance.client;
 
     switch (table) {
-      case 'comparison_results':
-        final rows = await db.getResults();
+      case 'check_results':
+        final rows = await localDb.getCheckResults();
         final row = rows.firstWhere((r) => r['id'] == id, orElse: () => {});
-        if (row.isNotEmpty) await api.post('/results', row);
+        if (row.isNotEmpty) {
+          final data = _deserializeJsonFields(row, ['details']);
+          await client.from('check_results').upsert(data);
+        }
 
-      case 'chat_messages':
-        final msgs = await db.getMessages();
-        final msg = msgs.firstWhere((m) => m['id'] == id, orElse: () => {});
-        if (msg.isNotEmpty) await api.post('/messages', msg);
+      case 'layout_profiles':
+        final rows = await localDb.getLayoutProfiles();
+        final row = rows.firstWhere((r) => r['id'] == id, orElse: () => {});
+        if (row.isNotEmpty) {
+          final data = _deserializeJsonFields(row, ['ref_anchors','homography','crop_region','alignment']);
+          await client.from('layout_profiles').upsert(data);
+        }
 
-      case 'settings':
-        final s = await db.getSettings(id);
-        if (s != null) await api.post('/settings', s);
+      case 'layouts':
+        final rows = await localDb.getLayouts();
+        final row = rows.firstWhere((r) => r['id'] == id, orElse: () => {});
+        if (row.isNotEmpty) await client.from('layouts').upsert(row);
 
-      case 'users':
-        final u = await db.getUser(id);
-        if (u != null) await api.post('/users', u);
+      case 'production_orders':
+        final rows = await localDb.getOrders();
+        final row = rows.firstWhere((r) => r['id'] == id, orElse: () => {});
+        if (row.isNotEmpty) await client.from('production_orders').upsert(row);
     }
 
-    await db.markSynced(syncId);
+    await localDb.markSynced(syncId);
   }
 
-  // ── Pull: сервер → локальные обновления ───────────
+  // JSON-строки из SQLite → объекты для Supabase JSONB
+  Map<String, dynamic> _deserializeJsonFields(
+      Map<String, dynamic> row, List<String> fields) {
+    final result = Map<String, dynamic>.from(row);
+    for (final f in fields) {
+      final v = result[f];
+      if (v is String) {
+        try { result[f] = jsonDecode(v); } catch (_) {}
+      }
+    }
+    return result;
+  }
+
+  // ── Pull: Supabase → локальная БД ────────────────
 
   Future<void> _pullUpdates() async {
-    final api = ApiService();
-    final db  = LocalDatabase();
+    final localDb = LocalDatabase();
+    final client  = Supabase.instance.client;
 
     try {
-      // Получаем изменения с сервера с момента последней синхронизации
-      final updates = await api.get('/sync/updates');
-      final items = updates['items'] as List? ?? [];
+      // Layouts
+      final layouts = await client.from('layouts')
+          .select().eq('is_deleted', false).order('updated_at');
+      for (final row in layouts as List) {
+        final r = Map<String, dynamic>.from(row as Map);
+        r['created_at'] ??= DateTime.now().toIso8601String();
+        r['updated_at'] ??= DateTime.now().toIso8601String();
+        await localDb.saveLayout(r);
+      }
 
-      for (final item in items) {
-        final table = item['table'] as String?;
-        final data  = item['data']  as Map<String, dynamic>?;
-        if (table == null || data == null) continue;
+      // Layout Profiles
+      final profiles = await client.from('layout_profiles')
+          .select().order('updated_at');
+      for (final row in profiles as List) {
+        final r = _serializeJsonFields(
+            Map<String, dynamic>.from(row as Map),
+            ['ref_anchors','homography','crop_region','alignment']);
+        r['created_at'] ??= DateTime.now().toIso8601String();
+        r['updated_at'] ??= DateTime.now().toIso8601String();
+        await localDb.saveLayoutProfile(r);
+      }
 
-        switch (table) {
-          case 'comparison_results': await db.saveResult(data);
-          case 'chat_messages':      await db.saveMessage(data);
-          case 'chat_groups':        await db.saveGroup(data);
-          case 'settings':           await db.saveSettings(data);
-          case 'users':              await db.upsertUser(data);
-          case 'purchases':          await db.savePurchase(data);
-        }
+      // Production Orders
+      final orders = await client.from('production_orders')
+          .select().order('updated_at');
+      for (final row in orders as List) {
+        final r = Map<String, dynamic>.from(row as Map);
+        r['created_at'] ??= DateTime.now().toIso8601String();
+        r['updated_at'] ??= DateTime.now().toIso8601String();
+        await localDb.saveOrder(r);
       }
     } catch (_) {
       // Сервер недоступен — работаем офлайн
     }
+  }
+
+  // Объекты → JSON-строки для SQLite
+  Map<String, dynamic> _serializeJsonFields(
+      Map<String, dynamic> row, List<String> fields) {
+    final result = Map<String, dynamic>.from(row);
+    for (final f in fields) {
+      final v = result[f];
+      if (v != null && v is! String) {
+        result[f] = jsonEncode(v);
+      }
+    }
+    return result;
   }
 
   // ── Принудительная полная синхронизация ───────────

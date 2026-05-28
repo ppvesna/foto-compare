@@ -2,9 +2,9 @@
 /// SQLite (локально) + PostgreSQL (сервер, та же структура)
 
 class DbSchema {
-  static const int version = 1;
+  static const int version = 2;
 
-  // ── Таблицы ───────────────────────────────────────
+  // ── Существующие таблицы ──────────────────────────
 
   static const String createUsers = '''
     CREATE TABLE IF NOT EXISTS users (
@@ -145,21 +145,102 @@ class DbSchema {
     )
   ''';
 
+  // ── Производственные таблицы (v2) ────────────────
+
+  static const String createLayouts = '''
+    CREATE TABLE IF NOT EXISTS layouts (
+      id          TEXT PRIMARY KEY,
+      name        TEXT NOT NULL,
+      version     INTEGER NOT NULL DEFAULT 1,
+      width_mm    REAL NOT NULL DEFAULT 100,
+      height_mm   REAL NOT NULL DEFAULT 100,
+      thumbnail   TEXT,
+      created_by  TEXT,
+      created_at  TEXT NOT NULL,
+      updated_at  TEXT NOT NULL,
+      synced_at   TEXT,
+      is_deleted  INTEGER NOT NULL DEFAULT 0
+    )
+  ''';
+
+  static const String createLayoutProfiles = '''
+    CREATE TABLE IF NOT EXISTS layout_profiles (
+      id               TEXT PRIMARY KEY,
+      layout_id        TEXT,
+      name             TEXT NOT NULL,
+      ref_anchors      TEXT NOT NULL,   -- JSON
+      homography       TEXT NOT NULL,   -- JSON
+      crop_region      TEXT,            -- JSON
+      alignment        TEXT,            -- JSON
+      ref_image_width  INTEGER,
+      ref_image_height INTEGER,
+      created_by       TEXT,
+      created_at       TEXT NOT NULL,
+      updated_at       TEXT NOT NULL,
+      synced_at        TEXT,
+      FOREIGN KEY (layout_id) REFERENCES layouts(id)
+    )
+  ''';
+
+  static const String createCheckResults = '''
+    CREATE TABLE IF NOT EXISTS check_results (
+      id                   TEXT PRIMARY KEY,
+      layout_id            TEXT,
+      layout_profile_id    TEXT,
+      device_id            TEXT,
+      operator_id          TEXT,
+      score                REAL NOT NULL,
+      status               TEXT NOT NULL,
+      alignment_confidence REAL,
+      reproj_error         REAL,
+      ecc_score            REAL,
+      color_deviation      REAL,
+      shift_dl             REAL,
+      shift_da             REAL,
+      shift_db             REAL,
+      heatmap_url          TEXT,
+      details              TEXT,        -- JSON
+      created_at           TEXT NOT NULL,
+      synced_at            TEXT,
+      FOREIGN KEY (layout_id)         REFERENCES layouts(id),
+      FOREIGN KEY (layout_profile_id) REFERENCES layout_profiles(id)
+    )
+  ''';
+
+  static const String createProductionOrders = '''
+    CREATE TABLE IF NOT EXISTS production_orders (
+      id          TEXT PRIMARY KEY,
+      name        TEXT NOT NULL,
+      layout_id   TEXT,
+      status      TEXT NOT NULL DEFAULT 'active',
+      created_by  TEXT,
+      created_at  TEXT NOT NULL,
+      updated_at  TEXT NOT NULL,
+      synced_at   TEXT,
+      FOREIGN KEY (layout_id) REFERENCES layouts(id)
+    )
+  ''';
+
   // ── Индексы ───────────────────────────────────────
 
   static const List<String> indexes = [
-    'CREATE INDEX IF NOT EXISTS idx_results_user     ON comparison_results(user_id)',
-    'CREATE INDEX IF NOT EXISTS idx_results_created  ON comparison_results(created_at)',
-    'CREATE INDEX IF NOT EXISTS idx_messages_group   ON chat_messages(group_id)',
-    'CREATE INDEX IF NOT EXISTS idx_messages_sender  ON chat_messages(sender_id)',
-    'CREATE INDEX IF NOT EXISTS idx_messages_created ON chat_messages(created_at)',
-    'CREATE INDEX IF NOT EXISTS idx_sync_status      ON sync_log(status)',
-    'CREATE INDEX IF NOT EXISTS idx_purchases_user   ON purchases(user_id)',
+    'CREATE INDEX IF NOT EXISTS idx_results_user       ON comparison_results(user_id)',
+    'CREATE INDEX IF NOT EXISTS idx_results_created    ON comparison_results(created_at)',
+    'CREATE INDEX IF NOT EXISTS idx_messages_group     ON chat_messages(group_id)',
+    'CREATE INDEX IF NOT EXISTS idx_messages_sender    ON chat_messages(sender_id)',
+    'CREATE INDEX IF NOT EXISTS idx_messages_created   ON chat_messages(created_at)',
+    'CREATE INDEX IF NOT EXISTS idx_sync_status        ON sync_log(status)',
+    'CREATE INDEX IF NOT EXISTS idx_purchases_user     ON purchases(user_id)',
+    'CREATE INDEX IF NOT EXISTS idx_check_results_layout   ON check_results(layout_id)',
+    'CREATE INDEX IF NOT EXISTS idx_check_results_created  ON check_results(created_at)',
+    'CREATE INDEX IF NOT EXISTS idx_layout_profiles_layout ON layout_profiles(layout_id)',
+    'CREATE INDEX IF NOT EXISTS idx_orders_layout      ON production_orders(layout_id)',
+    'CREATE INDEX IF NOT EXISTS idx_orders_status      ON production_orders(status)',
   ];
 
-  // ── Все таблицы в порядке создания ───────────────
+  // ── Все таблицы v1 ────────────────────────────────
 
-  static const List<String> all = [
+  static const List<String> v1 = [
     createUsers,
     createResults,
     createImages,
@@ -170,4 +251,16 @@ class DbSchema {
     createPurchases,
     createSyncLog,
   ];
+
+  // ── Таблицы v2 (миграция) ─────────────────────────
+
+  static const List<String> v2 = [
+    createLayouts,
+    createLayoutProfiles,
+    createCheckResults,
+    createProductionOrders,
+  ];
+
+  static List<String> get all => [...v1, ...v2];
 }
+

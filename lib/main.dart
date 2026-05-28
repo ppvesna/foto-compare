@@ -8,6 +8,7 @@ import 'screens/compare_screen.dart';
 import 'screens/chat_screen.dart';
 import 'screens/shop_screen.dart';
 import 'screens/settings_screen.dart';
+import 'services/sync_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -55,7 +56,17 @@ class _AuthGateState extends State<AuthGate> {
     // Слушаем изменения авторизации
     Supabase.instance.client.auth.onAuthStateChange.listen((data) {
       if (mounted) setState(() {});
+      // Запускаем/останавливаем синхронизацию при входе/выходе
+      if (data.session != null) {
+        SyncService().start();
+      } else {
+        SyncService().stop();
+      }
     });
+    // Если уже авторизован при запуске
+    if (Supabase.instance.client.auth.currentSession != null) {
+      SyncService().start();
+    }
   }
 
   @override

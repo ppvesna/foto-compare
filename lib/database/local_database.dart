@@ -27,12 +27,17 @@ class LocalDatabase {
       version: DbSchema.version,
       onCreate: (db, v) async {
         final batch = db.batch();
-        for (final sql in DbSchema.all)    batch.execute(sql);
+        for (final sql in DbSchema.all)     batch.execute(sql);
         for (final sql in DbSchema.indexes) batch.execute(sql);
         await batch.commit(noResult: true);
       },
       onUpgrade: (db, oldV, newV) async {
-        // TODO: миграции при обновлении версии
+        final batch = db.batch();
+        if (oldV < 2) {
+          for (final sql in DbSchema.v2)     batch.execute(sql);
+          for (final sql in DbSchema.indexes) batch.execute(sql);
+        }
+        await batch.commit(noResult: true);
       },
     );
   }
@@ -273,6 +278,105 @@ class LocalDatabase {
       'status':     'pending',
       'created_at': _now(),
     }, conflictAlgorithm: ConflictAlgorithm.ignore);
+  }
+
+  // ── Layouts ────────────────────────────────────────
+
+  Future<void> saveLayout(Map<String, dynamic> layout) async {
+    final d = await db;
+    await d.insert('layouts', _stamp(layout),
+        conflictAlgorithm: ConflictAlgorithm.replace);
+    _logSync('layouts', layout['id'], 'upsert');
+  }
+
+  Future<List<Map<String, dynamic>>> getLayouts() async {
+    final d = await db;
+    return d.query('layouts',
+        where: 'is_deleted = 0', orderBy: 'created_at DESC');
+  }
+
+  Future<void> deleteLayout(String id) async {
+    final d = await db;
+    await d.update('layouts',
+        {'is_deleted': 1, 'updated_at': _now()},
+        where: 'id = ?', whereArgs: [id]);
+    _logSync('layouts', id, 'delete');
+  }
+
+  // ── Layout Profiles ────────────────────────────────
+
+  Future<void> saveLayoutProfile(Map<String, dynamic> profile) async {
+    final d = await db;
+    await d.insert('layout_profiles', _stamp(profile),
+        conflictAlgorithm: ConflictAlgorithm.replace);
+    _logSync('layout_profiles', profile['id'], 'upsert');
+  }
+
+  Future<List<Map<String, dynamic>>> getLayoutProfiles({String? layoutId}) async {
+    final d = await db;
+    if (layoutId != null) {
+      return d.query('layout_profiles',
+          where: 'layout_id = ?', whereArgs: [layoutId],
+          orderBy: 'created_at DESC');
+    }
+    return d.query('layout_profiles', orderBy: 'created_at DESC');
+  }
+
+  Future<void> deleteLayoutProfile(String id) async {
+    final d = await db;
+    await d.delete('layout_profiles', where: 'id = ?', whereArgs: [id]);
+    _logSync('layout_profiles', id, 'delete');
+  }
+
+  // ── Check Results ──────────────────────────────────
+
+  Future<void> saveCheckResult(Map<String, dynamic> result) async {
+    final d = await db;
+    await d.insert('check_results', result,
+        conflictAlgorithm: ConflictAlgorithm.replace);
+    _logSync('check_results', result['id'], 'upsert');
+  }
+
+  Future<List<Map<String, dynamic>>> getCheckResults({
+    String? layoutId,
+    String? status,
+    int limit = 50,
+  }) async {
+    final d = await db;
+    final where = <String>[];
+    final args  = <dynamic>[];
+    if (layoutId != null) { where.add('layout_id = ?'); args.add(layoutId); }
+    if (status   != null) { where.add('status = ?');    args.add(status); }
+    return d.query('check_results',
+        where: where.isEmpty ? null : where.join(' AND '),
+        whereArgs: args.isEmpty ? null : args,
+        orderBy: 'created_at DESC',
+        limit: limit);
+  }
+
+  // ── Production Orders ──────────────────────────────
+
+  Future<void> saveOrder(Map<String, dynamic> order) async {
+    final d = await db;
+    await d.insert('production_orders', _stamp(order),
+        conflictAlgorithm: ConflictAlgorithm.replace);
+    _logSync('production_orders', order['id'], 'upsert');
+  }
+
+  Future<List<Map<String, dynamic>>> getOrders({String? status}) async {
+    final d = await db;
+    return d.query('production_orders',
+        where: status != null ? 'status = ?' : null,
+        whereArgs: status != null ? [status] : null,
+        orderBy: 'created_at DESC');
+  }
+
+  Future<void> updateOrderStatus(String id, String status) async {
+    final d = await db;
+    await d.update('production_orders',
+        {'status': status, 'updated_at': _now()},
+        where: 'id = ?', whereArgs: [id]);
+    _logSync('production_orders', id, 'update');
   }
 
   Future<void> close() async {

@@ -37,5 +37,5 @@ class AppConfig {
   static const bool featureAI = false;
   static const bool featureAuth = true; // ← включено
   static const bool featurePayments = false;
-  static const bool featureServerSync = false; // выключено — нет REST сервера
+  static const bool featureServerSync = true;  // Supabase sync включён
 }
