@@ -235,6 +235,9 @@ class OpenCvService {
         alignedBytes: raw['alignedBytes'] as Uint8List,
         homography: hList,
         reprojError: (raw['reprojError'] as num).toDouble(),
+        eccScore: (raw['eccScore'] as num?)?.toDouble() ?? 0.0,
+        confidence: (raw['confidence'] as num?)?.toDouble() ?? 0.0,
+        quality: raw['quality'] as String? ?? 'unknown',
         refinedSrcPoints: refinedSrc,
       );
     } on MissingPluginException {
@@ -250,16 +253,33 @@ class OpenCvService {
 
 class AlignByAnchorsResult {
   final Uint8List alignedBytes;
-  final List<double> homography;   // 3×3 row-major, 9 values
-  final double reprojError;        // средняя ошибка репроекции в пикселях
+  final List<double> homography;       // 3×3 row-major, 9 values
+  final double reprojError;            // средняя ошибка репроекции в пикселях
+  final double eccScore;               // ECC correlation 0..1
+  final double confidence;             // итоговая уверенность 0..1
+  final String quality;                // "excellent" | "good" | "warning" | "fail"
   final List<Offset> refinedSrcPoints; // уточнённые точки src (cornerSubPix)
 
   const AlignByAnchorsResult({
     required this.alignedBytes,
     required this.homography,
     required this.reprojError,
+    required this.eccScore,
+    required this.confidence,
+    required this.quality,
     required this.refinedSrcPoints,
   });
+
+  bool get isAcceptable => quality == 'excellent' || quality == 'good';
+
+  String get qualityLabel {
+    switch (quality) {
+      case 'excellent': return 'Отлично';
+      case 'good':      return 'Хорошо';
+      case 'warning':   return 'Слабо';
+      default:          return 'Ошибка';
+    }
+  }
 }
 
 class LabCompareResult {

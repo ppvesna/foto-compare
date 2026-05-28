@@ -144,38 +144,41 @@ class _CompareScreenState extends State<CompareScreen>
 
     setState(() => _calibrating = true);
     try {
-      // Step 1: user places anchor points on ref image
-      final refPts = await Navigator.push<List<Offset>>(
+      // Шаг 1: пользователь расставляет точки на эталоне
+      final refPtsRaw = await Navigator.push<List<Offset>>(
         context,
         MaterialPageRoute(
           builder: (_) => AnchorPointScreen(
             imageBytes: _refImg!,
-            title: 'Эталон — поставьте якорные точки (4–8)',
+            title: 'Эталон — якорные точки (4–8)',
             minPoints: 4,
             maxPoints: 8,
           ),
         ),
       );
-      if (refPts == null || refPts.length < 4 || !mounted) return;
+      if (refPtsRaw == null || refPtsRaw.length < 4 || !mounted) return;
 
-      // Step 2: user places corresponding anchor points on sample
-      final srcPts = await Navigator.push<List<Offset>>(
+      // Decode ref image size for normalization
+      final refDecoded = await compute(_decodeSize, _refImg!);
+
+      // Шаг 2: пользователь расставляет соответствующие точки на образце
+      final srcPtsRaw = await Navigator.push<List<Offset>>(
         context,
         MaterialPageRoute(
           builder: (_) => AnchorPointScreen(
             imageBytes: _cmpImg!,
-            title: 'Образец — поставьте точки в том же порядке (${refPts.length})',
-            minPoints: refPts.length,
-            maxPoints: refPts.length,
+            title: 'Образец — точки в том же порядке (${refPtsRaw.length})',
+            minPoints: refPtsRaw.length,
+            maxPoints: refPtsRaw.length,
           ),
         ),
       );
-      if (srcPts == null || srcPts.length != refPts.length || !mounted) return;
+      if (srcPtsRaw == null || srcPtsRaw.length != refPtsRaw.length || !mounted) return;
 
-      // Step 3: alignByAnchors (cornerSubPix + findHomography + ECC)
+      // Шаг 3: alignByAnchors (cornerSubPix → findHomography → warpPerspective → ECC)
       setState(() => _calibrating = true);
       final alignResult = await OpenCvService.alignByAnchors(
-        _refImg!, _cmpImg!, refPts, srcPts,
+        _refImg!, _cmpImg!, refPtsRaw, srcPtsRaw,
       );
       if (!mounted) return;
 
@@ -184,30 +187,41 @@ class _CompareScreenState extends State<CompareScreen>
         return;
       }
 
-      // Step 4: show result & confirm save
-      final reproj = alignResult.reprojError;
-      final quality = reproj < 2.0 ? 'Отлично' : reproj < 5.0 ? 'Хорошо' : 'Слабо';
-      final ok = await xpConfirm(
-        context,
-        'Результат калибровки',
-        'Ошибка репроекции: ${reproj.toStringAsFixed(1)} пкс ($quality)\n\nСохранить Layout Profile?',
-      );
+      // Шаг 4: validation result + confirm
+      final ok = await _showAlignmentValidation(alignResult);
       if (!ok || !mounted) return;
 
-      // Step 5: name the profile
+      // Шаг 5: имя профиля
       final name = await _promptProfileName();
       if (name == null || !mounted) return;
 
-      // Step 6: save profile
+      // Нормализуем ref точки (0..1) для сохранения в профиле
+      final refW = refDecoded.width.toDouble();
+      final refH = refDecoded.height.toDouble();
+      final refAnchors = refPtsRaw.asMap().entries.map((e) => AnchorPoint(
+        id: _anchorId(e.key, refPtsRaw.length),
+        x: e.value.dx / refW,
+        y: e.value.dy / refH,
+        type: 'corner',
+        confidence: 1.0,
+      )).toList();
+
+      // Шаг 6: сохраняем профиль
       final profile = LayoutProfile(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
         name: name,
-        refAnchors: refPts,
+        refAnchors: refAnchors,
         homography: alignResult.homography,
-        cropRegion: null,
+        cropRegion: CropRegion.defaultCrop,
         widthMm: AppConfig.printWidthMm,
         heightMm: AppConfig.printHeightMm,
-        reprojError: reproj,
+        refImageWidth: refDecoded.width,
+        refImageHeight: refDecoded.height,
+        alignment: AlignmentInfo(
+          reprojectionError: alignResult.reprojError,
+          eccScore: alignResult.eccScore,
+          confidence: alignResult.confidence,
+        ),
         createdAt: DateTime.now(),
       );
       await LayoutProfileStorage.save(profile);
@@ -219,10 +233,140 @@ class _CompareScreenState extends State<CompareScreen>
       });
 
       xpDlg(context, 'Профиль сохранён',
-          '"$name"\nОшибка: ${reproj.toStringAsFixed(1)} пкс');
+          '"$name"\n${alignResult.qualityLabel}  ·  ошибка ${alignResult.reprojError.toStringAsFixed(1)} пкс  ·  ECC ${(alignResult.eccScore * 100).toStringAsFixed(0)}%');
     } finally {
       if (mounted) setState(() => _calibrating = false);
     }
+  }
+
+  // AUTO MODE — применяем сохранённый профиль, предсказываем позиции якорей
+  Future<void> _applyProfile(LayoutProfile profile) async {
+    if (_cmpImg == null) {
+      xpDlg(context, 'Нет образца', 'Загрузите образец.');
+      return;
+    }
+    if (_refImg == null) {
+      xpDlg(context, 'Нет эталона', 'Загрузите эталон.');
+      return;
+    }
+    setState(() => _calibrating = true);
+    try {
+      // Decode sample image size for denormalization of predicted points
+      final cmpDecoded = await compute(_decodeSize, _cmpImg!);
+      final cmpW = cmpDecoded.width.toDouble();
+      final cmpH = cmpDecoded.height.toDouble();
+
+      // Предсказываем позиции на новом образце из нормализованных координат профиля
+      // (простое прямое применение — нормализованные позиции те же)
+      final predicted = profile.refAnchors
+          .map((a) => Offset(a.x, a.y)) // остаётся нормализованным для AnchorPointScreen
+          .toList();
+
+      // Пользователь быстро корректирует предсказанные точки
+      final srcPtsRaw = await Navigator.push<List<Offset>>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => AnchorPointScreen(
+            imageBytes: _cmpImg!,
+            title: '${profile.name} — уточните точки',
+            predictedPoints: predicted,
+            minPoints: profile.refAnchors.length,
+            maxPoints: profile.refAnchors.length,
+          ),
+        ),
+      );
+      if (srcPtsRaw == null || !mounted) return;
+
+      // Ref точки в пикселях из нормализованных
+      final refW = profile.refImageWidth > 0 ? profile.refImageWidth.toDouble() : cmpW;
+      final refH = profile.refImageHeight > 0 ? profile.refImageHeight.toDouble() : cmpH;
+      final refPtsRaw = profile.refAnchors
+          .map((a) => Offset(a.x * refW, a.y * refH))
+          .toList();
+
+      setState(() => _calibrating = true);
+      final alignResult = await OpenCvService.alignByAnchors(
+        _refImg!, _cmpImg!, refPtsRaw, srcPtsRaw,
+      );
+      if (!mounted) return;
+      if (alignResult == null) return;
+
+      // Показываем результат валидации
+      await _showAlignmentValidation(alignResult, confirmOnly: true);
+      if (!mounted) return;
+
+      setState(() {
+        _layoutProfile = profile;
+        _cmpAligned = alignResult.alignedBytes;
+      });
+    } finally {
+      if (mounted) setState(() => _calibrating = false);
+    }
+  }
+
+  // Validation dialog — возвращает true если пользователь принял результат
+  Future<bool> _showAlignmentValidation(
+    AlignByAnchorsResult r, {bool confirmOnly = false}
+  ) async {
+    final color = r.quality == 'excellent'
+        ? Colors.green
+        : r.quality == 'good'
+            ? Colors.lightGreen
+            : r.quality == 'warning'
+                ? Colors.orange
+                : Colors.red;
+
+    return await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: Row(children: [
+              Icon(Icons.tune, color: color, size: 20),
+              const SizedBox(width: 8),
+              Text('Выравнивание: ${r.qualityLabel}',
+                  style: TextStyle(fontSize: 15, color: color)),
+            ]),
+            content: Column(mainAxisSize: MainAxisSize.min, children: [
+              _validationRow('Ошибка репроекции',
+                  '${r.reprojError.toStringAsFixed(2)} пкс',
+                  r.reprojError < 3.0 ? Colors.green : Colors.orange),
+              _validationRow('ECC Score',
+                  '${(r.eccScore * 100).toStringAsFixed(1)}%',
+                  r.eccScore > 0.9 ? Colors.green : Colors.orange),
+              _validationRow('Уверенность',
+                  '${(r.confidence * 100).toStringAsFixed(0)}%',
+                  r.confidence > 0.85 ? Colors.green : Colors.orange),
+            ]),
+            actions: confirmOnly
+                ? [TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('OK'))]
+                : [
+                    TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      child: const Text('Сохранить профиль'),
+                    ),
+                  ],
+          ),
+        ) ??
+        false;
+  }
+
+  Widget _validationRow(String label, String value, Color color) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          Text(label, style: const TextStyle(fontSize: 13)),
+          Text(value, style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: color)),
+        ]),
+      );
+
+  static ({int width, int height}) _decodeSize(Uint8List bytes) {
+    final decoded = img.decodeImage(bytes);
+    return (width: decoded?.width ?? 0, height: decoded?.height ?? 0);
+  }
+
+  static String _anchorId(int index, int total) {
+    const names4 = ['top_left', 'top_right', 'bottom_right', 'bottom_left'];
+    if (total == 4 && index < 4) return names4[index];
+    return 'pt_$index';
   }
 
   Future<String?> _promptProfileName() async {
@@ -240,49 +384,13 @@ class _CompareScreenState extends State<CompareScreen>
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
           TextButton(
-            onPressed: () => Navigator.pop(ctx, ctrl.text.trim().isEmpty ? 'Профиль' : ctrl.text.trim()),
+            onPressed: () => Navigator.pop(
+                ctx, ctrl.text.trim().isEmpty ? 'Профиль' : ctrl.text.trim()),
             child: const Text('Сохранить'),
           ),
         ],
       ),
     );
-  }
-
-  // ── Применить сохранённый профиль к образцу ──────────────────────────────
-  Future<void> _applyProfile(LayoutProfile profile) async {
-    if (_cmpImg == null) {
-      xpDlg(context, 'Нет образца', 'Загрузите образец.');
-      return;
-    }
-    setState(() => _calibrating = true);
-    try {
-      // Re-use ref anchor points from profile with user placing src points
-      final srcPts = await Navigator.push<List<Offset>>(
-        context,
-        MaterialPageRoute(
-          builder: (_) => AnchorPointScreen(
-            imageBytes: _cmpImg!,
-            title: 'Образец — поставьте точки (${profile.refAnchors.length})',
-            minPoints: profile.refAnchors.length,
-            maxPoints: profile.refAnchors.length,
-          ),
-        ),
-      );
-      if (srcPts == null || !mounted) return;
-
-      final alignResult = await OpenCvService.alignByAnchors(
-        _refImg!, _cmpImg!, profile.refAnchors, srcPts,
-      );
-      if (!mounted) return;
-      if (alignResult == null) return;
-
-      setState(() {
-        _layoutProfile = profile;
-        _cmpAligned = alignResult.alignedBytes;
-      });
-    } finally {
-      if (mounted) setState(() => _calibrating = false);
-    }
   }
 
   @override
@@ -1400,7 +1508,7 @@ class _CompareScreenState extends State<CompareScreen>
               const Icon(Icons.tune, size: 14, color: Colors.green),
               const SizedBox(width: 4),
               Expanded(child: Text(
-                'Профиль: ${_layoutProfile!.name}  (ош. ${_layoutProfile!.reprojError.toStringAsFixed(1)} пкс)',
+                'Профиль: ${_layoutProfile!.name}  ·  ош. ${_layoutProfile!.reprojError.toStringAsFixed(1)} пкс  ·  ECC ${((_layoutProfile!.alignment?.eccScore ?? 0) * 100).toStringAsFixed(0)}%',
                 style: const TextStyle(fontSize: 11, color: Colors.green),
                 overflow: TextOverflow.ellipsis,
               )),

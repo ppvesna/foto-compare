@@ -1143,14 +1143,16 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         val alignedGray = Mat(); Imgproc.cvtColor(aligned, alignedGray, Imgproc.COLOR_BGR2GRAY)
         val eccWarp = Mat.eye(2, 3, CvType.CV_32F)
         val eccCriteria = TermCriteria(TermCriteria.COUNT + TermCriteria.EPS, 50, 1e-4)
+        var eccScore = 0.0
         try {
             val rF = Mat(); refGray.convertTo(rF, CvType.CV_32F)
             val sF = Mat(); alignedGray.convertTo(sF, CvType.CV_32F)
-            Video.findTransformECC(rF, sF, eccWarp, Video.MOTION_EUCLIDEAN, eccCriteria, Mat(), 5)
+            eccScore = Video.findTransformECC(rF, sF, eccWarp, Video.MOTION_EUCLIDEAN, eccCriteria, Mat(), 5).coerceIn(0.0, 1.0)
             val angle = Math.toDegrees(Math.atan2(eccWarp.get(1,0)[0], eccWarp.get(0,0)[0]))
             if (Math.abs(angle) > 2.0) {
                 eccWarp.put(0,0, 1.0); eccWarp.put(0,1, 0.0); eccWarp.put(0,2, 0.0)
                 eccWarp.put(1,0, 0.0); eccWarp.put(1,1, 1.0); eccWarp.put(1,2, 0.0)
+                eccScore = 0.0
             }
         } catch (ignored: Exception) {}
 
@@ -1160,10 +1162,22 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         // Extract homography as 9 doubles (row-major)
         val hVals = (0 until 3).flatMap { r -> (0 until 3).map { c -> H.get(r, c)[0] } }
 
+        // Quality classification
+        val quality = when {
+            eccScore >= 0.95 && reprojError < 1.5 -> "excellent"
+            eccScore >= 0.90 && reprojError < 3.0 -> "good"
+            eccScore >= 0.80 && reprojError < 5.0 -> "warning"
+            else -> "fail"
+        }
+        val confidence = (eccScore * 0.6 + (1.0 - (reprojError / 10.0).coerceIn(0.0, 1.0)) * 0.4).coerceIn(0.0, 1.0)
+
         return mapOf(
             "alignedBytes"     to matToBytes(finalAligned),
             "homography"       to hVals,
             "reprojError"      to reprojError,
+            "eccScore"         to eccScore,
+            "confidence"       to confidence,
+            "quality"          to quality,
             "refinedSrcPoints" to refinedSrc.map { mapOf("x" to it.x, "y" to it.y) },
         )
     }
