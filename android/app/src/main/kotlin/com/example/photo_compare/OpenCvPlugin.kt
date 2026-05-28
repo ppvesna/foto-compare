@@ -86,6 +86,23 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                     val heightMm = call.argument<Double>("heightMm") ?: 100.0
                     result.success(compareImages(ref, cmp, wL, wLayer0, wLayer1, wLayer2, wLayer3, deScale, widthMm, heightMm))
                 }
+                "alignByAnchors" -> {
+                    val refBytes  = call.argument<ByteArray>("refBytes")!!
+                    val srcBytes  = call.argument<ByteArray>("srcBytes")!!
+                    @Suppress("UNCHECKED_CAST")
+                    val refPtsRaw = call.argument<List<*>>("refPoints")!!
+                    @Suppress("UNCHECKED_CAST")
+                    val srcPtsRaw = call.argument<List<*>>("srcPoints")!!
+                    val refPts = refPtsRaw.map { m ->
+                        val mm = m as Map<*, *>
+                        Point((mm["x"] as Number).toDouble(), (mm["y"] as Number).toDouble())
+                    }
+                    val srcPts = srcPtsRaw.map { m ->
+                        val mm = m as Map<*, *>
+                        Point((mm["x"] as Number).toDouble(), (mm["y"] as Number).toDouble())
+                    }
+                    result.success(alignByAnchors(refBytes, srcBytes, refPts, srcPts))
+                }
                 else -> result.notImplemented()
             }
         } catch (e: Exception) {
@@ -1065,6 +1082,90 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         val buf = MatOfByte()
         Imgcodecs.imencode(".png", out, buf)
         return buf.toArray()
+    }
+
+    // ── Выравнивание по якорным точкам (калибровка) ──────────────────────────
+    // refPts, srcPts — точки в пикселях оригинальных изображений
+    // Возвращает Map с: alignedBytes, homography (9 doubles), reprojError,
+    //                   refinedSrcPoints (List<Map x,y>)
+    private fun alignByAnchors(
+        refBytes: ByteArray,
+        srcBytes: ByteArray,
+        refPts: List<Point>,
+        srcPts: List<Point>,
+    ): Map<String, Any> {
+        val ref = bytesToMat(refBytes)
+        val src = bytesToMat(srcBytes)
+
+        val refGray = Mat(); Imgproc.cvtColor(ref, refGray, Imgproc.COLOR_BGR2GRAY)
+        val srcGray = Mat(); Imgproc.cvtColor(src, srcGray, Imgproc.COLOR_BGR2GRAY)
+
+        // cornerSubPix — субпиксельное уточнение обеих наборов точек
+        val winSize = Size(7.0, 7.0)
+        val zeroZone = Size(-1.0, -1.0)
+        val criteria = TermCriteria(TermCriteria.EPS + TermCriteria.COUNT, 40, 0.001)
+
+        val refMat = MatOfPoint2f(); refMat.fromList(refPts)
+        val srcMat = MatOfPoint2f(); srcMat.fromList(srcPts)
+        Imgproc.cornerSubPix(refGray, refMat, winSize, zeroZone, criteria)
+        Imgproc.cornerSubPix(srcGray, srcMat, winSize, zeroZone, criteria)
+
+        val refinedRef = refMat.toList()
+        val refinedSrc = srcMat.toList()
+
+        // findHomography RANSAC: src → ref
+        val H = Calib3d.findHomography(srcMat, refMat, Calib3d.RANSAC, 3.0)
+        if (H.empty()) {
+            // Fallback: return src as-is
+            return mapOf(
+                "alignedBytes" to matToBytes(src),
+                "homography"   to List(9) { i -> if (i % 4 == 0) 1.0 else 0.0 },
+                "reprojError"  to -1.0,
+                "refinedSrcPoints" to refinedSrc.map { mapOf("x" to it.x, "y" to it.y) },
+            )
+        }
+
+        // Reprojection error
+        val srcM = MatOfPoint2f(); srcM.fromList(refinedSrc)
+        val projM = MatOfPoint2f()
+        Core.perspectiveTransform(srcM, projM, H)
+        val projPts = projM.toList()
+        val reprojError = refinedRef.zip(projPts).map { (r, p) ->
+            val dx = r.x - p.x; val dy = r.y - p.y
+            sqrt(dx * dx + dy * dy)
+        }.average()
+
+        // warpPerspective src → ref size
+        val aligned = Mat()
+        Imgproc.warpPerspective(src, aligned, H, ref.size(), Imgproc.INTER_LINEAR)
+
+        // ECC local refinement (Euclidean only, small residual after homography)
+        val alignedGray = Mat(); Imgproc.cvtColor(aligned, alignedGray, Imgproc.COLOR_BGR2GRAY)
+        val eccWarp = Mat.eye(2, 3, CvType.CV_32F)
+        val eccCriteria = TermCriteria(TermCriteria.COUNT + TermCriteria.EPS, 50, 1e-4)
+        try {
+            val rF = Mat(); refGray.convertTo(rF, CvType.CV_32F)
+            val sF = Mat(); alignedGray.convertTo(sF, CvType.CV_32F)
+            Video.findTransformECC(rF, sF, eccWarp, Video.MOTION_EUCLIDEAN, eccCriteria, Mat(), 5)
+            val angle = Math.toDegrees(Math.atan2(eccWarp.get(1,0)[0], eccWarp.get(0,0)[0]))
+            if (Math.abs(angle) > 2.0) {
+                eccWarp.put(0,0, 1.0); eccWarp.put(0,1, 0.0); eccWarp.put(0,2, 0.0)
+                eccWarp.put(1,0, 0.0); eccWarp.put(1,1, 1.0); eccWarp.put(1,2, 0.0)
+            }
+        } catch (ignored: Exception) {}
+
+        val finalAligned = Mat()
+        Imgproc.warpAffine(aligned, finalAligned, eccWarp, ref.size(), Imgproc.INTER_LINEAR)
+
+        // Extract homography as 9 doubles (row-major)
+        val hVals = (0 until 3).flatMap { r -> (0 until 3).map { c -> H.get(r, c)[0] } }
+
+        return mapOf(
+            "alignedBytes"     to matToBytes(finalAligned),
+            "homography"       to hVals,
+            "reprojError"      to reprojError,
+            "refinedSrcPoints" to refinedSrc.map { mapOf("x" to it.x, "y" to it.y) },
+        )
     }
 
     private fun bytesToMat(bytes: ByteArray): Mat {

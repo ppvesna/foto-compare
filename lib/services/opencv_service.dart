@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 import 'package:flutter/services.dart';
+import 'package:flutter/painting.dart' show Offset;
 import '../config/app_config.dart';
 
 /// Сервис для обработки изображений через OpenCV (нативный Android)
@@ -207,7 +208,58 @@ class OpenCvService {
     return [];
   }
 
+  // ── Выравнивание по якорным точкам (калибровка) ──────────────────────────
+  // refPts, srcPts — точки в пикселях оригинальных изображений
+  static Future<AlignByAnchorsResult?> alignByAnchors(
+    Uint8List refBytes,
+    Uint8List srcBytes,
+    List<Offset> refPoints,
+    List<Offset> srcPoints,
+  ) async {
+    if (!_available) return null;
+    try {
+      final raw = await _channel.invokeMethod<Map>('alignByAnchors', {
+        'refBytes': refBytes,
+        'srcBytes': srcBytes,
+        'refPoints': refPoints.map((p) => {'x': p.dx, 'y': p.dy}).toList(),
+        'srcPoints': srcPoints.map((p) => {'x': p.dx, 'y': p.dy}).toList(),
+      });
+      if (raw == null) return null;
+      final hList = (raw['homography'] as List).map((e) => (e as num).toDouble()).toList();
+      final srcRaw = raw['refinedSrcPoints'] as List;
+      final refinedSrc = srcRaw.map((e) {
+        final m = e as Map;
+        return Offset((m['x'] as num).toDouble(), (m['y'] as num).toDouble());
+      }).toList();
+      return AlignByAnchorsResult(
+        alignedBytes: raw['alignedBytes'] as Uint8List,
+        homography: hList,
+        reprojError: (raw['reprojError'] as num).toDouble(),
+        refinedSrcPoints: refinedSrc,
+      );
+    } on MissingPluginException {
+      _available = false;
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   static bool get isAvailable => _available;
+}
+
+class AlignByAnchorsResult {
+  final Uint8List alignedBytes;
+  final List<double> homography;   // 3×3 row-major, 9 values
+  final double reprojError;        // средняя ошибка репроекции в пикселях
+  final List<Offset> refinedSrcPoints; // уточнённые точки src (cornerSubPix)
+
+  const AlignByAnchorsResult({
+    required this.alignedBytes,
+    required this.homography,
+    required this.reprojError,
+    required this.refinedSrcPoints,
+  });
 }
 
 class LabCompareResult {

@@ -14,6 +14,9 @@ import '../services/barcode_service.dart';
 import '../services/ocr_service.dart';
 import '../config/app_config.dart';
 import '../widgets/crop_frame_screen.dart';
+import '../widgets/anchor_point_screen.dart';
+import '../models/layout_profile.dart';
+import '../services/layout_profile_storage.dart';
 
 class CompareScreen extends StatefulWidget {
   const CompareScreen({super.key});
@@ -82,11 +85,22 @@ class _CompareScreenState extends State<CompareScreen>
 
   String? _savedRefLabel;
 
+  // ── Калибровка / Layout Profile ──────────────────
+  LayoutProfile? _layoutProfile;
+  bool _calibrating = false;
+  List<LayoutProfile> _savedProfiles = [];
+
   @override
   void initState() {
     super.initState();
     _tabs = TabController(length: 4, vsync: this);
     _loadSavedReference();
+    _loadProfiles();
+  }
+
+  Future<void> _loadProfiles() async {
+    final profiles = await LayoutProfileStorage.loadAll();
+    if (mounted) setState(() => _savedProfiles = profiles);
   }
 
   Future<void> _loadSavedReference() async {
@@ -115,6 +129,160 @@ class _CompareScreenState extends State<CompareScreen>
     if (!ok) return;
     await ReferenceStorage.clear();
     if (mounted) setState(() { _refImg = null; _savedRefLabel = null; _refAligned = null; });
+  }
+
+  // ── Калибровка: ручная расстановка якорей → Layout Profile ──────────────
+  Future<void> _calibrate() async {
+    if (_refImg == null) {
+      xpDlg(context, 'Нет эталона', 'Загрузите эталон перед калибровкой.');
+      return;
+    }
+    if (_cmpImg == null) {
+      xpDlg(context, 'Нет образца', 'Загрузите образец перед калибровкой.');
+      return;
+    }
+
+    setState(() => _calibrating = true);
+    try {
+      // Step 1: user places anchor points on ref image
+      final refPts = await Navigator.push<List<Offset>>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => AnchorPointScreen(
+            imageBytes: _refImg!,
+            title: 'Эталон — поставьте якорные точки (4–8)',
+            minPoints: 4,
+            maxPoints: 8,
+          ),
+        ),
+      );
+      if (refPts == null || refPts.length < 4 || !mounted) return;
+
+      // Step 2: user places corresponding anchor points on sample
+      final srcPts = await Navigator.push<List<Offset>>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => AnchorPointScreen(
+            imageBytes: _cmpImg!,
+            title: 'Образец — поставьте точки в том же порядке (${refPts.length})',
+            minPoints: refPts.length,
+            maxPoints: refPts.length,
+          ),
+        ),
+      );
+      if (srcPts == null || srcPts.length != refPts.length || !mounted) return;
+
+      // Step 3: alignByAnchors (cornerSubPix + findHomography + ECC)
+      setState(() => _calibrating = true);
+      final alignResult = await OpenCvService.alignByAnchors(
+        _refImg!, _cmpImg!, refPts, srcPts,
+      );
+      if (!mounted) return;
+
+      if (alignResult == null) {
+        xpDlg(context, 'Ошибка', 'OpenCV недоступен — калибровка не выполнена.');
+        return;
+      }
+
+      // Step 4: show result & confirm save
+      final reproj = alignResult.reprojError;
+      final quality = reproj < 2.0 ? 'Отлично' : reproj < 5.0 ? 'Хорошо' : 'Слабо';
+      final ok = await xpConfirm(
+        context,
+        'Результат калибровки',
+        'Ошибка репроекции: ${reproj.toStringAsFixed(1)} пкс ($quality)\n\nСохранить Layout Profile?',
+      );
+      if (!ok || !mounted) return;
+
+      // Step 5: name the profile
+      final name = await _promptProfileName();
+      if (name == null || !mounted) return;
+
+      // Step 6: save profile
+      final profile = LayoutProfile(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        name: name,
+        refAnchors: refPts,
+        homography: alignResult.homography,
+        cropRegion: null,
+        widthMm: AppConfig.printWidthMm,
+        heightMm: AppConfig.printHeightMm,
+        reprojError: reproj,
+        createdAt: DateTime.now(),
+      );
+      await LayoutProfileStorage.save(profile);
+      await _loadProfiles();
+
+      setState(() {
+        _layoutProfile = profile;
+        _cmpAligned = alignResult.alignedBytes;
+      });
+
+      xpDlg(context, 'Профиль сохранён',
+          '"$name"\nОшибка: ${reproj.toStringAsFixed(1)} пкс');
+    } finally {
+      if (mounted) setState(() => _calibrating = false);
+    }
+  }
+
+  Future<String?> _promptProfileName() async {
+    final ctrl = TextEditingController(
+        text: 'Профиль ${DateTime.now().day}.${DateTime.now().month}.${DateTime.now().year}');
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Название профиля'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: 'Название'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, ctrl.text.trim().isEmpty ? 'Профиль' : ctrl.text.trim()),
+            child: const Text('Сохранить'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Применить сохранённый профиль к образцу ──────────────────────────────
+  Future<void> _applyProfile(LayoutProfile profile) async {
+    if (_cmpImg == null) {
+      xpDlg(context, 'Нет образца', 'Загрузите образец.');
+      return;
+    }
+    setState(() => _calibrating = true);
+    try {
+      // Re-use ref anchor points from profile with user placing src points
+      final srcPts = await Navigator.push<List<Offset>>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => AnchorPointScreen(
+            imageBytes: _cmpImg!,
+            title: 'Образец — поставьте точки (${profile.refAnchors.length})',
+            minPoints: profile.refAnchors.length,
+            maxPoints: profile.refAnchors.length,
+          ),
+        ),
+      );
+      if (srcPts == null || !mounted) return;
+
+      final alignResult = await OpenCvService.alignByAnchors(
+        _refImg!, _cmpImg!, profile.refAnchors, srcPts,
+      );
+      if (!mounted) return;
+      if (alignResult == null) return;
+
+      setState(() {
+        _layoutProfile = profile;
+        _cmpAligned = alignResult.alignedBytes;
+      });
+    } finally {
+      if (mounted) setState(() => _calibrating = false);
+    }
   }
 
   @override
@@ -1224,10 +1392,57 @@ class _CompareScreenState extends State<CompareScreen>
         ],
 
         const SizedBox(height: 12),
+        // ── Статус профиля калибровки ─────────────────
+        if (_layoutProfile != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(children: [
+              const Icon(Icons.tune, size: 14, color: Colors.green),
+              const SizedBox(width: 4),
+              Expanded(child: Text(
+                'Профиль: ${_layoutProfile!.name}  (ош. ${_layoutProfile!.reprojError.toStringAsFixed(1)} пкс)',
+                style: const TextStyle(fontSize: 11, color: Colors.green),
+                overflow: TextOverflow.ellipsis,
+              )),
+              TextButton(
+                onPressed: () => setState(() { _layoutProfile = null; _cmpAligned = null; }),
+                style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: Size.zero, tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                child: const Text('✕', style: TextStyle(fontSize: 11, color: Colors.grey)),
+              ),
+            ]),
+          ),
         const Divider(),
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
           XpBtn(label: '‹ Эталон', onPressed: () => _tabs.animateTo(0)),
           Row(children: [
+            // Calibration button
+            _calibrating
+                ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))
+                : PopupMenuButton<String>(
+                    tooltip: 'Калибровка',
+                    icon: Icon(
+                      Icons.tune,
+                      size: 20,
+                      color: _layoutProfile != null ? Colors.green : Colors.grey,
+                    ),
+                    onSelected: (v) async {
+                      if (v == 'new') {
+                        await _calibrate();
+                      } else {
+                        final profile = _savedProfiles.firstWhere((p) => p.id == v);
+                        await _applyProfile(profile);
+                      }
+                    },
+                    itemBuilder: (_) => [
+                      const PopupMenuItem(value: 'new', child: Text('Новая калибровка...')),
+                      if (_savedProfiles.isNotEmpty) const PopupMenuDivider(),
+                      ..._savedProfiles.map((p) => PopupMenuItem(
+                        value: p.id,
+                        child: Text(p.name, style: const TextStyle(fontSize: 13)),
+                      )),
+                    ],
+                  ),
+            const SizedBox(width: 8),
             if (_result != null) ...[
               SimBadge(value: _result!.score),
               const SizedBox(width: 8),
