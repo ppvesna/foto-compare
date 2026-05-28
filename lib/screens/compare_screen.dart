@@ -502,10 +502,13 @@ class _CompareScreenState extends State<CompareScreen>
     if (x == null) return;
 
     final bytes = await x.readAsBytes();
-    setState(() {
-      if (isRef) { _refImg = bytes; _refAligned = null; }
-      else        { _cmpImg = bytes; _cmpAligned = null; }
-    });
+    if (isRef) {
+      // Сбрасываем второй снимок и пропускаем через _selectRef (перспектива)
+      setState(() { _ref2Img = null; _ref1Sharpness = null; _ref2Sharpness = null; });
+      await _selectRef(bytes);
+    } else {
+      setState(() { _cmpImg = bytes; _cmpAligned = null; });
+    }
   }
 
   // ── Серийная съёмка + усреднение ─────────────────
