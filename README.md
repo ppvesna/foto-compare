@@ -65,8 +65,10 @@ UI стиль: Windows XP (намеренно, как фирменный сти�
 - Сравнение: MAE алгоритм, 1–3 итерации
 - Режимы: slider, overlay, side-by-side
 - Экраны: Старт, Сравнение, Чат, Магазин, Настройки
-- Локальная SQLite БД (история, настройки, пользователи)
-- Синхронизация с сервером (заготовка, выключена)
+- Локальная SQLite БД (история, настройки, пользователи, профили калибровки, чек-листы, заказы)
+- Синхронизация с Supabase ✅ (включена, `featureServerSync = true`)
+- Калибровка по якорным точкам (anchor points) с авто-выравниванием через OpenCV (homography + ECC)
+- AUTO MODE — предсказание положения якорных точек по сохранённому профилю
 - UI компоненты XP: XpBtn, XpInput, XpGroup, XpMenuBar, XpStatusBar
 
 ---
@@ -190,12 +192,13 @@ v2:
 v3:
 - базовый AI (Claude API)
 - Android / iOS сборка
-- подготовка к облаку
+- ✅ калибровка по якорным точкам + AUTO MODE (OpenCV homography/ECC)
 
-v4:
-- облако
-- синхронизация
-- API для внешних клиентов
+v4 (текущий этап):
+- ✅ облако (Supabase: production-таблицы layouts/layout_profiles/check_results/production_orders)
+- ✅ синхронизация SQLite ↔ Supabase
+- ⬜ PASS/WARNING/FAIL пороги для check_results
+- ⬜ API для внешних клиентов
 
 ---
 
@@ -208,15 +211,41 @@ v4:
 
 Реальные сервисы:
 - `CompareService` — сравнение изображений ✅
+- `OpenCvService` — нативная калибровка/выравнивание (homography, ECC) ✅
 - `AiApiService` — Claude API ⬜ (выключен)
 - `AuthApiService` — авторизация (Supabase) ✅
 - `ChatApiService` — чат ⬜ (mock)
 - `PaymentApiService` — платежи ⬜ (выключен)
-- `SyncService` — синхронизация ⬜ (выключена)
+- `SupabaseService` — работа с production-таблицами Supabase (layouts, layout_profiles, check_results, production_orders) ✅
+- `SyncService` — двусторонняя синхронизация SQLite ↔ Supabase ✅ (включена)
 
 Планируемые сервисы:
 - `MetricsService` — SSIM/PSNR/MSE
 - `StorageService` — локальное сохранение результатов
+
+---
+
+## 🎯 Калибровка и AUTO MODE
+
+Модели (`lib/models/`):
+- `AnchorPoint` — якорная точка профиля: `id, x, y, type, confidence` (нормализованные координаты 0..1)
+- `CropRegion` — область обрезки: `x, y, w, h` (нормализованные)
+- `AlignmentInfo` — данные выравнивания: `reprojectionError, eccScore, confidence`
+- `LayoutProfile` — профиль раскладки: `refAnchors, homography, cropRegion, widthMm/heightMm, refImageWidth/Height, alignment`
+- `AlignmentResult` — результат выравнивания: `success, reprojectionError, eccScore, confidence, quality, homography`
+
+Поток калибровки (`CompareScreen._calibrate`):
+1. Пользователь расставляет якоря на эталонном изображении
+2. Расставляет соответствующие якоря на тестовом изображении
+3. `OpenCvService.alignByAnchors` — homography + ECC (`Video.findTransformECC`) → `reprojError`, `eccScore`, `quality` (`excellent/good/warning/fail`), `confidence`
+4. Валидация результата (`_showAlignmentValidation`)
+5. Якоря нормализуются (0..1) и сохраняются как `LayoutProfile`
+
+AUTO MODE (`CompareScreen._applyProfile`):
+1. Загружается сохранённый `LayoutProfile`
+2. Якоря профиля денормализуются → предсказанные позиции на новом образце (`AnchorPointScreen.predictedPoints`)
+3. Пользователь подтверждает/корректирует точки
+4. Выполняется `alignByAnchors` и повторная валидация
 
 ---
 
