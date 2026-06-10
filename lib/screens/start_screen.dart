@@ -44,7 +44,9 @@ class _StartScreenState extends State<StartScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Column(children: [
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Column(children: [
       XpMenuBar(
         icon: '🔭',
         menus: [
@@ -146,7 +148,8 @@ class _StartScreenState extends State<StartScreen>
           ),
         ),
       ),
-    ]);
+      ]),
+    );
   }
 
   Widget _tab(String label, bool active, VoidCallback onTap) {
