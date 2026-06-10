@@ -57,20 +57,9 @@ Uint8List _buildDiffImage(img.Image r, img.Image c) {
   return Uint8List.fromList(img.encodePng(out));
 }
 
-// Нормализация яркости: приводит среднюю яркость src к targetMean эталона
-img.Image _normalizeLuminance(img.Image src, double targetMean) {
-  if (targetMean < 1) return src;
-  double sum = 0;
-  final total = src.width * src.height;
-  for (int y = 0; y < src.height; y++) {
-    for (int x = 0; x < src.width; x++) {
-      final p = src.getPixel(x, y);
-      sum += p.r * 0.299 + p.g * 0.587 + p.b * 0.114;
-    }
-  }
-  final srcMean = sum / total;
-  if (srcMean < 1) return src;
-  final scale = targetMean / srcMean;
+// Применяет масштаб яркости к (уже уменьшенному) изображению
+img.Image _applyLuminanceScale(img.Image src, double scale) {
+  if ((scale - 1.0).abs() < 0.001) return src;
   final out = img.Image(width: src.width, height: src.height);
   for (int y = 0; y < src.height; y++) {
     for (int x = 0; x < src.width; x++) {
@@ -108,15 +97,20 @@ CompareResult _run(List<Uint8List> args) {
   final iters   = kIsWeb ? 1   : AppConfig.comparisonIter;
   final sizes   = [64, 128, maxSize].take(iters).toList();
 
-  // Нормализация: приводим яркость сравниваемого к яркости эталона
+  // Эталон и сравниваемое — уменьшенные копии (быстро, не зависит от исходного разрешения)
   final refThumb = _fitCrop(imgRef, maxSize);
-  final refMean  = _meanLuminance(refThumb);
-  final imgCmpNorm = _normalizeLuminance(imgCmp, refMean);
+  final cmpThumbRaw = _fitCrop(imgCmp, maxSize);
+
+  // Нормализация: приводим яркость сравниваемого к яркости эталона
+  final refMean = _meanLuminance(refThumb);
+  final cmpMean = _meanLuminance(cmpThumbRaw);
+  final lumScale = cmpMean < 1 ? 1.0 : refMean / cmpMean;
 
   double totalSim = 0;
   for (final size in sizes) {
-    final r = _fitCrop(imgRef, size);
-    final c = _fitCrop(imgCmpNorm, size);
+    final r = size == maxSize ? refThumb : _fitCrop(imgRef, size);
+    final cRaw = size == maxSize ? cmpThumbRaw : _fitCrop(imgCmp, size);
+    final c = _applyLuminanceScale(cRaw, lumScale);
     double diff = 0;
     for (int y = 0; y < size; y++) {
       for (int x = 0; x < size; x++) {
@@ -135,7 +129,7 @@ CompareResult _run(List<Uint8List> args) {
 
   // Диффпиксели + карта на рабочем масштабе (используем нормализованное)
   final r2 = refThumb;
-  final c2 = _fitCrop(imgCmpNorm, maxSize);
+  final c2 = _applyLuminanceScale(cmpThumbRaw, lumScale);
   int diffPx = 0;
   for (int y = 0; y < maxSize; y++) {
     for (int x = 0; x < maxSize; x++) {
