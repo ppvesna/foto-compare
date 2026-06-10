@@ -1,9 +1,12 @@
+import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:uuid/uuid.dart';
 import '../config/app_theme.dart';
 import '../widgets/xp_widgets.dart';
 import '../services/compare_service.dart';
@@ -17,6 +20,7 @@ import '../widgets/crop_frame_screen.dart';
 import '../widgets/anchor_point_screen.dart';
 import '../models/layout_profile.dart';
 import '../services/layout_profile_storage.dart';
+import '../database/local_database.dart';
 
 class CompareScreen extends StatefulWidget {
   const CompareScreen({super.key});
@@ -700,11 +704,66 @@ class _CompareScreenState extends State<CompareScreen>
             ? OcrService.compareTexts(ro.fullText, co.fullText)
             : null;
       });
+
+      await _saveCheckResult();
     } catch (e) {
       if (mounted) xpDlg(context, 'Ошибка сравнения', e.toString());
     } finally {
       if (mounted) setState(() => _comparing = false);
     }
+  }
+
+  // ── % совпадения штрихкодов эталон/образец ───────
+  double? _barcodeMatchPct() {
+    if (_refBarcodes.isEmpty && _cmpBarcodes.isEmpty) return null;
+    if (_refBarcodes.isEmpty || _cmpBarcodes.isEmpty) return 0.0;
+    final refVals = _refBarcodes.map((b) => b.value).toSet();
+    final cmpVals = _cmpBarcodes.map((b) => b.value).toSet();
+    return refVals.intersection(cmpVals).length / refVals.length * 100;
+  }
+
+  // ── Сохранить текстовые маркеры результата (без изображений) ──
+  Future<void> _saveCheckResult() async {
+    final r = _result;
+    if (r == null) return;
+    final score = r.score;
+    final status = score >= 90 ? 'pass' : (score >= 70 ? 'warning' : 'fail');
+
+    final details = <String, dynamic>{
+      'similarity':  r.similarity,
+      'labScore':    r.labScore,
+      'labLevel0':   r.labLevel0,
+      'labLevel1':   r.labLevel1,
+      'labLevel2':   r.labLevel2,
+      'labLevel3':   r.labLevel3,
+      'refSize':     r.refSize,
+      'cmpSize':     r.cmpSize,
+      'diffPercent': r.diffPercent,
+      if (_textDiff != null) 'textSimilarity': _textDiff!.similarity,
+      if (_textDiff != null) 'textMissing':    _textDiff!.missing,
+      if (_textDiff != null) 'textExtra':      _textDiff!.extra,
+      if (_barcodeMatchPct() != null) 'barcodeMatch': _barcodeMatchPct(),
+    };
+
+    await LocalDatabase().saveCheckResult({
+      'id':                   const Uuid().v4(),
+      'layout_id':            null,
+      'layout_profile_id':    null,
+      'device_id':            null,
+      'operator_id':          Supabase.instance.client.auth.currentUser?.id,
+      'score':                score,
+      'status':               status,
+      'alignment_confidence': _layoutProfile?.alignment?.confidence,
+      'reproj_error':         _layoutProfile?.alignment?.reprojectionError,
+      'ecc_score':            _layoutProfile?.alignment?.eccScore,
+      'color_deviation':      null,
+      'shift_dl':             r.shiftDL,
+      'shift_da':             r.shiftDA,
+      'shift_db':             r.shiftDB,
+      'heatmap_url':          null,
+      'details':              jsonEncode(details),
+      'created_at':           DateTime.now().toIso8601String(),
+    });
   }
 
   // ── Пирамидное авто-выравнивание L3→L2→L1→L0 ────
