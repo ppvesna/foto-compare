@@ -783,7 +783,16 @@ class _CompareScreenState extends State<CompareScreen>
       setState(() { _ref2Img = null; _ref1Sharpness = null; _ref2Sharpness = null; });
       await _selectRef(bytes);
     } else {
-      setState(() { _cmpImg = bytes; _cmpAligned = null; });
+      // Та же коррекция перспективы, что и для эталона —
+      // иначе один и тот же файл даёт разные размеры
+      setState(() { _stacking = true; });
+      try {
+        final flat = await OpenCvService.perspectiveCorrect(bytes);
+        if (!mounted) return;
+        setState(() { _cmpImg = flat; _cmpOriginal = bytes; _cmpAligned = null; });
+      } finally {
+        if (mounted) setState(() => _stacking = false);
+      }
     }
   }
 
