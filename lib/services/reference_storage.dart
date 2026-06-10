@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 class ReferenceStorage {
@@ -13,6 +14,7 @@ class ReferenceStorage {
 
   // Сохранить эталон на диск
   static Future<void> save(Uint8List bytes, {String? label}) async {
+    if (kIsWeb) return;
     final dir = await _dir();
     await File('$dir/$_fileName').writeAsBytes(bytes);
     if (label != null) {
@@ -22,6 +24,7 @@ class ReferenceStorage {
 
   // Загрузить сохранённый эталон
   static Future<Uint8List?> load() async {
+    if (kIsWeb) return null;
     final dir = await _dir();
     final file = File('$dir/$_fileName');
     if (!await file.exists()) return null;
@@ -30,6 +33,7 @@ class ReferenceStorage {
 
   // Метка (имя/дата) сохранённого эталона
   static Future<String?> loadLabel() async {
+    if (kIsWeb) return null;
     final dir = await _dir();
     final file = File('$dir/$_metaFile');
     if (!await file.exists()) return null;
@@ -38,6 +42,7 @@ class ReferenceStorage {
 
   // Удалить сохранённый эталон
   static Future<void> clear() async {
+    if (kIsWeb) return;
     final dir = await _dir();
     final f1 = File('$dir/$_fileName');
     final f2 = File('$dir/$_metaFile');
@@ -46,6 +51,7 @@ class ReferenceStorage {
   }
 
   static Future<bool> exists() async {
+    if (kIsWeb) return false;
     final dir = await _dir();
     return File('$dir/$_fileName').exists();
   }

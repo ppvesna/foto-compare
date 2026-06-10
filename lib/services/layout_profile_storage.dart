@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import '../models/layout_profile.dart';
 
@@ -24,6 +25,7 @@ class LayoutProfileStorage {
   }
 
   static Future<void> save(LayoutProfile profile) async {
+    if (kIsWeb) return;
     final all = await loadAll();
     final idx = all.indexWhere((p) => p.id == profile.id);
     if (idx >= 0) {
@@ -36,6 +38,7 @@ class LayoutProfileStorage {
   }
 
   static Future<void> delete(String id) async {
+    if (kIsWeb) return;
     final all = await loadAll();
     all.removeWhere((p) => p.id == id);
     final f = await _file();

@@ -159,16 +159,8 @@ class _StartScreenState extends State<StartScreen>
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
         decoration: BoxDecoration(
           color: active ? AppTheme.silver : AppTheme.silverDark,
-          border: Border(
-            top:
-                BorderSide(color: active ? AppTheme.blue : AppTheme.silverDark),
-            left:
-                BorderSide(color: active ? AppTheme.blue : AppTheme.silverDark),
-            right:
-                BorderSide(color: active ? AppTheme.blue : AppTheme.silverDark),
-            bottom: BorderSide(
-                color: active ? AppTheme.silver : AppTheme.silverDark),
-          ),
+          border: Border.all(
+              color: active ? AppTheme.blue : AppTheme.silverDark),
           borderRadius: const BorderRadius.only(
               topLeft: Radius.circular(3), topRight: Radius.circular(3)),
         ),
