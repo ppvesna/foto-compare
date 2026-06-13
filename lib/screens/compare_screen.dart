@@ -18,6 +18,7 @@ import '../services/ocr_service.dart';
 import '../config/app_config.dart';
 import '../widgets/crop_frame_screen.dart';
 import '../widgets/anchor_point_screen.dart';
+import '../widgets/overlay_align_screen.dart';
 import '../models/layout_profile.dart';
 import '../services/layout_profile_storage.dart';
 import '../database/local_database.dart';
@@ -1547,6 +1548,27 @@ class _CompareScreenState extends State<CompareScreen>
                   const Spacer(),
                   XpBtn(label: '⟳', onPressed: () => setState(() => _cmpOverlayCtrl.value = Matrix4.identity())),
                 ]),
+                const SizedBox(height: 6),
+                XpBtn(
+                  label: '🎯 Точное совмещение',
+                  primary: true,
+                  onPressed: () async {
+                    final result = await OverlayAlignScreen.show(
+                      context,
+                      base: _refImg!,
+                      overlay: _cmpImg!,
+                      initialTransform: _cmpOverlayCtrl.value,
+                      initialOpacity: _cmpOverlayOpacity,
+                      title: 'Точное совмещение — Эталон / Образец',
+                    );
+                    if (result != null && mounted) {
+                      setState(() {
+                        _cmpOverlayCtrl.value = result.transform;
+                        _cmpOverlayOpacity = result.opacity;
+                      });
+                    }
+                  },
+                ),
                 const SizedBox(height: 6),
                 // Шаг 2: авто-выравнивание по пикселям (L3→L2→L1→L0)
                 Row(children: [
