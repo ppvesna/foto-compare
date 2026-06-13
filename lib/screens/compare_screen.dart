@@ -133,7 +133,7 @@ class _CompareScreenState extends State<CompareScreen>
         'Удалить сохранённый эталон с устройства?');
     if (!ok) return;
     await ReferenceStorage.clear();
-    if (mounted) setState(() { _refImg = null; _savedRefLabel = null; _refAligned = null; });
+    if (mounted) setState(() { _refImg = null; _savedRefLabel = null; _refAligned = null; _layoutProfile = null; });
   }
 
   // ── Калибровка: ручная расстановка якорей → Layout Profile ──────────────
@@ -510,6 +510,7 @@ class _CompareScreenState extends State<CompareScreen>
         _refImg = flat;
         _refOriginal = ref;
         _refAligned = null;
+        _layoutProfile = null;
         _ref2Img = null;
         _ref1Sharpness = null;
         _ref2Sharpness = null;
@@ -542,7 +543,7 @@ class _CompareScreenState extends State<CompareScreen>
       final fused = src != null ? await OpenCvService.fuseImages(ref, src) : ref;
       if (!mounted) return;
       setState(() {
-        _cmpImg = fused; _cmpAligned = null;
+        _cmpImg = fused; _cmpAligned = null; _layoutProfile = null;
         _cmp2Img = null; _cmp2Ctrl.value = Matrix4.identity();
         _cmp1Sharpness = null; _cmp2Sharpness = null;
       });
@@ -619,6 +620,7 @@ class _CompareScreenState extends State<CompareScreen>
     setState(() {
       _refOriginal = origRef;
       _cmpOriginal = origCmp;
+      _layoutProfile = null;
       int i = 0;
       if (_refImg != null) { _refImg = results[i++]; _refAligned = null; }
       if (_cmpImg != null) { _cmpImg = results[i++]; _cmpAligned = null; }
@@ -792,6 +794,7 @@ class _CompareScreenState extends State<CompareScreen>
     );
     if (result != null && mounted) {
       setState(() {
+        _layoutProfile = null;
         if (isRef) { _refImg = result; _refAligned = null; }
         else        { _cmpImg = result; _cmpAligned = null; }
       });
@@ -850,7 +853,7 @@ class _CompareScreenState extends State<CompareScreen>
       try {
         final flat = await OpenCvService.perspectiveCorrect(bytes);
         if (!mounted) return;
-        setState(() { _cmpImg = flat; _cmpOriginal = bytes; _cmpAligned = null; });
+        setState(() { _cmpImg = flat; _cmpOriginal = bytes; _cmpAligned = null; _layoutProfile = null; });
       } finally {
         if (mounted) setState(() => _stacking = false);
       }
@@ -988,6 +991,7 @@ class _CompareScreenState extends State<CompareScreen>
       final result = await compute(_averageImages, [aligned, 0.0]);
       if (mounted) {
         setState(() {
+          _layoutProfile = null;
           if (isRef) { _refImg = result; _refAligned = null; }
           else        { _cmpImg = result; _cmpAligned = null; }
         });
@@ -1012,6 +1016,7 @@ class _CompareScreenState extends State<CompareScreen>
                     _cmpImg = null;
                     _refAligned = null;
                     _cmpAligned = null;
+                    _layoutProfile = null;
                     _tabs.animateTo(0);
                   })),
           XpMenuItem.sep,
@@ -1541,6 +1546,7 @@ class _CompareScreenState extends State<CompareScreen>
                   if (_refOriginal != null || _cmpOriginal != null) ...[
                     const SizedBox(width: 4),
                     XpBtn(label: '↩ Сброс', onPressed: () => setState(() {
+                      _layoutProfile = null;
                       if (_refOriginal != null) { _refImg = _refOriginal; _refOriginal = null; _refAligned = null; }
                       if (_cmpOriginal != null) { _cmpImg = _cmpOriginal; _cmpOriginal = null; _cmpAligned = null; }
                     })),
@@ -1609,6 +1615,27 @@ class _CompareScreenState extends State<CompareScreen>
                 child: const Text('✕', style: TextStyle(fontSize: 11, color: Colors.grey)),
               ),
             ]),
+          )
+        else if (_refImg != null && _cmpImg != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.orange.withOpacity(0.12),
+                border: Border.all(color: Colors.orange),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Row(children: [
+                const Icon(Icons.warning_amber, size: 16, color: Colors.orange),
+                const SizedBox(width: 6),
+                const Expanded(child: Text(
+                  'Без расстановки точек (🔧 Калибровка) сравнение будет неточным — '
+                  'разное разрешение и кадрирование эталона и образца искажают результат.',
+                  style: TextStyle(fontSize: 11, color: Colors.orange),
+                )),
+              ]),
+            ),
           ),
         const Divider(),
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
@@ -1618,11 +1645,15 @@ class _CompareScreenState extends State<CompareScreen>
             _calibrating
                 ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))
                 : PopupMenuButton<String>(
-                    tooltip: 'Калибровка',
+                    tooltip: 'Калибровка (точки)',
                     icon: Icon(
                       Icons.tune,
                       size: 20,
-                      color: _layoutProfile != null ? Colors.green : Colors.grey,
+                      color: _layoutProfile != null
+                          ? Colors.green
+                          : (_refImg != null && _cmpImg != null
+                              ? Colors.orange
+                              : Colors.grey),
                     ),
                     onSelected: (v) async {
                       if (v == 'new') {
@@ -1652,7 +1683,8 @@ class _CompareScreenState extends State<CompareScreen>
                 : XpBtn(
                     label: 'Сравнить ›',
                     primary: true,
-                    onPressed: _refImg != null && _cmpImg != null ? _applyCmpAndCompare : null),
+                    onPressed: _refImg != null && _cmpImg != null && _layoutProfile != null
+                        ? _applyCmpAndCompare : null),
           ]),
         ]),
       ]),
@@ -1669,7 +1701,8 @@ class _CompareScreenState extends State<CompareScreen>
             const Text('📊', style: TextStyle(fontSize: 40)),
             const SizedBox(height: 12),
             const Text(
-                'Загрузите оба фото и нажмите\n«Сравнить ›» на вкладке Сравнение',
+                'Загрузите оба фото, расставьте точки (🔧 Калибровка)\n'
+                'и нажмите «Сравнить ›» на вкладке Сравнение',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 12, color: Colors.grey)),
             const SizedBox(height: 16),
@@ -1901,6 +1934,7 @@ class _CompareScreenState extends State<CompareScreen>
                         _aiResult = null;
                         _refAligned = null;
                         _cmpAligned = null;
+                        _layoutProfile = null;
                       });
                       _tabs.animateTo(0);
                     }),
