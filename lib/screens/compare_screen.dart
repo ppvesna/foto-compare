@@ -61,14 +61,14 @@ class _CompareScreenState extends State<CompareScreen>
   double _overlayOpacity = 0.5;
   Size _overlayViewerSize = Size.zero;
 
-  // Раздел 1 вкладки Сравнение: cmp1 + cmp2 → merge
+  // Вкладка Образец: cmp1 + cmp2 → merge
   Uint8List? _cmp2Img;
   double? _cmp1Sharpness;
   double? _cmp2Sharpness;
   final _cmp2Ctrl = TransformationController();
   double _cmp2Opacity = 0.5;
 
-  // Раздел 2 вкладки Сравнение: ref + cmp → compare
+  // Вкладка Совмещение: ref + cmp → compare
   final _cmpOverlayCtrl = TransformationController();
   double _cmpOverlayOpacity = 0.5;
   Size _cmpOverlayViewerSize = Size.zero;
@@ -98,7 +98,7 @@ class _CompareScreenState extends State<CompareScreen>
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 4, vsync: this);
+    _tabs = TabController(length: 5, vsync: this);
     _loadSavedReference();
     _loadProfiles();
   }
@@ -650,7 +650,7 @@ class _CompareScreenState extends State<CompareScreen>
       final compareResult = await CompareService.compare(ref, cmp);
       if (!mounted) return;
       setState(() { _result = compareResult; _comparing = false; });
-      _tabs.animateTo(2);
+      _tabs.animateTo(3);
 
       // Lab-пирамида — точнее MAE, обновляем результат если OpenCV доступен
       OpenCvService.compareImages(ref, cmp).then((lab) {
@@ -1043,13 +1043,17 @@ class _CompareScreenState extends State<CompareScreen>
               icon: '📷',
               onTap: () => _tabs.animateTo(1)),
           XpMenuItem(
+              label: 'Совмещение',
+              icon: '🎯',
+              onTap: () => _tabs.animateTo(2)),
+          XpMenuItem(
               label: 'Результат',
               icon: '📊',
-              onTap: () => _tabs.animateTo(2)),
+              onTap: () => _tabs.animateTo(3)),
           XpMenuItem(
               label: 'История',
               icon: '📋',
-              onTap: () => _tabs.animateTo(3)),
+              onTap: () => _tabs.animateTo(4)),
         ]),
         XpMenu(label: 'Инструменты', items: [
           XpMenuItem(
@@ -1078,8 +1082,9 @@ class _CompareScreenState extends State<CompareScreen>
         child: Row(children: [
           _xpTab('🖼️ Эталон', 0),
           _xpTab('📷 Образец', 1),
-          _xpTab('📊 Результат', 2),
-          _xpTab('📋 История', 3),
+          _xpTab('🎯 Совмещение', 2),
+          _xpTab('📊 Результат', 3),
+          _xpTab('📋 История', 4),
         ]),
       ),
       Container(height: 2, color: AppTheme.blue),
@@ -1091,6 +1096,7 @@ class _CompareScreenState extends State<CompareScreen>
           children: [
             _tabRef(),
             _tabCmp(),
+            _tabAlign(),
             _tabResult(),
             _tabHistory(),
           ],
@@ -1497,104 +1503,134 @@ class _CompareScreenState extends State<CompareScreen>
               ],
             ])),
 
-        // ── Раздел 2: эталон + фото → сравнить ──────
-        if (_refImg != null && _cmpImg != null) ...[
-          const SizedBox(height: 8),
-          XpGroup(
-              label: 'Совместить с эталоном',
-              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                const Text('Перетащите фото поверх эталона. Совместите — нажмите Сравнить.',
-                    style: TextStyle(fontSize: 11, color: Colors.grey, height: 1.5)),
-                const SizedBox(height: 8),
-                ClipRect(
-                  child: Container(
-                    height: 240,
-                    color: Colors.black,
-                    child: LayoutBuilder(builder: (_, c) {
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        _cmpOverlayViewerSize = Size(c.maxWidth, c.maxHeight);
-                      });
-                      return Stack(fit: StackFit.expand, children: [
-                        Image.memory(_refImg!, fit: BoxFit.contain),
-                        Opacity(
-                          opacity: _cmpOverlayOpacity,
-                          child: InteractiveViewer(
-                            transformationController: _cmpOverlayCtrl,
-                            boundaryMargin: const EdgeInsets.all(double.infinity),
-                            minScale: 0.1, maxScale: 6.0,
-                            child: Image.memory(_cmpImg!, fit: BoxFit.contain),
-                          ),
+        const SizedBox(height: 12),
+        const Divider(),
+        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          XpBtn(label: '‹ Эталон', onPressed: () => _tabs.animateTo(0)),
+          XpBtn(
+              label: 'Далее ›',
+              primary: true,
+              onPressed: _refImg != null && _cmpImg != null
+                  ? () => _tabs.animateTo(2)
+                  : null),
+        ]),
+      ]),
+    );
+  }
+
+  // ── Таб: Совмещение ───────────────────────────────
+  Widget _tabAlign() {
+    if (_refImg == null || _cmpImg == null) {
+      return Center(
+          child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+            const Text('🎯', style: TextStyle(fontSize: 40)),
+            const SizedBox(height: 12),
+            const Text('Сначала загрузите эталон и образец',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 12, color: Colors.grey)),
+            const SizedBox(height: 16),
+            XpBtn(label: '‹ Образец', onPressed: () => _tabs.animateTo(1)),
+          ]));
+    }
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(12),
+      child: Column(children: [
+        XpGroup(
+            label: 'Совместить с эталоном',
+            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              const Text('Перетащите фото поверх эталона. Совместите — нажмите Сравнить.',
+                  style: TextStyle(fontSize: 11, color: Colors.grey, height: 1.5)),
+              const SizedBox(height: 8),
+              ClipRect(
+                child: Container(
+                  height: 240,
+                  color: Colors.black,
+                  child: LayoutBuilder(builder: (_, c) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      _cmpOverlayViewerSize = Size(c.maxWidth, c.maxHeight);
+                    });
+                    return Stack(fit: StackFit.expand, children: [
+                      Image.memory(_refImg!, fit: BoxFit.contain),
+                      Opacity(
+                        opacity: _cmpOverlayOpacity,
+                        child: InteractiveViewer(
+                          transformationController: _cmpOverlayCtrl,
+                          boundaryMargin: const EdgeInsets.all(double.infinity),
+                          minScale: 0.1, maxScale: 6.0,
+                          child: Image.memory(_cmpImg!, fit: BoxFit.contain),
                         ),
-                        const Positioned(left: 8, top: 8, child: _ImgLabel('Эталон')),
-                        const Positioned(right: 8, top: 8, child: _ImgLabel('Фото ↕↔')),
-                      ]);
-                    }),
-                  ),
+                      ),
+                      const Positioned(left: 8, top: 8, child: _ImgLabel('Эталон')),
+                      const Positioned(right: 8, top: 8, child: _ImgLabel('Фото ↕↔')),
+                    ]);
+                  }),
                 ),
-                const SizedBox(height: 6),
-                Row(children: [
-                  const SizedBox(width: 90, child: Text('Прозрачность:', style: TextStyle(fontSize: 11))),
-                  Expanded(child: Slider(
-                    value: _cmpOverlayOpacity,
-                    onChanged: (v) => setState(() => _cmpOverlayOpacity = v),
-                    activeColor: AppTheme.blue,
-                  )),
-                  SizedBox(width: 36, child: Text('${(_cmpOverlayOpacity * 100).round()}%', style: const TextStyle(fontSize: 10))),
-                ]),
-                Row(children: [
-                  XpBtn(label: '📐 Перспектива', onPressed: _fixPerspective),
-                  if (_refOriginal != null || _cmpOriginal != null) ...[
-                    const SizedBox(width: 4),
-                    XpBtn(label: '↩ Сброс', onPressed: () => setState(() {
-                      _layoutProfile = null;
-                      if (_refOriginal != null) { _refImg = _refOriginal; _refOriginal = null; _refAligned = null; }
-                      if (_cmpOriginal != null) { _cmpImg = _cmpOriginal; _cmpOriginal = null; _cmpAligned = null; }
-                    })),
-                  ],
-                  const Spacer(),
-                  XpBtn(label: '⟳', onPressed: () => setState(() => _cmpOverlayCtrl.value = Matrix4.identity())),
-                ]),
-                const SizedBox(height: 6),
-                XpBtn(
-                  label: '🎯 Точное совмещение',
-                  primary: true,
-                  onPressed: () async {
-                    final result = await OverlayAlignScreen.show(
-                      context,
-                      base: _refImg!,
-                      overlay: _cmpImg!,
-                      initialTransform: _cmpOverlayCtrl.value,
-                      initialOpacity: _cmpOverlayOpacity,
-                      title: 'Точное совмещение — Эталон / Образец',
-                    );
-                    if (result != null && mounted) {
-                      setState(() {
-                        _cmpOverlayCtrl.value = result.transform;
-                        _cmpOverlayOpacity = result.opacity;
-                      });
-                    }
-                  },
-                ),
-                const SizedBox(height: 6),
-                // Шаг 2: авто-выравнивание по пикселям (L3→L2→L1→L0)
-                Row(children: [
-                  Expanded(child: _autoAligning
-                    ? const Row(children: [
-                        SizedBox(width: 16, height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2)),
-                        SizedBox(width: 8),
-                        Text('Авто-выравнивание L3→L2→L1→L0…',
-                            style: TextStyle(fontSize: 11, color: Colors.grey)),
-                      ])
-                    : XpBtn(
-                        label: '⚙ Авто L3→L2→L1→L0',
-                        primary: true,
-                        onPressed: (_refImg != null && _cmpImg != null && !_comparing)
-                            ? _autoAlign : null,
-                      )),
-                ]),
-              ])),
-        ],
+              ),
+              const SizedBox(height: 6),
+              Row(children: [
+                const SizedBox(width: 90, child: Text('Прозрачность:', style: TextStyle(fontSize: 11))),
+                Expanded(child: Slider(
+                  value: _cmpOverlayOpacity,
+                  onChanged: (v) => setState(() => _cmpOverlayOpacity = v),
+                  activeColor: AppTheme.blue,
+                )),
+                SizedBox(width: 36, child: Text('${(_cmpOverlayOpacity * 100).round()}%', style: const TextStyle(fontSize: 10))),
+              ]),
+              Row(children: [
+                XpBtn(label: '📐 Перспектива', onPressed: _fixPerspective),
+                if (_refOriginal != null || _cmpOriginal != null) ...[
+                  const SizedBox(width: 4),
+                  XpBtn(label: '↩ Сброс', onPressed: () => setState(() {
+                    _layoutProfile = null;
+                    if (_refOriginal != null) { _refImg = _refOriginal; _refOriginal = null; _refAligned = null; }
+                    if (_cmpOriginal != null) { _cmpImg = _cmpOriginal; _cmpOriginal = null; _cmpAligned = null; }
+                  })),
+                ],
+                const Spacer(),
+                XpBtn(label: '⟳', onPressed: () => setState(() => _cmpOverlayCtrl.value = Matrix4.identity())),
+              ]),
+              const SizedBox(height: 6),
+              XpBtn(
+                label: '🎯 Точное совмещение',
+                primary: true,
+                onPressed: () async {
+                  final result = await OverlayAlignScreen.show(
+                    context,
+                    base: _refImg!,
+                    overlay: _cmpImg!,
+                    initialTransform: _cmpOverlayCtrl.value,
+                    initialOpacity: _cmpOverlayOpacity,
+                    title: 'Точное совмещение — Эталон / Образец',
+                  );
+                  if (result != null && mounted) {
+                    setState(() {
+                      _cmpOverlayCtrl.value = result.transform;
+                      _cmpOverlayOpacity = result.opacity;
+                    });
+                  }
+                },
+              ),
+              const SizedBox(height: 6),
+              // Шаг 2: авто-выравнивание по пикселям (L3→L2→L1→L0)
+              Row(children: [
+                Expanded(child: _autoAligning
+                  ? const Row(children: [
+                      SizedBox(width: 16, height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2)),
+                      SizedBox(width: 8),
+                      Text('Авто-выравнивание L3→L2→L1→L0…',
+                          style: TextStyle(fontSize: 11, color: Colors.grey)),
+                    ])
+                  : XpBtn(
+                      label: '⚙ Авто L3→L2→L1→L0',
+                      primary: true,
+                      onPressed: (_refImg != null && _cmpImg != null && !_comparing)
+                          ? _autoAlign : null,
+                    )),
+              ]),
+            ])),
 
         const SizedBox(height: 12),
         // ── Статус профиля калибровки ─────────────────
@@ -1616,7 +1652,7 @@ class _CompareScreenState extends State<CompareScreen>
               ),
             ]),
           )
-        else if (_refImg != null && _cmpImg != null)
+        else
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
             child: Container(
@@ -1639,7 +1675,7 @@ class _CompareScreenState extends State<CompareScreen>
           ),
         const Divider(),
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          XpBtn(label: '‹ Эталон', onPressed: () => _tabs.animateTo(0)),
+          XpBtn(label: '‹ Образец', onPressed: () => _tabs.animateTo(1)),
           Row(children: [
             // Calibration button
             _calibrating
@@ -1649,11 +1685,7 @@ class _CompareScreenState extends State<CompareScreen>
                     icon: Icon(
                       Icons.tune,
                       size: 20,
-                      color: _layoutProfile != null
-                          ? Colors.green
-                          : (_refImg != null && _cmpImg != null
-                              ? Colors.orange
-                              : Colors.grey),
+                      color: _layoutProfile != null ? Colors.green : Colors.orange,
                     ),
                     onSelected: (v) async {
                       if (v == 'new') {
@@ -1702,13 +1734,13 @@ class _CompareScreenState extends State<CompareScreen>
             const SizedBox(height: 12),
             const Text(
                 'Загрузите оба фото, расставьте точки (🔧 Калибровка)\n'
-                'и нажмите «Сравнить ›» на вкладке Сравнение',
+                'и нажмите «Сравнить ›» на вкладке Совмещение',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 12, color: Colors.grey)),
             const SizedBox(height: 16),
             XpBtn(
-                label: '‹ К сравнению',
-                onPressed: () => _tabs.animateTo(1)),
+                label: '‹ К совмещению',
+                onPressed: () => _tabs.animateTo(2)),
           ]));
     }
 
@@ -1916,7 +1948,7 @@ class _CompareScreenState extends State<CompareScreen>
             children: [
               XpBtn(
                   label: '‹ Назад',
-                  onPressed: () => _tabs.animateTo(1)),
+                  onPressed: () => _tabs.animateTo(2)),
               Row(children: [
                 XpBtn(
                     label: '📤',
@@ -1973,7 +2005,7 @@ class _CompareScreenState extends State<CompareScreen>
             final item = e.value;
             final sim = item['sim'] as double;
             return GestureDetector(
-              onTap: () => _tabs.animateTo(2),
+              onTap: () => _tabs.animateTo(3),
               child: Container(
                 color: i.isEven
                     ? Colors.white
