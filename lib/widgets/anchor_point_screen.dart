@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 
 /// Full-screen widget for manual anchor point placement.
 /// Returns List<Offset> in image pixel coordinates (not normalized).
@@ -38,6 +39,15 @@ class _AnchorPointScreenState extends State<AnchorPointScreen> {
   // Magnifier
   Offset? _magnifierWidgetPos;
 
+  // Зум/панорамирование вида (для точной постановки точки)
+  double _zoom = 1.0;
+  Offset _pan = Offset.zero;
+  double _scaleStartZoom = 1.0;
+  Offset _scaleStartPan = Offset.zero;
+  Offset? _scaleFocalPoint;
+  static const double _minZoom = 1.0;
+  static const double _maxZoom = 6.0;
+
   bool get _autoMode => widget.predictedPoints != null && _points.isEmpty;
 
   @override
@@ -64,6 +74,7 @@ class _AnchorPointScreenState extends State<AnchorPointScreen> {
     });
   }
 
+  // ── Базовый масштаб "вписать изображение в экран" ────
   double _fitScale(Size widgetSize) {
     if (_imageSize == Size.zero) return 1.0;
     final sx = widgetSize.width / _imageSize.width;
@@ -71,7 +82,7 @@ class _AnchorPointScreenState extends State<AnchorPointScreen> {
     return sx < sy ? sx : sy;
   }
 
-  Offset _imgOffset(Size widgetSize) {
+  Offset _fitOffset(Size widgetSize) {
     final s = _fitScale(widgetSize);
     return Offset(
       (widgetSize.width - _imageSize.width * s) / 2,
@@ -79,17 +90,48 @@ class _AnchorPointScreenState extends State<AnchorPointScreen> {
     );
   }
 
+  // ── Итоговый масштаб/смещение с учётом зума и панорамирования ──
+  double _viewScale(Size widgetSize) => _fitScale(widgetSize) * _zoom;
+
+  Offset _viewOffset(Size widgetSize) {
+    final fitOff = _fitOffset(widgetSize);
+    final center = Offset(widgetSize.width / 2, widgetSize.height / 2);
+    return (fitOff - center) * _zoom + center + _pan;
+  }
+
   Offset _toImageCoords(Offset widgetPos, Size widgetSize) {
-    final s = _fitScale(widgetSize);
-    final o = _imgOffset(widgetSize);
+    final s = _viewScale(widgetSize);
+    final o = _viewOffset(widgetSize);
     return Offset((widgetPos.dx - o.dx) / s, (widgetPos.dy - o.dy) / s);
   }
 
   Offset _toWidgetCoords(Offset imagePos, Size widgetSize) {
-    final s = _fitScale(widgetSize);
-    final o = _imgOffset(widgetSize);
+    final s = _viewScale(widgetSize);
+    final o = _viewOffset(widgetSize);
     return Offset(imagePos.dx * s + o.dx, imagePos.dy * s + o.dy);
   }
+
+  Offset _clampPan(Offset pan, double zoom, Size widgetSize) {
+    final maxX = widgetSize.width * (zoom - 1) / 2 + 60;
+    final maxY = widgetSize.height * (zoom - 1) / 2 + 60;
+    return Offset(pan.dx.clamp(-maxX, maxX), pan.dy.clamp(-maxY, maxY));
+  }
+
+  // ── Зум вокруг точки фокуса (кнопки, колесо мыши, пинч) ──
+  void _zoomAt(Offset focal, double factor, Size widgetSize) {
+    final newZoom = (_zoom * factor).clamp(_minZoom, _maxZoom);
+    if (newZoom == _zoom) return;
+    final center = Offset(widgetSize.width / 2, widgetSize.height / 2);
+    setState(() {
+      _pan = _clampPan(
+        _pan + (focal - center - _pan) * (1 - newZoom / _zoom),
+        newZoom, widgetSize,
+      );
+      _zoom = newZoom;
+    });
+  }
+
+  void _resetView() => setState(() { _zoom = 1.0; _pan = Offset.zero; });
 
   void _onTapDown(TapDownDetails d, Size widgetSize) {
     if (_imageSize == Size.zero) return;
@@ -110,30 +152,48 @@ class _AnchorPointScreenState extends State<AnchorPointScreen> {
     setState(() => _points.add(imgPt));
   }
 
-  void _onPanStart(DragStartDetails d, Size widgetSize) {
+  // ── Жест: один палец/мышь — перетащить точку ИЛИ панорамировать вид;
+  //    два пальца — зум (pinch) ──
+  void _onScaleStart(ScaleStartDetails d, Size widgetSize) {
+    _scaleStartZoom = _zoom;
+    _scaleStartPan = _pan;
+    _scaleFocalPoint = d.localFocalPoint;
+    _draggingIdx = null;
     for (int i = 0; i < _points.length; i++) {
       final wp = _toWidgetCoords(_points[i], widgetSize);
-      if ((wp - d.localPosition).distance < 32) {
+      if ((wp - d.localFocalPoint).distance < 32) {
         _draggingIdx = i;
-        setState(() => _magnifierWidgetPos = d.localPosition);
+        setState(() => _magnifierWidgetPos = d.localFocalPoint);
         return;
       }
     }
   }
 
-  void _onPanUpdate(DragUpdateDetails d, Size widgetSize) {
-    if (_draggingIdx == null) return;
-    final imgPt = _toImageCoords(d.localPosition, widgetSize);
+  void _onScaleUpdate(ScaleUpdateDetails d, Size widgetSize) {
+    if (_draggingIdx != null) {
+      final imgPt = _toImageCoords(d.localFocalPoint, widgetSize);
+      setState(() {
+        _points[_draggingIdx!] = Offset(
+          imgPt.dx.clamp(0, _imageSize.width),
+          imgPt.dy.clamp(0, _imageSize.height),
+        );
+        _magnifierWidgetPos = d.localFocalPoint;
+      });
+      return;
+    }
+
+    final newZoom = (_scaleStartZoom * d.scale).clamp(_minZoom, _maxZoom);
+    final center = Offset(widgetSize.width / 2, widgetSize.height / 2);
+    final panFromZoom = (d.localFocalPoint - center - _scaleStartPan) *
+        (1 - newZoom / _scaleStartZoom);
+    final panFromDrag = d.localFocalPoint - _scaleFocalPoint!;
     setState(() {
-      _points[_draggingIdx!] = Offset(
-        imgPt.dx.clamp(0, _imageSize.width),
-        imgPt.dy.clamp(0, _imageSize.height),
-      );
-      _magnifierWidgetPos = d.localPosition;
+      _pan = _clampPan(_scaleStartPan + panFromDrag + panFromZoom, newZoom, widgetSize);
+      _zoom = newZoom;
     });
   }
 
-  void _onPanEnd(DragEndDetails _) {
+  void _onScaleEnd(ScaleEndDetails _) {
     _draggingIdx = null;
     setState(() => _magnifierWidgetPos = null);
   }
@@ -172,20 +232,29 @@ class _AnchorPointScreenState extends State<AnchorPointScreen> {
           : LayoutBuilder(builder: (ctx, constraints) {
               final widgetSize = Size(constraints.maxWidth, constraints.maxHeight);
               return Stack(children: [
-                GestureDetector(
-                  onTapDown: (d) => _onTapDown(d, widgetSize),
-                  onPanStart: (d) => _onPanStart(d, widgetSize),
-                  onPanUpdate: (d) => _onPanUpdate(d, widgetSize),
-                  onPanEnd: _onPanEnd,
-                  child: CustomPaint(
-                    size: widgetSize,
-                    painter: _AnchorPainter(
-                      image: _uiImage!,
-                      imageSize: _imageSize,
-                      points: _points,
-                      widgetSize: widgetSize,
-                      draggingIdx: _draggingIdx,
-                      isPredicted: widget.predictedPoints != null,
+                Listener(
+                  onPointerSignal: (event) {
+                    if (event is PointerScrollEvent) {
+                      final factor = event.scrollDelta.dy > 0 ? 0.9 : 1.1;
+                      _zoomAt(event.localPosition, factor, widgetSize);
+                    }
+                  },
+                  child: GestureDetector(
+                    onTapDown: (d) => _onTapDown(d, widgetSize),
+                    onScaleStart: (d) => _onScaleStart(d, widgetSize),
+                    onScaleUpdate: (d) => _onScaleUpdate(d, widgetSize),
+                    onScaleEnd: _onScaleEnd,
+                    child: CustomPaint(
+                      size: widgetSize,
+                      painter: _AnchorPainter(
+                        image: _uiImage!,
+                        imageSize: _imageSize,
+                        points: _points,
+                        scale: _viewScale(widgetSize),
+                        offset: _viewOffset(widgetSize),
+                        draggingIdx: _draggingIdx,
+                        isPredicted: widget.predictedPoints != null,
+                      ),
                     ),
                   ),
                 ),
@@ -193,6 +262,33 @@ class _AnchorPointScreenState extends State<AnchorPointScreen> {
                 // Magnifier
                 if (_magnifierWidgetPos != null && _draggingIdx != null)
                   _buildMagnifier(widgetSize),
+
+                // Zoom controls
+                Positioned(
+                  right: 8,
+                  top: 8,
+                  child: Column(children: [
+                    _zoomBtn('＋', () => _zoomAt(
+                        Offset(widgetSize.width / 2, widgetSize.height / 2),
+                        1.25, widgetSize)),
+                    const SizedBox(height: 4),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text('${(_zoom * 100).round()}%',
+                          style: const TextStyle(color: Colors.white, fontSize: 10)),
+                    ),
+                    const SizedBox(height: 4),
+                    _zoomBtn('－', () => _zoomAt(
+                        Offset(widgetSize.width / 2, widgetSize.height / 2),
+                        0.8, widgetSize)),
+                    const SizedBox(height: 4),
+                    _zoomBtn('⟲', _resetView),
+                  ]),
+                ),
 
                 // AUTO MODE hint
                 if (widget.predictedPoints != null && _points.isNotEmpty)
@@ -228,9 +324,10 @@ class _AnchorPointScreenState extends State<AnchorPointScreen> {
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Text(
-                        widget.predictedPoints != null
-                            ? 'Перетащите точки для уточнения · Нажмите точку чтобы удалить'
-                            : 'Нажмите чтобы добавить · Перетащите чтобы уточнить · Нажмите точку чтобы удалить',
+                        (widget.predictedPoints != null
+                            ? 'Перетащите точки для уточнения · Нажмите точку чтобы удалить\n'
+                            : 'Нажмите чтобы добавить · Перетащите чтобы уточнить · Нажмите точку чтобы удалить\n') +
+                        'Колесо мыши / щипок — зум · Потяните пустое место — сдвиг вида',
                         style: const TextStyle(color: Colors.white70, fontSize: 11),
                         textAlign: TextAlign.center,
                       ),
@@ -239,6 +336,24 @@ class _AnchorPointScreenState extends State<AnchorPointScreen> {
                 ),
               ]);
             }),
+    );
+  }
+
+  Widget _zoomBtn(String label, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 32,
+        height: 32,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: Colors.black54,
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: Colors.white24),
+        ),
+        child: Text(label,
+            style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+      ),
     );
   }
 
@@ -286,7 +401,8 @@ class _AnchorPainter extends CustomPainter {
   final ui.Image image;
   final Size imageSize;
   final List<Offset> points;
-  final Size widgetSize;
+  final double scale;
+  final Offset offset;
   final int? draggingIdx;
   final bool isPredicted;
 
@@ -294,38 +410,24 @@ class _AnchorPainter extends CustomPainter {
     required this.image,
     required this.imageSize,
     required this.points,
-    required this.widgetSize,
+    required this.scale,
+    required this.offset,
     required this.draggingIdx,
     this.isPredicted = false,
   });
 
-  double get _scale {
-    final sx = widgetSize.width / imageSize.width;
-    final sy = widgetSize.height / imageSize.height;
-    return sx < sy ? sx : sy;
-  }
-
-  Offset get _offset {
-    final s = _scale;
-    return Offset(
-      (widgetSize.width - imageSize.width * s) / 2,
-      (widgetSize.height - imageSize.height * s) / 2,
-    );
-  }
-
-  Offset _toWidget(Offset imgPt) {
-    final s = _scale;
-    final o = _offset;
-    return Offset(imgPt.dx * s + o.dx, imgPt.dy * s + o.dy);
-  }
+  Offset _toWidget(Offset imgPt) => Offset(imgPt.dx * scale + offset.dx, imgPt.dy * scale + offset.dy);
 
   @override
   void paint(Canvas canvas, Size size) {
     final dst = Rect.fromLTWH(
-      _offset.dx, _offset.dy,
-      imageSize.width * _scale, imageSize.height * _scale,
+      offset.dx, offset.dy,
+      imageSize.width * scale, imageSize.height * scale,
     );
+    canvas.save();
+    canvas.clipRect(Rect.fromLTWH(0, 0, size.width, size.height));
     paintImage(canvas: canvas, rect: dst, image: image, fit: BoxFit.fill);
+    canvas.restore();
 
     if (points.length >= 2) {
       final linePaint = Paint()
