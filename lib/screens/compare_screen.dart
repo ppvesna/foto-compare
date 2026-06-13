@@ -724,6 +724,7 @@ class _CompareScreenState extends State<CompareScreen>
 
   // ── Сохранить текстовые маркеры результата (без изображений) ──
   Future<void> _saveCheckResult() async {
+    if (kIsWeb) return; // sqflite недоступен в браузере
     final r = _result;
     if (r == null) return;
     final score = r.score;
