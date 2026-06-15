@@ -1063,7 +1063,9 @@ class _CompareScreenState extends State<CompareScreen>
 
         // ── Эталон 2 ─────────────────────────────────
         const SizedBox(height: 8),
-        XpGroup(
+        XpCollapsible(
+            title: 'Эталон 2 (Склейка кадров)',
+            child: XpGroup(
             label: 'Эталон 2',
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
               if (_refImg == null) ...[
@@ -1210,7 +1212,7 @@ class _CompareScreenState extends State<CompareScreen>
                   XpBtn(
                       label: '🤖 AI анализ качества эталона',
                       onPressed: _refImg != null ? _analyzeReferenceWithAi : null),
-              ])),
+              ]))),
 
         const SizedBox(height: 12),
         const Divider(),
@@ -1264,90 +1266,93 @@ class _CompareScreenState extends State<CompareScreen>
                 const SizedBox(height: 4),
                 const Divider(),
                 const SizedBox(height: 6),
-                if (_cmp2Img == null) ...[
-                  GestureDetector(
-                    onTap: () => _pickCmp2(),
-                    child: Container(
-                      height: 120,
-                      width: double.infinity,
-                      color: Colors.black,
-                      child: const Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                        Text('📷', style: TextStyle(fontSize: 30)),
-                        SizedBox(height: 6),
-                        Text('Нажмите для второго снимка', style: TextStyle(fontSize: 11, color: Colors.white54)),
-                      ]),
-                    ),
-                  ),
-                ] else ...[
-                  ClipRect(
-                    child: Container(
-                      height: 260,
-                      color: Colors.black,
-                      child: Stack(fit: StackFit.expand, children: [
-                        Image.memory(_cmpImg!, fit: BoxFit.contain),
-                        Opacity(
-                          opacity: _cmp2Opacity,
-                          child: InteractiveViewer(
-                            transformationController: _cmp2Ctrl,
-                            boundaryMargin: const EdgeInsets.all(double.infinity),
-                            minScale: 0.1, maxScale: 6.0,
-                            child: Image.memory(_cmp2Img!, fit: BoxFit.contain),
+                XpCollapsible(
+                  title: 'Образец 2 (Склейка кадров)',
+                  child: _cmp2Img == null
+                      ? GestureDetector(
+                          onTap: () => _pickCmp2(),
+                          child: Container(
+                            height: 120,
+                            width: double.infinity,
+                            color: Colors.black,
+                            child: const Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                              Text('📷', style: TextStyle(fontSize: 30)),
+                              SizedBox(height: 6),
+                              Text('Нажмите для второго снимка', style: TextStyle(fontSize: 11, color: Colors.white54)),
+                            ]),
                           ),
-                        ),
-                        const IgnorePointer(
-                          child: CustomPaint(painter: _FramePainter(0.12)),
-                        ),
-                        const Positioned(left: 8, top: 8, child: _ImgLabel('Образец 1')),
-                        const Positioned(right: 8, top: 8, child: _ImgLabel('Образец 2 ↕↔')),
-                      ]),
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  if (_cmp1Sharpness != null && _cmp2Sharpness != null)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 4),
-                      child: Row(children: [
-                        Expanded(child: Text(
-                          'Резкость 1: ${_cmp1Sharpness!.toStringAsFixed(0)}',
-                          style: TextStyle(fontSize: 10,
-                            color: _cmp1Sharpness! >= _cmp2Sharpness!
-                                ? AppTheme.simHigh : Colors.grey),
-                        )),
-                        Expanded(child: Text(
-                          'Резкость 2: ${_cmp2Sharpness!.toStringAsFixed(0)}',
-                          textAlign: TextAlign.right,
-                          style: TextStyle(fontSize: 10,
-                            color: _cmp2Sharpness! > _cmp1Sharpness!
-                                ? AppTheme.simHigh : Colors.grey),
-                        )),
-                      ]),
-                    ),
-                  Row(children: [
-                    const SizedBox(width: 90,
-                        child: Text('Прозрачность:', style: TextStyle(fontSize: 11))),
-                    Expanded(child: Slider(
-                      value: _cmp2Opacity,
-                      onChanged: (v) => setState(() => _cmp2Opacity = v),
-                      activeColor: AppTheme.blue,
-                    )),
-                    SizedBox(width: 36, child: Text('${(_cmp2Opacity * 100).round()}%',
-                        style: const TextStyle(fontSize: 10))),
-                  ]),
-                  Row(children: [
-                    XpBtn(label: '🗑 Убрать', danger: true,
-                        onPressed: () => setState(() {
-                          _cmp2Img = null; _cmp2Ctrl.value = Matrix4.identity();
-                          _cmp1Sharpness = null; _cmp2Sharpness = null;
-                        })),
-                    const Spacer(),
-                    XpBtn(
-                        label: _stacking ? '⏳ Обработка...' : '🔀 Склейка кадров',
-                        primary: true,
-                        onPressed: _stacking
-                            ? null
-                            : () => _selectCmp(_cmpImg!, _cmp2Img)),
-                  ]),
-                ],
+                        )
+                      : Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                          ClipRect(
+                            child: Container(
+                              height: 260,
+                              color: Colors.black,
+                              child: Stack(fit: StackFit.expand, children: [
+                                Image.memory(_cmpImg!, fit: BoxFit.contain),
+                                Opacity(
+                                  opacity: _cmp2Opacity,
+                                  child: InteractiveViewer(
+                                    transformationController: _cmp2Ctrl,
+                                    boundaryMargin: const EdgeInsets.all(double.infinity),
+                                    minScale: 0.1, maxScale: 6.0,
+                                    child: Image.memory(_cmp2Img!, fit: BoxFit.contain),
+                                  ),
+                                ),
+                                const IgnorePointer(
+                                  child: CustomPaint(painter: _FramePainter(0.12)),
+                                ),
+                                const Positioned(left: 8, top: 8, child: _ImgLabel('Образец 1')),
+                                const Positioned(right: 8, top: 8, child: _ImgLabel('Образец 2 ↕↔')),
+                              ]),
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          if (_cmp1Sharpness != null && _cmp2Sharpness != null)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 4),
+                              child: Row(children: [
+                                Expanded(child: Text(
+                                  'Резкость 1: ${_cmp1Sharpness!.toStringAsFixed(0)}',
+                                  style: TextStyle(fontSize: 10,
+                                    color: _cmp1Sharpness! >= _cmp2Sharpness!
+                                        ? AppTheme.simHigh : Colors.grey),
+                                )),
+                                Expanded(child: Text(
+                                  'Резкость 2: ${_cmp2Sharpness!.toStringAsFixed(0)}',
+                                  textAlign: TextAlign.right,
+                                  style: TextStyle(fontSize: 10,
+                                    color: _cmp2Sharpness! > _cmp1Sharpness!
+                                        ? AppTheme.simHigh : Colors.grey),
+                                )),
+                              ]),
+                            ),
+                          Row(children: [
+                            const SizedBox(width: 90,
+                                child: Text('Прозрачность:', style: TextStyle(fontSize: 11))),
+                            Expanded(child: Slider(
+                              value: _cmp2Opacity,
+                              onChanged: (v) => setState(() => _cmp2Opacity = v),
+                              activeColor: AppTheme.blue,
+                            )),
+                            SizedBox(width: 36, child: Text('${(_cmp2Opacity * 100).round()}%',
+                                style: const TextStyle(fontSize: 10))),
+                          ]),
+                          Row(children: [
+                            XpBtn(label: '🗑 Убрать', danger: true,
+                                onPressed: () => setState(() {
+                                  _cmp2Img = null; _cmp2Ctrl.value = Matrix4.identity();
+                                  _cmp1Sharpness = null; _cmp2Sharpness = null;
+                                })),
+                            const Spacer(),
+                            XpBtn(
+                                label: _stacking ? '⏳ Обработка...' : '🔀 Склейка кадров',
+                                primary: true,
+                                onPressed: _stacking
+                                    ? null
+                                    : () => _selectCmp(_cmpImg!, _cmp2Img)),
+                          ]),
+                        ]),
+                ),
               ],
             ])),
 

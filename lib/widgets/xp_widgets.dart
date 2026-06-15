@@ -152,6 +152,59 @@ class XpGroup extends StatelessWidget {
   }
 }
 
+// ── XP Спойлер (сворачиваемый блок) ───────────────────
+class XpCollapsible extends StatefulWidget {
+  final String title;
+  final Widget child;
+  final bool initiallyExpanded;
+
+  const XpCollapsible({
+    super.key,
+    required this.title,
+    required this.child,
+    this.initiallyExpanded = false,
+  });
+
+  @override
+  State<XpCollapsible> createState() => _XpCollapsibleState();
+}
+
+class _XpCollapsibleState extends State<XpCollapsible> {
+  late bool _expanded;
+
+  @override
+  void initState() {
+    super.initState();
+    _expanded = widget.initiallyExpanded;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      GestureDetector(
+        onTap: () => setState(() => _expanded = !_expanded),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border.all(color: Colors.grey.shade400),
+          ),
+          child: Row(children: [
+            Expanded(
+                child: Text(widget.title,
+                    style: const TextStyle(
+                        fontSize: 12, fontWeight: FontWeight.w600))),
+            Text(_expanded ? '▲ Свернуть' : '▼ Развернуть',
+                style: const TextStyle(fontSize: 11, color: Colors.grey)),
+          ]),
+        ),
+      ),
+      if (_expanded)
+        Padding(padding: const EdgeInsets.only(top: 6), child: widget.child),
+    ]);
+  }
+}
+
 // ── XP Диалог ─────────────────────────────────────────
 Future<void> xpDlg(BuildContext context, String title, String msg) {
   return showDialog(
