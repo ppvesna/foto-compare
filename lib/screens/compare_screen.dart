@@ -820,21 +820,10 @@ class _CompareScreenState extends State<CompareScreen>
               leading: const Text('📷', style: TextStyle(fontSize: 20)),
               title: const Text('Камера'),
               onTap: () => Navigator.pop(context, 'camera')),
-          ListTile(
-              leading: const Text('📸', style: TextStyle(fontSize: 20)),
-              title: const Text('Серия снимков'),
-              subtitle: const Text('Усреднение для чистоты изображения',
-                  style: TextStyle(fontSize: 11, color: Colors.grey)),
-              onTap: () => Navigator.pop(context, 'stack')),
         ]),
       ),
     );
     if (result == null) return;
-
-    if (result == 'stack') {
-      await _pickMultipleAndStack(isRef);
-      return;
-    }
 
     final source =
         result == 'camera' ? ImageSource.camera : ImageSource.gallery;
@@ -857,147 +846,6 @@ class _CompareScreenState extends State<CompareScreen>
       } finally {
         if (mounted) setState(() => _stacking = false);
       }
-    }
-  }
-
-  // ── Серийная съёмка + усреднение ─────────────────
-  Future<void> _pickMultipleAndStack(bool isRef) async {
-    final shots = <Uint8List>[];
-
-    await showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: AppTheme.silver,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setSheet) => Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Row(children: [
-              const Text('📸  Серия снимков',
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
-              const Spacer(),
-              Text('${shots.length} шт.',
-                  style: const TextStyle(fontSize: 13, color: Colors.grey)),
-            ]),
-            const SizedBox(height: 8),
-            const Text(
-                'Сделайте 2–8 снимков одного объекта.\nПри усреднении шум исчезает, детали становятся чётче.',
-                style: TextStyle(fontSize: 12, height: 1.5)),
-            const SizedBox(height: 10),
-
-            // Превью собранных снимков
-            if (shots.isNotEmpty)
-              SizedBox(
-                height: 72,
-                child: ListView.builder(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: shots.length,
-                  itemBuilder: (_, i) => Stack(children: [
-                    Container(
-                      margin: const EdgeInsets.only(right: 6),
-                      width: 64, height: 64,
-                      decoration: BoxDecoration(
-                        border: Border.all(color: AppTheme.blue),
-                        image: DecorationImage(
-                          image: MemoryImage(shots[i]),
-                          fit: BoxFit.cover,
-                        ),
-                      ),
-                    ),
-                    Positioned(
-                      top: 2, right: 8,
-                      child: GestureDetector(
-                        onTap: () => setSheet(() => shots.removeAt(i)),
-                        child: Container(
-                          padding: const EdgeInsets.all(2),
-                          color: Colors.black54,
-                          child: const Text('✕',
-                              style: TextStyle(color: Colors.white, fontSize: 10)),
-                        ),
-                      ),
-                    ),
-                  ]),
-                ),
-              ),
-            const SizedBox(height: 10),
-
-            // Кнопки добавления
-            Row(children: [
-              Expanded(child: ElevatedButton(
-                onPressed: () async {
-                  final x = await _picker.pickImage(
-                      source: ImageSource.camera, imageQuality: 95);
-                  if (x != null) {
-                    final b = await x.readAsBytes();
-                    setSheet(() => shots.add(b));
-                  }
-                },
-                style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF003388),
-                    foregroundColor: Colors.white),
-                child: const Text('📷 Камера'),
-              )),
-              const SizedBox(width: 8),
-              Expanded(child: ElevatedButton(
-                onPressed: () async {
-                  final x = await _picker.pickImage(
-                      source: ImageSource.gallery, imageQuality: 95);
-                  if (x != null) {
-                    final b = await x.readAsBytes();
-                    setSheet(() => shots.add(b));
-                  }
-                },
-                style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF555555),
-                    foregroundColor: Colors.white),
-                child: const Text('🖼️ Галерея'),
-              )),
-            ]),
-            const SizedBox(height: 8),
-
-            // Объединить
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: shots.length >= 2
-                    ? () => Navigator.pop(ctx)
-                    : null,
-                style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF226622),
-                    foregroundColor: Colors.white,
-                    disabledBackgroundColor: Colors.grey.shade300),
-                child: Text(shots.length >= 2
-                    ? '✅ Объединить ${shots.length} снимка'
-                    : 'Нужно минимум 2 снимка'),
-              ),
-            ),
-            const SizedBox(height: 8),
-          ]),
-        ),
-      ),
-    );
-
-    if (shots.length < 2) return;
-
-    setState(() => _stacking = true);
-    try {
-      // Шаг 1: выравниваем через OpenCV ORB (основной поток)
-      final aligned = <Uint8List>[shots[0]];
-      for (int i = 1; i < shots.length; i++) {
-        final a = await OpenCvService.alignImages(shots[0], shots[i]);
-        aligned.add(a);
-      }
-      // Шаг 2: усредняем пиксели в isolate
-      final result = await compute(_averageImages, [aligned, 0.0]);
-      if (mounted) {
-        setState(() {
-          _layoutProfile = null;
-          if (isRef) { _refImg = result; _refAligned = null; }
-          else        { _cmpImg = result; _cmpAligned = null; }
-        });
-      }
-    } finally {
-      if (mounted) setState(() => _stacking = false);
     }
   }
 
@@ -1323,7 +1171,7 @@ class _CompareScreenState extends State<CompareScreen>
                             })),
                     const Spacer(),
                     XpBtn(
-                        label: _stacking ? '⏳ Обработка...' : '🔀 Объединить',
+                        label: _stacking ? '⏳ Обработка...' : '🔀 Склейка кадров',
                         primary: true,
                         onPressed: _stacking
                             ? null
@@ -1493,7 +1341,7 @@ class _CompareScreenState extends State<CompareScreen>
                         })),
                     const Spacer(),
                     XpBtn(
-                        label: _stacking ? '⏳ Обработка...' : '🔀 Объединить',
+                        label: _stacking ? '⏳ Обработка...' : '🔀 Склейка кадров',
                         primary: true,
                         onPressed: _stacking
                             ? null
@@ -2526,48 +2374,6 @@ double _laplacianSharpness(Uint8List bytes) {
   }
   final mean = sum / n;
   return sumSq / n - mean * mean; // дисперсия
-}
-
-// Усреднение пикселей. args = [List<Uint8List> images, double cropMargin]
-// cropMargin — доля края для обрезки (0.12 = 12% с каждой стороны)
-Uint8List _averageImages(List<dynamic> args) {
-  final rawImages = args[0] as List<Uint8List>;
-  final cropMargin = args.length > 1 ? (args[1] as double) : 0.0;
-  final decoded = <img.Image>[];
-  for (final b in rawImages) {
-    var d = img.decodeImage(b);
-    if (d == null) continue;
-    if (cropMargin > 0) {
-      final mx = (d.width  * cropMargin).round();
-      final my = (d.height * cropMargin).round();
-      d = img.copyCrop(d, x: mx, y: my,
-          width: d.width - 2 * mx, height: d.height - 2 * my);
-    }
-    decoded.add(d);
-  }
-  if (decoded.isEmpty) return rawImages.first;
-  if (decoded.length == 1) return rawImages.first;
-
-  int w = decoded[0].width;
-  int h = decoded[0].height;
-  if (w > 1024) { h = (h * 1024 / w).round(); w = 1024; }
-  if (h > 1024) { w = (w * 1024 / h).round(); h = 1024; }
-
-  final frames = decoded.map((d) => img.copyResize(d, width: w, height: h)).toList();
-  final out = img.Image(width: w, height: h);
-
-  for (int y = 0; y < h; y++) {
-    for (int x = 0; x < w; x++) {
-      int r = 0, g = 0, b = 0;
-      for (final f in frames) {
-        final p = f.getPixel(x, y);
-        r += p.r.toInt(); g += p.g.toInt(); b += p.b.toInt();
-      }
-      final n = frames.length;
-      out.setPixelRgb(x, y, r ~/ n, g ~/ n, b ~/ n);
-    }
-  }
-  return Uint8List.fromList(img.encodePng(out));
 }
 
 // Полноэкранный просмотр с зумом
