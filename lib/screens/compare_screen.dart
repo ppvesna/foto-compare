@@ -3,7 +3,6 @@ import 'dart:math';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show HardwareKeyboard;
 import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -48,8 +47,6 @@ class _CompareScreenState extends State<CompareScreen>
 
   Uint8List? _refAligned;
   Uint8List? _cmpAligned;
-  Uint8List? _refOriginal; // оригинал эталона до перспективы
-  Uint8List? _cmpOriginal; // оригинал фото до перспективы
   Uint8List? _ref2Img;     // второй снимок эталона для выбора
   double? _ref1Sharpness;  // резкость эталона 1
   double? _ref2Sharpness;  // резкость эталона 2
@@ -135,7 +132,12 @@ class _CompareScreenState extends State<CompareScreen>
         'Удалить сохранённый эталон с устройства?');
     if (!ok) return;
     await ReferenceStorage.clear();
-    if (mounted) setState(() { _refImg = null; _savedRefLabel = null; _refAligned = null; _layoutProfile = null; });
+    if (mounted) setState(() {
+      _refImg = null; _refImgSize = null;
+      _savedRefLabel = null; _refAligned = null;
+      _layoutProfile = null; _cmpAligned = null;
+      _refAnchorPts = null; _cmpAnchorPts = null;
+    });
   }
 
   // ── Калибровка: ручная расстановка якорей → Layout Profile ──────────────
@@ -307,6 +309,8 @@ class _CompareScreenState extends State<CompareScreen>
       setState(() {
         _layoutProfile = profile;
         _cmpAligned = alignResult.alignedBytes;
+        _refAnchorPts = refPtsRaw;
+        _cmpAnchorPts = srcPtsRaw;
       });
     } finally {
       if (mounted) setState(() => _calibrating = false);
@@ -452,7 +456,6 @@ class _CompareScreenState extends State<CompareScreen>
       setState(() {
         _refImg = fused;
         _refImgSize = Size(sz.width.toDouble(), sz.height.toDouble());
-        _refOriginal = ref;
         _refAligned = null;
         _layoutProfile = null;
         _refAnchorPts = null;
@@ -487,8 +490,13 @@ class _CompareScreenState extends State<CompareScreen>
     try {
       final fused = src != null ? await OpenCvService.fuseImages(ref, src) : ref;
       if (!mounted) return;
+      final sz = await compute(_decodeSize, fused);
+      if (!mounted) return;
       setState(() {
-        _cmpImg = fused; _cmpAligned = null; _layoutProfile = null;
+        _cmpImg = fused;
+        _cmpImgSize = Size(sz.width.toDouble(), sz.height.toDouble());
+        _cmpAligned = null; _layoutProfile = null;
+        _cmpAnchorPts = null;
         _cmp2Img = null; _cmp2Ctrl.value = Matrix4.identity();
         _cmp1Sharpness = null; _cmp2Sharpness = null;
       });
@@ -745,7 +753,6 @@ class _CompareScreenState extends State<CompareScreen>
       setState(() {
         _cmpImg = bytes;
         _cmpImgSize = Size(sz.width.toDouble(), sz.height.toDouble());
-        _cmpOriginal = bytes;
         _cmpAligned = null;
         _layoutProfile = null;
         _cmpAnchorPts = null;
@@ -764,11 +771,14 @@ class _CompareScreenState extends State<CompareScreen>
               icon: '🆕',
               shortcut: 'Ctrl+N',
               onTap: () => setState(() {
-                    _refImg = null;
-                    _cmpImg = null;
-                    _refAligned = null;
-                    _cmpAligned = null;
+                    _refImg = null; _refImgSize = null;
+                    _cmpImg = null; _cmpImgSize = null;
+                    _refAligned = null; _cmpAligned = null;
                     _layoutProfile = null;
+                    _refAnchorPts = null; _cmpAnchorPts = null;
+                    _result = null; _aiResult = null;
+                    _refBarcodes = []; _cmpBarcodes = [];
+                    _refOcr = null; _cmpOcr = null; _textDiff = null;
                     _tabs.animateTo(0);
                   })),
           XpMenuItem.sep,
