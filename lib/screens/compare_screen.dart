@@ -78,7 +78,6 @@ class _CompareScreenState extends State<CompareScreen>
 
   bool   _stacking      = false;
   bool   _showDiffL3    = false;
-  bool   _autoAligning  = false; // идёт пирамидное выравнивание
   double _resultOpacity = 0.5;
 
   final _history = [
@@ -736,20 +735,6 @@ class _CompareScreenState extends State<CompareScreen>
       'details':              jsonEncode(details),
       'created_at':           DateTime.now().toIso8601String(),
     });
-  }
-
-  // ── Пирамидное авто-выравнивание L3→L2→L1→L0 ────
-  Future<void> _autoAlign() async {
-    final ref = _refAligned ?? _refImg;
-    final cmp = _cmpAligned ?? _cmpImg;
-    if (ref == null || cmp == null) return;
-    setState(() => _autoAligning = true);
-    try {
-      final aligned = await OpenCvService.alignPyramid(ref, cmp);
-      if (mounted) setState(() { _cmpAligned = aligned; });
-    } finally {
-      if (mounted) setState(() => _autoAligning = false);
-    }
   }
 
   // ── Кроп рамкой ──────────────────────────────────
@@ -1418,24 +1403,6 @@ class _CompareScreenState extends State<CompareScreen>
                   }
                 },
               ),
-              const SizedBox(height: 6),
-              // Шаг 2: авто-выравнивание по пикселям (L3→L2→L1→L0)
-              Row(children: [
-                Expanded(child: _autoAligning
-                  ? const Row(children: [
-                      SizedBox(width: 16, height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2)),
-                      SizedBox(width: 8),
-                      Text('Авто-выравнивание L3→L2→L1→L0…',
-                          style: TextStyle(fontSize: 11, color: Colors.grey)),
-                    ])
-                  : XpBtn(
-                      label: '⚙ Авто L3→L2→L1→L0',
-                      primary: true,
-                      onPressed: (_refImg != null && _cmpImg != null && !_comparing)
-                          ? _autoAlign : null,
-                    )),
-              ]),
             ])),
 
         const SizedBox(height: 12),
