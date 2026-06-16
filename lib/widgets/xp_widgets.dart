@@ -69,6 +69,7 @@ class XpInput extends StatelessWidget {
   final TextEditingController? controller;
   final TextInputType? keyboardType;
   final ValueChanged<String>? onChanged;
+  final List<String>? autofillHints;
 
   const XpInput({
     super.key,
@@ -77,6 +78,7 @@ class XpInput extends StatelessWidget {
     this.controller,
     this.keyboardType,
     this.onChanged,
+    this.autofillHints,
   });
 
   @override
@@ -97,6 +99,7 @@ class XpInput extends StatelessWidget {
         obscureText: obscure,
         keyboardType: keyboardType,
         onChanged: onChanged,
+        autofillHints: autofillHints,
         style: const TextStyle(fontSize: 13, color: Colors.black),
         decoration: InputDecoration(
           hintText: placeholder,

@@ -174,7 +174,8 @@ class _StartScreenState extends State<StartScreen>
   }
 
   Widget _loginForm() {
-    return Column(children: [
+    return AutofillGroup(
+     child: Column(children: [
       const Align(
           alignment: Alignment.centerLeft,
           child: Text('Email:', style: TextStyle(fontSize: 11))),
@@ -182,13 +183,15 @@ class _StartScreenState extends State<StartScreen>
       XpInput(
           placeholder: 'user@example.com',
           controller: _emailCtrl,
-          keyboardType: TextInputType.emailAddress),
+          keyboardType: TextInputType.emailAddress,
+          autofillHints: const [AutofillHints.email]),
       const SizedBox(height: 8),
       const Align(
           alignment: Alignment.centerLeft,
           child: Text('Пароль:', style: TextStyle(fontSize: 11))),
       const SizedBox(height: 3),
-      XpInput(placeholder: '••••••••', obscure: true, controller: _passCtrl),
+      XpInput(placeholder: '••••••••', obscure: true, controller: _passCtrl,
+          autofillHints: const [AutofillHints.password]),
       const SizedBox(height: 8),
       Row(children: [
         Checkbox(
@@ -207,16 +210,18 @@ class _StartScreenState extends State<StartScreen>
         ),
         XpBtn(label: 'Войти →', primary: true, onPressed: _doLogin),
       ]),
-    ]);
+    ]));
   }
 
   Widget _registerForm() {
-    return Column(children: [
+    return AutofillGroup(
+     child: Column(children: [
       const Align(
           alignment: Alignment.centerLeft,
           child: Text('Имя:', style: TextStyle(fontSize: 11))),
       const SizedBox(height: 3),
-      XpInput(placeholder: 'Иван Иванов', controller: _nameCtrl),
+      XpInput(placeholder: 'Иван Иванов', controller: _nameCtrl,
+          autofillHints: const [AutofillHints.name]),
       const SizedBox(height: 8),
       const Align(
           alignment: Alignment.centerLeft,
@@ -225,7 +230,8 @@ class _StartScreenState extends State<StartScreen>
       XpInput(
           placeholder: 'user@example.com',
           controller: _emailCtrl,
-          keyboardType: TextInputType.emailAddress),
+          keyboardType: TextInputType.emailAddress,
+          autofillHints: const [AutofillHints.email]),
       const SizedBox(height: 8),
       const Align(
           alignment: Alignment.centerLeft,
@@ -234,7 +240,8 @@ class _StartScreenState extends State<StartScreen>
       XpInput(
           placeholder: 'Минимум 8 символов',
           obscure: true,
-          controller: _passCtrl),
+          controller: _passCtrl,
+          autofillHints: const [AutofillHints.newPassword]),
       const SizedBox(height: 8),
       const Align(
           alignment: Alignment.centerLeft,
@@ -243,13 +250,14 @@ class _StartScreenState extends State<StartScreen>
       XpInput(
           placeholder: 'Повторите пароль',
           obscure: true,
-          controller: _pass2Ctrl),
+          controller: _pass2Ctrl,
+          autofillHints: const [AutofillHints.newPassword]),
       const Divider(),
       Row(mainAxisAlignment: MainAxisAlignment.end, children: [
         XpBtn(
             label: 'Создать аккаунт →', primary: true, onPressed: _doRegister),
       ]),
-    ]);
+    ]));
   }
 
   void _doLogin() async {
