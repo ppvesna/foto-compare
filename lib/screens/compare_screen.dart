@@ -1318,6 +1318,8 @@ class _CompareScreenState extends State<CompareScreen>
               placing: _calStep == 1,
               tempPts: _tempRefPts,
               onTap: _calStep == 1 ? _addPanelPoint : null,
+              onUndo: _calStep == 1 ? _undoLastPoint : null,
+              minPts: _minAnchorPts,
             ),
             _alignPanel(
               label: 'Образец',
@@ -1329,6 +1331,8 @@ class _CompareScreenState extends State<CompareScreen>
               placing: _calStep == 2,
               tempPts: _tempCmpPts,
               onTap: _calStep == 2 ? _addPanelPoint : null,
+              onUndo: _calStep == 2 ? _undoLastPoint : null,
+              minPts: _minAnchorPts,
             ),
           ];
           if (wide) {
@@ -1463,35 +1467,21 @@ class _CompareScreenState extends State<CompareScreen>
         else if (_calStep == 1)
           Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
             XpBtn(label: 'Отмена', danger: true, onPressed: _cancelCalibration),
-            Row(children: [
-              XpBtn(
-                label: '⌫ Удалить',
-                onPressed: _tempRefPts.isNotEmpty ? _undoLastPoint : null,
-              ),
-              const SizedBox(width: 8),
-              XpBtn(
-                label: 'Далее ›',
-                primary: true,
-                onPressed: _tempRefPts.length >= _minAnchorPts ? _advanceToStep2 : null,
-              ),
-            ]),
+            XpBtn(
+              label: 'Далее ›',
+              primary: true,
+              onPressed: _tempRefPts.length >= _minAnchorPts ? _advanceToStep2 : null,
+            ),
           ])
         else if (_calStep == 2)
           Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
             XpBtn(label: '← Назад', onPressed: () => setState(() { _calStep = 1; _tempCmpPts = []; })),
-            Row(children: [
-              XpBtn(
-                label: '⌫ Удалить',
-                onPressed: _tempCmpPts.isNotEmpty ? _undoLastPoint : null,
-              ),
-              const SizedBox(width: 8),
-              XpBtn(
-                label: 'Рассчитать →',
-                primary: true,
-                onPressed: _tempCmpPts.length == _tempRefPts.length && _tempRefPts.isNotEmpty
-                    ? _runAlignmentFromPoints : null,
-              ),
-            ]),
+            XpBtn(
+              label: 'Рассчитать →',
+              primary: true,
+              onPressed: _tempCmpPts.length == _tempRefPts.length && _tempRefPts.isNotEmpty
+                  ? _runAlignmentFromPoints : null,
+            ),
           ])
         else
           const SizedBox.shrink(),
@@ -1510,6 +1500,8 @@ class _CompareScreenState extends State<CompareScreen>
     bool placing = false,
     List<Offset> tempPts = const [],
     void Function(Offset)? onTap,
+    VoidCallback? onUndo,
+    int minPts = 4,
   }) {
     // Вычисляем высоту контейнера по аспекту изображения (без чёрных полос)
     double panelHeight = 220;
@@ -1601,7 +1593,7 @@ class _CompareScreenState extends State<CompareScreen>
           ),
         ),
       ),
-      // Кнопки зума
+      // Зум + счётчик точек + ⌫
       Container(
         color: AppTheme.silver,
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
@@ -1611,6 +1603,34 @@ class _CompareScreenState extends State<CompareScreen>
           _ZoomBtn(label: '+', onTap: () => zoom(1.3)),
           const SizedBox(width: 6),
           _ZoomBtn(label: '⊡', onTap: () => ctrl.value = Matrix4.identity()),
+          if (placing) ...[
+            const Spacer(),
+            Text(
+              '${tempPts.length} / $minPts',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+                color: tempPts.length >= minPts ? Colors.green : Colors.blue,
+              ),
+            ),
+            const SizedBox(width: 6),
+            GestureDetector(
+              onTap: tempPts.isNotEmpty ? onUndo : null,
+              child: Opacity(
+                opacity: tempPts.isNotEmpty ? 1.0 : 0.35,
+                child: Container(
+                  width: 26, height: 22,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    border: Border.all(color: Colors.grey.shade400),
+                  ),
+                  child: const Text('⌫',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ),
+          ],
         ]),
       ),
     ]);
