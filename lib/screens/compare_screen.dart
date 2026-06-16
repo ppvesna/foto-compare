@@ -3,6 +3,7 @@ import 'dart:math';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show HardwareKeyboard;
 import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -18,7 +19,6 @@ import '../services/ocr_service.dart';
 import '../config/app_config.dart';
 import '../widgets/crop_frame_screen.dart';
 import '../widgets/anchor_point_screen.dart';
-import '../widgets/overlay_align_screen.dart';
 import '../models/layout_profile.dart';
 import '../services/layout_profile_storage.dart';
 import '../database/local_database.dart';
@@ -68,10 +68,13 @@ class _CompareScreenState extends State<CompareScreen>
   final _cmp2Ctrl = TransformationController();
   double _cmp2Opacity = 0.5;
 
-  // Вкладка Совмещение: ref + cmp → compare
-  final _cmpOverlayCtrl = TransformationController();
-  double _cmpOverlayOpacity = 0.5;
-  Size _cmpOverlayViewerSize = Size.zero;
+  // Вкладка Совмещение: два окна предпросмотра с якорными точками
+  final _refAlignCtrl = TransformationController();
+  final _cmpAlignCtrl = TransformationController();
+  List<Offset>? _refAnchorPts; // пиксельные координаты точек на эталоне
+  List<Offset>? _cmpAnchorPts; // пиксельные координаты точек на образце
+  Size? _refImgSize;
+  Size? _cmpImgSize;
 
   // Отступ рамки (10% с каждой стороны = 80% центральная зона)
   static const double _framePad = 0.10;
@@ -234,6 +237,8 @@ class _CompareScreenState extends State<CompareScreen>
       setState(() {
         _layoutProfile = profile;
         _cmpAligned = alignResult.alignedBytes;
+        _refAnchorPts = refPtsRaw;
+        _cmpAnchorPts = srcPtsRaw;
       });
 
       xpDlg(context, 'Профиль сохранён',
@@ -402,70 +407,12 @@ class _CompareScreenState extends State<CompareScreen>
     _tabs.dispose();
     _overlayCtrl.dispose();
     _cmp2Ctrl.dispose();
-    _cmpOverlayCtrl.dispose();
+    _refAlignCtrl.dispose();
+    _cmpAlignCtrl.dispose();
     super.dispose();
   }
 
-  // ── Захват выровненных областей (матричный метод) ─
-  Future<Uint8List?> _extractRegion(
-      Uint8List imageBytes, Matrix4 transform, Size viewerSize) async {
-    if (viewerSize == Size.zero) return null;
-    final decoded = img.decodeImage(imageBytes);
-    if (decoded == null) return null;
 
-    final imgW = decoded.width.toDouble();
-    final imgH = decoded.height.toDouble();
-    final vw = viewerSize.width;
-    final vh = viewerSize.height;
-
-    // BoxFit.contain масштаб и смещение
-    final scale = min(vw / imgW, vh / imgH);
-    final leftOff = (vw - imgW * scale) / 2;
-    final topOff  = (vh - imgH * scale) / 2;
-
-    // Углы рамки в координатах вьювера
-    final frameTL = Offset(vw * _framePad, vh * _framePad);
-    final frameBR = Offset(vw * (1 - _framePad), vh * (1 - _framePad));
-
-    // Инверсный трансформ: вьювер → дочерний виджет (Image)
-    Matrix4 inv;
-    try { inv = Matrix4.inverted(transform); }
-    catch (_) { inv = Matrix4.identity(); }
-
-    final tl = MatrixUtils.transformPoint(inv, frameTL);
-    final br = MatrixUtils.transformPoint(inv, frameBR);
-
-    // Координаты виджета → пиксели изображения
-    int px1 = ((tl.dx - leftOff) / scale).round().clamp(0, decoded.width);
-    int py1 = ((tl.dy - topOff)  / scale).round().clamp(0, decoded.height);
-    int px2 = ((br.dx - leftOff) / scale).round().clamp(0, decoded.width);
-    int py2 = ((br.dy - topOff)  / scale).round().clamp(0, decoded.height);
-
-    if (px2 <= px1 || py2 <= py1) return null;
-
-    final cropped = img.copyCrop(decoded,
-        x: px1, y: py1, width: px2 - px1, height: py2 - py1);
-    return Uint8List.fromList(img.encodePng(cropped));
-  }
-
-
-  // ── Совместить фото с эталоном и сравнить ────────
-  Future<void> _applyCmpAndCompare() async {
-    if (_refImg == null || _cmpImg == null) return;
-    if (_cmpOverlayViewerSize != Size.zero) {
-      final ref = await _extractRegion(
-          _refImg!, Matrix4.identity(), _cmpOverlayViewerSize);
-      final cmp = await _extractRegion(
-          _cmpImg!, _cmpOverlayCtrl.value, _cmpOverlayViewerSize);
-      if (mounted) {
-        setState(() {
-          _refAligned = ref ?? _refImg;
-          _cmpAligned = cmp ?? _cmpImg;
-        });
-      }
-    }
-    _runCompare();
-  }
 
   // ── Второй эталон: выбор ─────────────────────────
   Future<void> _pickRef2([ImageSource? source]) async {
@@ -500,11 +447,15 @@ class _CompareScreenState extends State<CompareScreen>
           ? await OpenCvService.fuseImages(ref, src)
           : ref;
       if (!mounted) return;
+      final sz = await compute(_decodeSize, fused);
+      if (!mounted) return;
       setState(() {
         _refImg = fused;
+        _refImgSize = Size(sz.width.toDouble(), sz.height.toDouble());
         _refOriginal = ref;
         _refAligned = null;
         _layoutProfile = null;
+        _refAnchorPts = null;
         _ref2Img = null;
         _ref1Sharpness = null;
         _ref2Sharpness = null;
@@ -789,7 +740,16 @@ class _CompareScreenState extends State<CompareScreen>
       setState(() { _ref2Img = null; _ref1Sharpness = null; _ref2Sharpness = null; });
       await _selectRef(bytes);
     } else {
-      setState(() { _cmpImg = bytes; _cmpOriginal = bytes; _cmpAligned = null; _layoutProfile = null; });
+      final sz = await compute(_decodeSize, bytes);
+      if (!mounted) return;
+      setState(() {
+        _cmpImg = bytes;
+        _cmpImgSize = Size(sz.width.toDouble(), sz.height.toDouble());
+        _cmpOriginal = bytes;
+        _cmpAligned = null;
+        _layoutProfile = null;
+        _cmpAnchorPts = null;
+      });
     }
   }
 
@@ -1314,9 +1274,7 @@ class _CompareScreenState extends State<CompareScreen>
   Widget _tabAlign() {
     if (_refImg == null || _cmpImg == null) {
       return Center(
-          child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
+          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
             const Text('🎯', style: TextStyle(fontSize: 40)),
             const SizedBox(height: 12),
             const Text('Сначала загрузите эталон и образец',
@@ -1329,81 +1287,39 @@ class _CompareScreenState extends State<CompareScreen>
     return SingleChildScrollView(
       padding: const EdgeInsets.all(12),
       child: Column(children: [
-        XpGroup(
-            label: 'Совместить с эталоном',
-            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              const Text('Перетащите фото поверх эталона. Совместите — нажмите Сравнить.',
-                  style: TextStyle(fontSize: 11, color: Colors.grey, height: 1.5)),
-              const SizedBox(height: 8),
-              ClipRect(
-                child: Container(
-                  height: 240,
-                  color: Colors.black,
-                  child: LayoutBuilder(builder: (_, c) {
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      _cmpOverlayViewerSize = Size(c.maxWidth, c.maxHeight);
-                    });
-                    return Stack(fit: StackFit.expand, children: [
-                      Image.memory(_refImg!, fit: BoxFit.contain),
-                      Opacity(
-                        opacity: _cmpOverlayOpacity,
-                        child: InteractiveViewer(
-                          transformationController: _cmpOverlayCtrl,
-                          boundaryMargin: const EdgeInsets.all(double.infinity),
-                          minScale: 0.1, maxScale: 6.0,
-                          child: Image.memory(_cmpImg!, fit: BoxFit.contain),
-                        ),
-                      ),
-                      const Positioned(left: 8, top: 8, child: _ImgLabel('Эталон')),
-                      const Positioned(right: 8, top: 8, child: _ImgLabel('Фото ↕↔')),
-                    ]);
-                  }),
-                ),
-              ),
-              const SizedBox(height: 6),
-              Row(children: [
-                const SizedBox(width: 90, child: Text('Прозрачность:', style: TextStyle(fontSize: 11))),
-                Expanded(child: Slider(
-                  value: _cmpOverlayOpacity,
-                  onChanged: (v) => setState(() => _cmpOverlayOpacity = v),
-                  activeColor: AppTheme.blue,
-                )),
-                SizedBox(width: 36, child: Text('${(_cmpOverlayOpacity * 100).round()}%', style: const TextStyle(fontSize: 10))),
-              ]),
-              Row(children: [
-                if (_refOriginal != null || _cmpOriginal != null) ...[
-                  const SizedBox(width: 4),
-                  XpBtn(label: '↩ Сброс', onPressed: () => setState(() {
-                    _layoutProfile = null;
-                    if (_refOriginal != null) { _refImg = _refOriginal; _refOriginal = null; _refAligned = null; }
-                    if (_cmpOriginal != null) { _cmpImg = _cmpOriginal; _cmpOriginal = null; _cmpAligned = null; }
-                  })),
-                ],
-                const Spacer(),
-                XpBtn(label: '⟳', onPressed: () => setState(() => _cmpOverlayCtrl.value = Matrix4.identity())),
-              ]),
-              const SizedBox(height: 6),
-              XpBtn(
-                label: '🎯 Точное совмещение',
-                primary: true,
-                onPressed: () async {
-                  final result = await OverlayAlignScreen.show(
-                    context,
-                    base: _refImg!,
-                    overlay: _cmpImg!,
-                    initialTransform: _cmpOverlayCtrl.value,
-                    initialOpacity: _cmpOverlayOpacity,
-                    title: 'Точное совмещение — Эталон / Образец',
-                  );
-                  if (result != null && mounted) {
-                    setState(() {
-                      _cmpOverlayCtrl.value = result.transform;
-                      _cmpOverlayOpacity = result.opacity;
-                    });
-                  }
-                },
-              ),
-            ])),
+        // ── Два окна предпросмотра ─────────────────────
+        LayoutBuilder(builder: (_, constraints) {
+          final wide = constraints.maxWidth > 480;
+          final panels = [
+            _alignPanel(
+              label: 'Эталон',
+              bytes: _refImg!,
+              imgSize: _refImgSize,
+              anchorPts: _refAnchorPts,
+              ctrl: _refAlignCtrl,
+              availableWidth: wide ? (constraints.maxWidth - 8) / 2 : constraints.maxWidth,
+            ),
+            _alignPanel(
+              label: 'Образец',
+              bytes: _cmpAligned ?? _cmpImg!,
+              imgSize: _cmpImgSize,
+              anchorPts: _cmpAnchorPts,
+              ctrl: _cmpAlignCtrl,
+              availableWidth: wide ? (constraints.maxWidth - 8) / 2 : constraints.maxWidth,
+            ),
+          ];
+          if (wide) {
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(child: panels[0]),
+                const SizedBox(width: 8),
+                Expanded(child: panels[1]),
+              ],
+            );
+          }
+          return Column(children: [panels[0], const SizedBox(height: 8), panels[1]]);
+        }),
 
         const SizedBox(height: 12),
         // ── Статус профиля калибровки ─────────────────
@@ -1414,12 +1330,15 @@ class _CompareScreenState extends State<CompareScreen>
               const Icon(Icons.tune, size: 14, color: Colors.green),
               const SizedBox(width: 4),
               Expanded(child: Text(
-                'Профиль: ${_layoutProfile!.name}  ·  ош. ${_layoutProfile!.reprojError.toStringAsFixed(1)} пкс  ·  ECC ${((_layoutProfile!.alignment?.eccScore ?? 0) * 100).toStringAsFixed(0)}%',
+                'Профиль: ${_layoutProfile!.name}  ·  ош. ${_layoutProfile!.reprojError.toStringAsFixed(1)} пкс',
                 style: const TextStyle(fontSize: 11, color: Colors.green),
                 overflow: TextOverflow.ellipsis,
               )),
               TextButton(
-                onPressed: () => setState(() { _layoutProfile = null; _cmpAligned = null; }),
+                onPressed: () => setState(() {
+                  _layoutProfile = null; _cmpAligned = null;
+                  _refAnchorPts = null; _cmpAnchorPts = null;
+                }),
                 style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: Size.zero, tapTargetSize: MaterialTapTargetSize.shrinkWrap),
                 child: const Text('✕', style: TextStyle(fontSize: 11, color: Colors.grey)),
               ),
@@ -1439,8 +1358,7 @@ class _CompareScreenState extends State<CompareScreen>
                 const Icon(Icons.warning_amber, size: 16, color: Colors.orange),
                 const SizedBox(width: 6),
                 const Expanded(child: Text(
-                  'Без расстановки точек (🔧 Калибровка) сравнение будет неточным — '
-                  'разное разрешение и кадрирование эталона и образца искажают результат.',
+                  'Нажмите 🔧 Калибровка — расставьте точки на эталоне и образце.',
                   style: TextStyle(fontSize: 11, color: Colors.orange),
                 )),
               ]),
@@ -1450,16 +1368,12 @@ class _CompareScreenState extends State<CompareScreen>
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
           XpBtn(label: '‹ Образец', onPressed: () => _tabs.animateTo(1)),
           Row(children: [
-            // Calibration button
             _calibrating
                 ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))
                 : PopupMenuButton<String>(
                     tooltip: 'Калибровка (точки)',
-                    icon: Icon(
-                      Icons.tune,
-                      size: 20,
-                      color: _layoutProfile != null ? Colors.green : Colors.orange,
-                    ),
+                    icon: Icon(Icons.tune, size: 20,
+                        color: _layoutProfile != null ? Colors.green : Colors.orange),
                     onSelected: (v) async {
                       if (v == 'new') {
                         await _calibrate();
@@ -1483,17 +1397,111 @@ class _CompareScreenState extends State<CompareScreen>
               const SizedBox(width: 8),
             ],
             _comparing
-                ? const SizedBox(width: 24, height: 24,
-                    child: CircularProgressIndicator(strokeWidth: 2))
+                ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))
                 : XpBtn(
                     label: 'Сравнить ›',
                     primary: true,
                     onPressed: _refImg != null && _cmpImg != null && _layoutProfile != null
-                        ? _applyCmpAndCompare : null),
+                        ? _runCompare : null),
           ]),
         ]),
       ]),
     );
+  }
+
+  // Панель предпросмотра с зумом и якорными точками
+  Widget _alignPanel({
+    required String label,
+    required Uint8List bytes,
+    required Size? imgSize,
+    required List<Offset>? anchorPts,
+    required TransformationController ctrl,
+    required double availableWidth,
+  }) {
+    // Вычисляем высоту контейнера по аспекту изображения (без чёрных полос)
+    double panelHeight = 220;
+    if (imgSize != null && imgSize.width > 0 && imgSize.height > 0) {
+      panelHeight = (availableWidth * imgSize.height / imgSize.width).clamp(120.0, 340.0);
+    }
+
+    void zoom(double factor) {
+      final m = ctrl.value.clone();
+      m.scale(factor, factor);
+      // Ограничиваем масштаб 0.2x — 8x
+      final s = m.getMaxScaleOnAxis();
+      if (s < 0.2 || s > 8.0) return;
+      ctrl.value = m;
+    }
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      // Заголовок панели
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        color: AppTheme.blue,
+        child: Text(label,
+            style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
+      ),
+      // Область изображения
+      ClipRect(
+        child: SizedBox(
+          height: panelHeight,
+          child: Listener(
+            onPointerSignal: (e) {
+              if (e is PointerScrollEvent &&
+                  HardwareKeyboard.instance.isControlPressed) {
+                zoom(e.scrollDelta.dy < 0 ? 1.15 : 0.87);
+              }
+            },
+            child: InteractiveViewer(
+              transformationController: ctrl,
+              boundaryMargin: const EdgeInsets.all(80),
+              minScale: 0.2,
+              maxScale: 8.0,
+              child: Stack(
+                children: [
+                  Image.memory(bytes,
+                      width: availableWidth,
+                      height: panelHeight,
+                      fit: BoxFit.contain),
+                  if (anchorPts != null)
+                    ...anchorPts.asMap().entries.map((e) {
+                      final ratio = imgSize != null
+                          ? min(availableWidth / imgSize.width,
+                                panelHeight / imgSize.height)
+                          : 1.0;
+                      final offX = imgSize != null
+                          ? (availableWidth - imgSize.width * ratio) / 2
+                          : 0.0;
+                      final offY = imgSize != null
+                          ? (panelHeight - imgSize.height * ratio) / 2
+                          : 0.0;
+                      final px = e.value.dx * ratio + offX;
+                      final py = e.value.dy * ratio + offY;
+                      return Positioned(
+                        left: px - 10,
+                        top: py - 10,
+                        child: _AnchorDot(index: e.key + 1),
+                      );
+                    }),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+      // Кнопки зума
+      Container(
+        color: AppTheme.silver,
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+        child: Row(children: [
+          _ZoomBtn(label: '−', onTap: () => zoom(0.77)),
+          const SizedBox(width: 4),
+          _ZoomBtn(label: '+', onTap: () => zoom(1.3)),
+          const SizedBox(width: 6),
+          _ZoomBtn(label: '⊡', onTap: () => ctrl.value = Matrix4.identity()),
+        ]),
+      ),
+    ]);
   }
 
   // ── Таб: Результат ────────────────────────────────
@@ -2447,6 +2455,46 @@ class _ImgLabel extends StatelessWidget {
                 color: Colors.white,
                 fontSize: 10,
                 fontWeight: FontWeight.bold)),
+      );
+}
+
+class _AnchorDot extends StatelessWidget {
+  final int index;
+  const _AnchorDot({required this.index});
+  @override
+  Widget build(BuildContext context) => Container(
+        width: 20,
+        height: 20,
+        decoration: BoxDecoration(
+          color: Colors.red.withOpacity(0.85),
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 1.5),
+        ),
+        alignment: Alignment.center,
+        child: Text('$index',
+            style: const TextStyle(
+                color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
+      );
+}
+
+class _ZoomBtn extends StatelessWidget {
+  final String label;
+  final VoidCallback onTap;
+  const _ZoomBtn({required this.label, required this.onTap});
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: 26,
+          height: 22,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border.all(color: Colors.grey.shade400),
+          ),
+          child: Text(label,
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+        ),
       );
 }
 
