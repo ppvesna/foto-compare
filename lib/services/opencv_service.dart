@@ -218,19 +218,7 @@ class OpenCvService {
     List<Offset> srcPoints,
   ) async {
     if (!_available) {
-      // Dart-фоллбэк: DLT-гомография без OpenCV (работает на вебе)
-      final r = await dartAlignByAnchors(refBytes, srcBytes, refPoints, srcPoints);
-      if (r == null) return null;
-      final q = r.reprojError < 3 ? 'excellent' : r.reprojError < 6 ? 'good' : 'warning';
-      return AlignByAnchorsResult(
-        alignedBytes: r.alignedBytes,
-        homography: r.homography,
-        reprojError: r.reprojError,
-        eccScore: 0.0,
-        confidence: r.reprojError < 6 ? 0.75 : 0.5,
-        quality: q,
-        refinedSrcPoints: srcPoints,
-      );
+      return _dartAlignFallback(refBytes, srcBytes, refPoints, srcPoints);
     }
     try {
       final raw = await _channel.invokeMethod<Map>('alignByAnchors', {
@@ -257,10 +245,28 @@ class OpenCvService {
       );
     } on MissingPluginException {
       _available = false;
-      return null;
+      return _dartAlignFallback(refBytes, srcBytes, refPoints, srcPoints);
     } catch (_) {
       return null;
     }
+  }
+
+  static Future<AlignByAnchorsResult?> _dartAlignFallback(
+    Uint8List refBytes, Uint8List srcBytes,
+    List<Offset> refPoints, List<Offset> srcPoints,
+  ) async {
+    final r = await dartAlignByAnchors(refBytes, srcBytes, refPoints, srcPoints);
+    if (r == null) return null;
+    final q = r.reprojError < 3 ? 'excellent' : r.reprojError < 6 ? 'good' : 'warning';
+    return AlignByAnchorsResult(
+      alignedBytes: r.alignedBytes,
+      homography: r.homography,
+      reprojError: r.reprojError,
+      eccScore: 0.0,
+      confidence: r.reprojError < 6 ? 0.75 : 0.5,
+      quality: q,
+      refinedSrcPoints: srcPoints,
+    );
   }
 
   static bool get isAvailable => _available;

@@ -70,10 +70,16 @@ class _CompareScreenState extends State<CompareScreen>
   // Вкладка Совмещение: два окна предпросмотра с якорными точками
   final _refAlignCtrl = TransformationController();
   final _cmpAlignCtrl = TransformationController();
-  List<Offset>? _refAnchorPts; // пиксельные координаты точек на эталоне
-  List<Offset>? _cmpAnchorPts; // пиксельные координаты точек на образце
+  List<Offset>? _refAnchorPts; // подтверждённые точки на эталоне
+  List<Offset>? _cmpAnchorPts; // подтверждённые точки на образце
   Size? _refImgSize;
   Size? _cmpImgSize;
+  // Пошаговая калибровка: 0=нет, 1=ставим на эталоне, 2=ставим на образце, 3=расчёт
+  int _calStep = 0;
+  List<Offset> _tempRefPts = [];
+  List<Offset> _tempCmpPts = [];
+  static const int _minAnchorPts = 4;
+  static const int _maxAnchorPts = 8;
 
   // Отступ рамки (10% с каждой стороны = 80% центральная зона)
   static const double _framePad = 0.10;
@@ -142,82 +148,78 @@ class _CompareScreenState extends State<CompareScreen>
     });
   }
 
-  // ── Калибровка: ручная расстановка якорей → Layout Profile ──────────────
-  Future<void> _calibrate() async {
-    if (_refImg == null) {
-      xpDlg(context, 'Нет эталона', 'Загрузите эталон перед калибровкой.');
-      return;
-    }
-    if (_cmpImg == null) {
-      xpDlg(context, 'Нет образца', 'Загрузите образец перед калибровкой.');
-      return;
-    }
+  // ── Калибровка: пошаговая расстановка точек прямо на панелях ───────────
+  void _startCalibration() {
+    setState(() {
+      _calStep = 1;
+      _tempRefPts = [];
+      _tempCmpPts = [];
+    });
+  }
 
-    setState(() => _calibrating = true);
+  void _cancelCalibration() {
+    setState(() { _calStep = 0; _tempRefPts = []; _tempCmpPts = []; });
+  }
+
+  void _addPanelPoint(Offset imgCoord) {
+    setState(() {
+      if (_calStep == 1 && _tempRefPts.length < _maxAnchorPts) {
+        _tempRefPts = [..._tempRefPts, imgCoord];
+      } else if (_calStep == 2 && _tempCmpPts.length < _maxAnchorPts) {
+        _tempCmpPts = [..._tempCmpPts, imgCoord];
+      }
+    });
+  }
+
+  void _undoLastPoint() {
+    setState(() {
+      if (_calStep == 1 && _tempRefPts.isNotEmpty) {
+        _tempRefPts = _tempRefPts.sublist(0, _tempRefPts.length - 1);
+      } else if (_calStep == 2 && _tempCmpPts.isNotEmpty) {
+        _tempCmpPts = _tempCmpPts.sublist(0, _tempCmpPts.length - 1);
+      }
+    });
+  }
+
+  // Шаг 1 → 2 (переключаем на образец)
+  void _advanceToStep2() {
+    if (_tempRefPts.length < _minAnchorPts) return;
+    setState(() { _calStep = 2; _tempCmpPts = []; });
+  }
+
+  // Шаг 2 → расчёт
+  Future<void> _runAlignmentFromPoints() async {
+    if (_tempCmpPts.length != _tempRefPts.length) return;
+    final refPts = List<Offset>.from(_tempRefPts);
+    final cmpPts = List<Offset>.from(_tempCmpPts);
+    setState(() { _calStep = 3; _calibrating = true; });
     try {
-      // Шаг 1: пользователь расставляет точки на эталоне
-      final refPtsRaw = await Navigator.push<List<Offset>>(
-        context,
-        MaterialPageRoute(
-          builder: (_) => AnchorPointScreen(
-            imageBytes: _refImg!,
-            title: 'Эталон — якорные точки (4–8)',
-            minPoints: 4,
-            maxPoints: 8,
-          ),
-        ),
-      );
-      if (refPtsRaw == null || refPtsRaw.length < 4 || !mounted) return;
-
-      // Decode ref image size for normalization
-      final refDecoded = await compute(_decodeSize, _refImg!);
-
-      // Шаг 2: пользователь расставляет соответствующие точки на образце
-      final srcPtsRaw = await Navigator.push<List<Offset>>(
-        context,
-        MaterialPageRoute(
-          builder: (_) => AnchorPointScreen(
-            imageBytes: _cmpImg!,
-            title: 'Образец — точки в том же порядке (${refPtsRaw.length})',
-            minPoints: refPtsRaw.length,
-            maxPoints: refPtsRaw.length,
-          ),
-        ),
-      );
-      if (srcPtsRaw == null || srcPtsRaw.length != refPtsRaw.length || !mounted) return;
-
-      // Шаг 3: alignByAnchors (cornerSubPix → findHomography → warpPerspective → ECC)
-      setState(() => _calibrating = true);
       final alignResult = await OpenCvService.alignByAnchors(
-        _refImg!, _cmpImg!, refPtsRaw, srcPtsRaw,
+        _refImg!, _cmpImg!, refPts, cmpPts,
       );
       if (!mounted) return;
-
       if (alignResult == null) {
-        xpDlg(context, 'Ошибка', 'OpenCV недоступен — калибровка не выполнена.');
+        xpDlg(context, 'Ошибка', 'Не удалось рассчитать совмещение. Попробуйте расставить точки точнее.');
+        setState(() { _calStep = 1; _tempRefPts = []; _tempCmpPts = []; });
         return;
       }
 
-      // Шаг 4: validation result + confirm
       final ok = await _showAlignmentValidation(alignResult);
-      if (!ok || !mounted) return;
+      if (!ok || !mounted) { setState(() { _calStep = 0; _tempRefPts = []; _tempCmpPts = []; }); return; }
 
-      // Шаг 5: имя профиля
       final name = await _promptProfileName();
-      if (name == null || !mounted) return;
+      if (name == null || !mounted) { setState(() { _calStep = 0; _tempRefPts = []; _tempCmpPts = []; }); return; }
 
-      // Нормализуем ref точки (0..1) для сохранения в профиле
+      final refDecoded = await compute(_decodeSize, _refImg!);
       final refW = refDecoded.width.toDouble();
       final refH = refDecoded.height.toDouble();
-      final refAnchors = refPtsRaw.asMap().entries.map((e) => AnchorPoint(
-        id: _anchorId(e.key, refPtsRaw.length),
+      final refAnchors = refPts.asMap().entries.map((e) => AnchorPoint(
+        id: _anchorId(e.key, refPts.length),
         x: e.value.dx / refW,
         y: e.value.dy / refH,
-        type: 'corner',
-        confidence: 1.0,
+        type: 'corner', confidence: 1.0,
       )).toList();
 
-      // Шаг 6: сохраняем профиль
       final profile = LayoutProfile(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
         name: name,
@@ -241,14 +243,17 @@ class _CompareScreenState extends State<CompareScreen>
       setState(() {
         _layoutProfile = profile;
         _cmpAligned = alignResult.alignedBytes;
-        _refAnchorPts = refPtsRaw;
-        _cmpAnchorPts = srcPtsRaw;
+        _refAnchorPts = refPts;
+        _cmpAnchorPts = cmpPts;
+        _calStep = 0;
+        _tempRefPts = [];
+        _tempCmpPts = [];
       });
 
       xpDlg(context, 'Профиль сохранён',
-          '"$name"\n${alignResult.qualityLabel}  ·  ошибка ${alignResult.reprojError.toStringAsFixed(1)} пкс  ·  ECC ${(alignResult.eccScore * 100).toStringAsFixed(0)}%');
+          '"$name"\n${alignResult.qualityLabel}  ·  ошибка ${alignResult.reprojError.toStringAsFixed(1)} пкс');
     } finally {
-      if (mounted) setState(() => _calibrating = false);
+      if (mounted) setState(() { _calibrating = false; if (_calStep == 3) _calStep = 0; });
     }
   }
 
@@ -1310,6 +1315,9 @@ class _CompareScreenState extends State<CompareScreen>
               anchorPts: _refAnchorPts,
               ctrl: _refAlignCtrl,
               availableWidth: wide ? (constraints.maxWidth - 8) / 2 : constraints.maxWidth,
+              placing: _calStep == 1,
+              tempPts: _tempRefPts,
+              onTap: _calStep == 1 ? _addPanelPoint : null,
             ),
             _alignPanel(
               label: 'Образец',
@@ -1318,6 +1326,9 @@ class _CompareScreenState extends State<CompareScreen>
               anchorPts: _cmpAnchorPts,
               ctrl: _cmpAlignCtrl,
               availableWidth: wide ? (constraints.maxWidth - 8) / 2 : constraints.maxWidth,
+              placing: _calStep == 2,
+              tempPts: _tempCmpPts,
+              onTap: _calStep == 2 ? _addPanelPoint : null,
             ),
           ];
           if (wide) {
@@ -1334,8 +1345,8 @@ class _CompareScreenState extends State<CompareScreen>
         }),
 
         const SizedBox(height: 12),
-        // ── Статус профиля калибровки ─────────────────
-        if (_layoutProfile != null)
+        // ── Инструкция / Статус профиля ───────────────
+        if (_calStep == 0 && _layoutProfile != null)
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
             child: Row(children: [
@@ -1356,7 +1367,7 @@ class _CompareScreenState extends State<CompareScreen>
               ),
             ]),
           )
-        else
+        else if (_calStep == 0)
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
             child: Container(
@@ -1366,57 +1377,124 @@ class _CompareScreenState extends State<CompareScreen>
                 border: Border.all(color: Colors.orange),
                 borderRadius: BorderRadius.circular(4),
               ),
-              child: Row(children: [
-                const Icon(Icons.warning_amber, size: 16, color: Colors.orange),
-                const SizedBox(width: 6),
-                const Expanded(child: Text(
-                  'Нажмите 🔧 Калибровка — расставьте точки на эталоне и образце.',
+              child: const Row(children: [
+                Icon(Icons.warning_amber, size: 16, color: Colors.orange),
+                SizedBox(width: 6),
+                Expanded(child: Text(
+                  'Нажмите «🔧 Калибровка» и расставьте точки на эталоне и образце.',
                   style: TextStyle(fontSize: 11, color: Colors.orange),
                 )),
               ]),
             ),
+          )
+        else if (_calStep == 1)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.blue.withOpacity(0.10),
+                border: Border.all(color: Colors.blue),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Row(children: [
+                const Icon(Icons.touch_app, size: 16, color: Colors.blue),
+                const SizedBox(width: 6),
+                Expanded(child: Text(
+                  'Шаг 1 / 2 — ЭТАЛОН: нажмите $_minAnchorPts–$_maxAnchorPts точек  (${_tempRefPts.length} из $_minAnchorPts мин.)',
+                  style: const TextStyle(fontSize: 11, color: Colors.blue),
+                )),
+              ]),
+            ),
+          )
+        else if (_calStep == 2)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.teal.withOpacity(0.10),
+                border: Border.all(color: Colors.teal),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Row(children: [
+                const Icon(Icons.touch_app, size: 16, color: Colors.teal),
+                const SizedBox(width: 6),
+                Expanded(child: Text(
+                  'Шаг 2 / 2 — ОБРАЗЕЦ: те же ${_tempRefPts.length} точек в том же порядке  (${_tempCmpPts.length} / ${_tempRefPts.length})',
+                  style: const TextStyle(fontSize: 11, color: Colors.teal),
+                )),
+              ]),
+            ),
+          )
+        else if (_calStep == 3)
+          const Padding(
+            padding: EdgeInsets.only(bottom: 8),
+            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+              SizedBox(width: 10),
+              Text('Расчёт совмещения...', style: TextStyle(fontSize: 12)),
+            ]),
           ),
         const Divider(),
-        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          XpBtn(label: '‹ Образец', onPressed: () => _tabs.animateTo(1)),
-          Row(children: [
-            _calibrating
-                ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))
-                : PopupMenuButton<String>(
-                    tooltip: 'Калибровка (точки)',
-                    icon: Icon(Icons.tune, size: 20,
-                        color: _layoutProfile != null ? Colors.green : Colors.orange),
-                    onSelected: (v) async {
-                      if (v == 'new') {
-                        await _calibrate();
-                      } else {
-                        final profile = _savedProfiles.firstWhere((p) => p.id == v);
-                        await _applyProfile(profile);
-                      }
-                    },
-                    itemBuilder: (_) => [
-                      const PopupMenuItem(value: 'new', child: Text('Новая калибровка...')),
-                      if (_savedProfiles.isNotEmpty) const PopupMenuDivider(),
-                      ..._savedProfiles.map((p) => PopupMenuItem(
-                        value: p.id,
-                        child: Text(p.name, style: const TextStyle(fontSize: 13)),
-                      )),
-                    ],
-                  ),
-            const SizedBox(width: 8),
-            if (_result != null) ...[
-              SimBadge(value: _result!.score),
+        if (_calStep == 0)
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            XpBtn(label: '‹ Образец', onPressed: () => _tabs.animateTo(1)),
+            Row(children: [
+              XpBtn(
+                label: '🔧 Калибровка',
+                primary: _layoutProfile == null,
+                onPressed: _startCalibration,
+              ),
               const SizedBox(width: 8),
-            ],
-            _comparing
-                ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))
-                : XpBtn(
-                    label: 'Сравнить ›',
-                    primary: true,
-                    onPressed: _refImg != null && _cmpImg != null && _layoutProfile != null
-                        ? _runCompare : null),
-          ]),
-        ]),
+              if (_result != null) ...[
+                SimBadge(value: _result!.score),
+                const SizedBox(width: 8),
+              ],
+              _comparing
+                  ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))
+                  : XpBtn(
+                      label: 'Сравнить ›',
+                      primary: true,
+                      onPressed: _refImg != null && _cmpImg != null && _layoutProfile != null
+                          ? _runCompare : null),
+            ]),
+          ])
+        else if (_calStep == 1)
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            XpBtn(label: 'Отмена', danger: true, onPressed: _cancelCalibration),
+            Row(children: [
+              XpBtn(
+                label: '⌫ Удалить',
+                onPressed: _tempRefPts.isNotEmpty ? _undoLastPoint : null,
+              ),
+              const SizedBox(width: 8),
+              XpBtn(
+                label: 'Далее ›',
+                primary: true,
+                onPressed: _tempRefPts.length >= _minAnchorPts ? _advanceToStep2 : null,
+              ),
+            ]),
+          ])
+        else if (_calStep == 2)
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            XpBtn(label: '← Назад', onPressed: () => setState(() { _calStep = 1; _tempCmpPts = []; })),
+            Row(children: [
+              XpBtn(
+                label: '⌫ Удалить',
+                onPressed: _tempCmpPts.isNotEmpty ? _undoLastPoint : null,
+              ),
+              const SizedBox(width: 8),
+              XpBtn(
+                label: 'Рассчитать →',
+                primary: true,
+                onPressed: _tempCmpPts.length == _tempRefPts.length && _tempRefPts.isNotEmpty
+                    ? _runAlignmentFromPoints : null,
+              ),
+            ]),
+          ])
+        else
+          const SizedBox.shrink(),
       ]),
     );
   }
@@ -1429,6 +1507,9 @@ class _CompareScreenState extends State<CompareScreen>
     required List<Offset>? anchorPts,
     required TransformationController ctrl,
     required double availableWidth,
+    bool placing = false,
+    List<Offset> tempPts = const [],
+    void Function(Offset)? onTap,
   }) {
     // Вычисляем высоту контейнера по аспекту изображения (без чёрных полос)
     double panelHeight = 220;
@@ -1439,17 +1520,63 @@ class _CompareScreenState extends State<CompareScreen>
     void zoom(double factor) {
       final m = ctrl.value.clone();
       m.scale(factor, factor);
-      // Ограничиваем масштаб 0.2x — 8x
       final s = m.getMaxScaleOnAxis();
       if (s < 0.2 || s > 8.0) return;
       ctrl.value = m;
     }
 
+    List<Widget> buildDots(List<Offset> pts, Color color) {
+      if (imgSize == null) return [];
+      final ratio = min(availableWidth / imgSize.width, panelHeight / imgSize.height);
+      final offX = (availableWidth - imgSize.width * ratio) / 2;
+      final offY = (panelHeight - imgSize.height * ratio) / 2;
+      return pts.asMap().entries.map((e) {
+        final px = e.value.dx * ratio + offX;
+        final py = e.value.dy * ratio + offY;
+        return Positioned(
+          left: px - 10, top: py - 10,
+          child: _AnchorDot(index: e.key + 1, color: color),
+        );
+      }).toList();
+    }
+
+    final stackContent = Stack(children: [
+      Image.memory(bytes, width: availableWidth, height: panelHeight, fit: BoxFit.contain),
+      ...buildDots(anchorPts ?? [], Colors.red),
+      ...buildDots(tempPts, Colors.amber),
+      if (placing)
+        Positioned.fill(child: IgnorePointer(
+          child: Container(decoration: BoxDecoration(
+            border: Border.all(color: Colors.blue, width: 2),
+          )),
+        )),
+    ]);
+
+    final viewerChild = onTap != null
+        ? GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTapUp: (d) {
+              if (imgSize == null) return;
+              final local = d.localPosition;
+              final ratio = min(availableWidth / imgSize.width, panelHeight / imgSize.height);
+              final offX = (availableWidth - imgSize.width * ratio) / 2;
+              final offY = (panelHeight - imgSize.height * ratio) / 2;
+              final imgX = (local.dx - offX) / ratio;
+              final imgY = (local.dy - offY) / ratio;
+              if (imgX >= 0 && imgY >= 0 &&
+                  imgX <= imgSize.width && imgY <= imgSize.height) {
+                onTap(Offset(imgX, imgY));
+              }
+            },
+            child: stackContent,
+          )
+        : stackContent;
+
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       // Заголовок панели
       Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        color: AppTheme.blue,
+        color: placing ? const Color(0xFF0055BB) : AppTheme.blue,
         child: Text(label,
             style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
       ),
@@ -1469,34 +1596,7 @@ class _CompareScreenState extends State<CompareScreen>
               boundaryMargin: const EdgeInsets.all(80),
               minScale: 0.2,
               maxScale: 8.0,
-              child: Stack(
-                children: [
-                  Image.memory(bytes,
-                      width: availableWidth,
-                      height: panelHeight,
-                      fit: BoxFit.contain),
-                  if (anchorPts != null)
-                    ...anchorPts.asMap().entries.map((e) {
-                      final ratio = imgSize != null
-                          ? min(availableWidth / imgSize.width,
-                                panelHeight / imgSize.height)
-                          : 1.0;
-                      final offX = imgSize != null
-                          ? (availableWidth - imgSize.width * ratio) / 2
-                          : 0.0;
-                      final offY = imgSize != null
-                          ? (panelHeight - imgSize.height * ratio) / 2
-                          : 0.0;
-                      final px = e.value.dx * ratio + offX;
-                      final py = e.value.dy * ratio + offY;
-                      return Positioned(
-                        left: px - 10,
-                        top: py - 10,
-                        child: _AnchorDot(index: e.key + 1),
-                      );
-                    }),
-                ],
-              ),
+              child: viewerChild,
             ),
           ),
         ),
@@ -2472,13 +2572,14 @@ class _ImgLabel extends StatelessWidget {
 
 class _AnchorDot extends StatelessWidget {
   final int index;
-  const _AnchorDot({required this.index});
+  final Color color;
+  const _AnchorDot({required this.index, this.color = Colors.red});
   @override
   Widget build(BuildContext context) => Container(
         width: 20,
         height: 20,
         decoration: BoxDecoration(
-          color: Colors.red.withOpacity(0.85),
+          color: color.withOpacity(0.85),
           shape: BoxShape.circle,
           border: Border.all(color: Colors.white, width: 1.5),
         ),
