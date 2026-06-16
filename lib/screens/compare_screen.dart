@@ -500,14 +500,9 @@ class _CompareScreenState extends State<CompareScreen>
       final fused = src != null
           ? await OpenCvService.fuseImages(ref, src)
           : ref;
-      // perspectiveCorrect только для одиночного фото — после слияния
-      // изображение уже в ориентации эталона, повторная коррекция переворачивает
-      final flat = src == null
-          ? await OpenCvService.perspectiveCorrect(fused)
-          : fused;
       if (!mounted) return;
       setState(() {
-        _refImg = flat;
+        _refImg = fused;
         _refOriginal = ref;
         _refAligned = null;
         _layoutProfile = null;
@@ -598,33 +593,6 @@ class _CompareScreenState extends State<CompareScreen>
     } finally {
       if (mounted) setState(() => _aiLoading = false);
     }
-  }
-
-  // ── Коррекция перспективы через OpenCV ───────────
-  Future<void> _fixPerspective() async {
-    if (_refImg == null && _cmpImg == null) {
-      xpDlg(context, 'Ошибка', 'Загрузите изображения');
-      return;
-    }
-    // Сохраняем оригиналы для сброса
-    final origRef = _refImg;
-    final origCmp = _cmpImg;
-
-    // Обрабатываем оба параллельно
-    final futures = <Future<Uint8List>>[];
-    if (_refImg != null) futures.add(OpenCvService.perspectiveCorrect(_refImg!));
-    if (_cmpImg != null) futures.add(OpenCvService.perspectiveCorrect(_cmpImg!));
-    final results = await Future.wait(futures);
-
-    if (!mounted) return;
-    setState(() {
-      _refOriginal = origRef;
-      _cmpOriginal = origCmp;
-      _layoutProfile = null;
-      int i = 0;
-      if (_refImg != null) { _refImg = results[i++]; _refAligned = null; }
-      if (_cmpImg != null) { _cmpImg = results[i++]; _cmpAligned = null; }
-    });
   }
 
   // ── Сравнение ─────────────────────────────────────
@@ -836,16 +804,7 @@ class _CompareScreenState extends State<CompareScreen>
       setState(() { _ref2Img = null; _ref1Sharpness = null; _ref2Sharpness = null; });
       await _selectRef(bytes);
     } else {
-      // Та же коррекция перспективы, что и для эталона —
-      // иначе один и тот же файл даёт разные размеры
-      setState(() { _stacking = true; });
-      try {
-        final flat = await OpenCvService.perspectiveCorrect(bytes);
-        if (!mounted) return;
-        setState(() { _cmpImg = flat; _cmpOriginal = bytes; _cmpAligned = null; _layoutProfile = null; });
-      } finally {
-        if (mounted) setState(() => _stacking = false);
-      }
+      setState(() { _cmpImg = bytes; _cmpOriginal = bytes; _cmpAligned = null; _layoutProfile = null; });
     }
   }
 
@@ -904,11 +863,6 @@ class _CompareScreenState extends State<CompareScreen>
               onTap: () => _tabs.animateTo(4)),
         ]),
         XpMenu(label: 'Инструменты', items: [
-          XpMenuItem(
-              label: 'Перспектива',
-              icon: '📐',
-              onTap: _fixPerspective),
-          XpMenuItem.sep,
           XpMenuItem(
               label: 'AI Анализ',
               icon: '🤖',
@@ -1432,7 +1386,6 @@ class _CompareScreenState extends State<CompareScreen>
                 SizedBox(width: 36, child: Text('${(_cmpOverlayOpacity * 100).round()}%', style: const TextStyle(fontSize: 10))),
               ]),
               Row(children: [
-                XpBtn(label: '📐 Перспектива', onPressed: _fixPerspective),
                 if (_refOriginal != null || _cmpOriginal != null) ...[
                   const SizedBox(width: 4),
                   XpBtn(label: '↩ Сброс', onPressed: () => setState(() {
