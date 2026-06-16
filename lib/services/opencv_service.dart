@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'package:flutter/services.dart';
 import 'package:flutter/painting.dart' show Offset;
 import '../config/app_config.dart';
+import 'homography_dart.dart';
 
 /// Сервис для обработки изображений через OpenCV (нативный Android)
 /// Fallback: если OpenCV недоступен — возвращает исходные байты
@@ -216,7 +217,21 @@ class OpenCvService {
     List<Offset> refPoints,
     List<Offset> srcPoints,
   ) async {
-    if (!_available) return null;
+    if (!_available) {
+      // Dart-фоллбэк: DLT-гомография без OpenCV (работает на вебе)
+      final r = await dartAlignByAnchors(refBytes, srcBytes, refPoints, srcPoints);
+      if (r == null) return null;
+      final q = r.reprojError < 3 ? 'excellent' : r.reprojError < 6 ? 'good' : 'warning';
+      return AlignByAnchorsResult(
+        alignedBytes: r.alignedBytes,
+        homography: r.homography,
+        reprojError: r.reprojError,
+        eccScore: 0.0,
+        confidence: r.reprojError < 6 ? 0.75 : 0.5,
+        quality: q,
+        refinedSrcPoints: srcPoints,
+      );
+    }
     try {
       final raw = await _channel.invokeMethod<Map>('alignByAnchors', {
         'refBytes': refBytes,
