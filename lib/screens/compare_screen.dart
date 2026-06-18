@@ -724,7 +724,7 @@ class _CompareScreenState extends State<CompareScreen>
   Future<void> _pickImage(bool isRef) async {
     final result = await showModalBottomSheet<String>(
       context: context,
-      builder: (_) => Container(
+      builder: (_) => Material(
         color: AppTheme.silver,
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           ListTile(
