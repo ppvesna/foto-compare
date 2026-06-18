@@ -29,6 +29,9 @@ img.Image _fitCrop(img.Image source, int size) {
   return img.copyCrop(resized, x: cx, y: cy, width: size, height: size);
 }
 
+// Пиксель не покрыт исходником после warp (альфа=0) — нет данных для сравнения
+bool _noData(img.Pixel p) => p.a < 128;
+
 // Diff-карта: прозрачная → зелёная → жёлтая → красная
 Uint8List _buildDiffImage(img.Image r, img.Image c) {
   final w = r.width;
@@ -38,6 +41,10 @@ Uint8List _buildDiffImage(img.Image r, img.Image c) {
     for (int x = 0; x < w; x++) {
       final pr = r.getPixel(x, y);
       final pc = c.getPixel(x, y);
+      if (_noData(pc)) {
+        out.setPixelRgba(x, y, 0, 0, 0, 0);
+        continue;
+      }
       final d = ((pr.r - pc.r).abs() +
                  (pr.g - pc.g).abs() +
                  (pr.b - pc.b).abs()) / (3 * 255.0);
@@ -60,30 +67,34 @@ Uint8List _buildDiffImage(img.Image r, img.Image c) {
 // Применяет масштаб яркости к (уже уменьшенному) изображению
 img.Image _applyLuminanceScale(img.Image src, double scale) {
   if ((scale - 1.0).abs() < 0.001) return src;
-  final out = img.Image(width: src.width, height: src.height);
+  final out = img.Image(width: src.width, height: src.height, numChannels: src.numChannels);
   for (int y = 0; y < src.height; y++) {
     for (int x = 0; x < src.width; x++) {
       final p = src.getPixel(x, y);
-      out.setPixelRgb(x, y,
+      out.setPixelRgba(x, y,
         (p.r * scale).clamp(0, 255).toInt(),
         (p.g * scale).clamp(0, 255).toInt(),
         (p.b * scale).clamp(0, 255).toInt(),
+        p.a.toInt(),
       );
     }
   }
   return out;
 }
 
+// Среднее по пикселям, исключая непокрытые после warp (альфа=0)
 double _meanLuminance(img.Image src) {
   double sum = 0;
-  final total = src.width * src.height;
+  int count = 0;
   for (int y = 0; y < src.height; y++) {
     for (int x = 0; x < src.width; x++) {
       final p = src.getPixel(x, y);
+      if (_noData(p)) continue;
       sum += p.r * 0.299 + p.g * 0.587 + p.b * 0.114;
+      count++;
     }
   }
-  return sum / total;
+  return count == 0 ? 0 : sum / count;
 }
 
 CompareResult _run(List<Uint8List> args) {
@@ -112,16 +123,19 @@ CompareResult _run(List<Uint8List> args) {
     final cRaw = size == maxSize ? cmpThumbRaw : _fitCrop(imgCmp, size);
     final c = _applyLuminanceScale(cRaw, lumScale);
     double diff = 0;
+    int valid = 0;
     for (int y = 0; y < size; y++) {
       for (int x = 0; x < size; x++) {
         final pr = r.getPixel(x, y);
         final pc = c.getPixel(x, y);
+        if (_noData(pc)) continue;
         diff += ((pr.r - pc.r).abs() +
                  (pr.g - pc.g).abs() +
                  (pr.b - pc.b).abs()) / (3 * 255);
+        valid++;
       }
     }
-    final avgDiff = diff / (size * size);
+    final avgDiff = valid == 0 ? 0.0 : diff / valid;
     final scaled  = (avgDiff * 3.5).clamp(0.0, 1.0);
     totalSim += (1 - scaled) * 100;
   }
@@ -131,10 +145,13 @@ CompareResult _run(List<Uint8List> args) {
   final r2 = refThumb;
   final c2 = _applyLuminanceScale(cmpThumbRaw, lumScale);
   int diffPx = 0;
+  int validPx = 0;
   for (int y = 0; y < maxSize; y++) {
     for (int x = 0; x < maxSize; x++) {
       final pr = r2.getPixel(x, y);
       final pc = c2.getPixel(x, y);
+      if (_noData(pc)) continue;
+      validPx++;
       final d = ((pr.r - pc.r).abs() +
                  (pr.g - pc.g).abs() +
                  (pr.b - pc.b).abs()) / (3 * 255);
@@ -145,7 +162,7 @@ CompareResult _run(List<Uint8List> args) {
   return CompareResult(
     similarity:  similarity,
     diffPixels:  diffPx,
-    totalPixels: maxSize * maxSize,
+    totalPixels: validPx == 0 ? maxSize * maxSize : validPx,
     refSize:     '${imgRef.width}×${imgRef.height}',
     cmpSize:     '${imgCmp.width}×${imgCmp.height}',
     diffL3:      _buildDiffImage(r2, c2),

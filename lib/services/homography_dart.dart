@@ -44,9 +44,10 @@ Future<DartAlignResult?> dartAlignByAnchors(
       width: (srcW * srcScale).round(),
       height: (srcH * srcScale).round());
 
-  // Warp
+  // Warp (RGBA — альфа=0 у пикселей, не покрытых исходником, чтобы дальше
+  // их можно было исключить из сравнения, а не считать чёрным отличием)
   final warped = _warpPerspective(srcResized, H, refResW, refResH);
-  final warpedBytes = Uint8List.fromList(img.encodeJpg(warped, quality: 92));
+  final warpedBytes = Uint8List.fromList(img.encodePng(warped));
 
   final reproj = _reprojError(H, scaledSrc, scaledRef);
 
@@ -223,7 +224,8 @@ List<double> _invertH(List<double> H) {
 img.Image _warpPerspective(
     img.Image src, List<double> H, int dstW, int dstH) {
   final Hi = _invertH(H);
-  final dst = img.Image(width: dstW, height: dstH);
+  // numChannels: 4 — непокрытые пиксели остаются alpha=0 (нет данных)
+  final dst = img.Image(width: dstW, height: dstH, numChannels: 4);
 
   final h0 = Hi[0], h1 = Hi[1], h2 = Hi[2];
   final h3 = Hi[3], h4 = Hi[4], h5 = Hi[5];
@@ -258,7 +260,7 @@ img.Image _warpPerspective(
       final g = _bl(p00.g, p10.g, p01.g, p11.g, fx, fy);
       final b = _bl(p00.b, p10.b, p01.b, p11.b, fx, fy);
 
-      dst.setPixel(dx, dy, img.ColorRgb8(r.round(), g.round(), b.round()));
+      dst.setPixel(dx, dy, img.ColorRgba8(r.round(), g.round(), b.round(), 255));
     }
   }
   return dst;
