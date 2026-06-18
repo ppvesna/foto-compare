@@ -29,8 +29,10 @@ img.Image _fitCrop(img.Image source, int size) {
   return img.copyCrop(resized, x: cx, y: cy, width: size, height: size);
 }
 
-// Пиксель не покрыт исходником после warp (альфа=0) — нет данных для сравнения
-bool _noData(img.Pixel p) => p.a < 128;
+// Пиксель не покрыт исходником после warp, либо частично смешан с
+// прозрачной кромкой при уменьшении (альфа размывается на границе) —
+// исключаем, иначе на стыке остаётся ложная зелёная "тень"
+bool _noData(img.Pixel p) => p.a < 250;
 
 // Diff-карта: прозрачная → зелёная → жёлтая → красная
 Uint8List _buildDiffImage(img.Image r, img.Image c) {
