@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -34,6 +35,10 @@ class TextDiff {
 
 class OcrService {
   static Future<OcrResult> recognize(Uint8List bytes) async {
+    // ML Kit — нативный плагин (Android/iOS), в браузере нет реализации
+    if (kIsWeb) {
+      return const OcrResult('', [], error: 'Распознавание текста недоступно в веб-версии');
+    }
     File? tmp;
     TextRecognizer? recognizer;
     try {

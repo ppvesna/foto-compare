@@ -2069,12 +2069,14 @@ class _CompareScreenState extends State<CompareScreen>
               const SizedBox(height: 4),
               Text('Фото: $cmpErr', style: const TextStyle(fontSize: 10, color: Colors.black54)),
             ],
-            const SizedBox(height: 6),
-            const Text(
-              'Добавьте в AndroidManifest.xml внутри <application>:\n'
-              '<meta-data android:name="com.google.mlkit.vision.DEPENDENCIES" android:value="ocr"/>',
-              style: TextStyle(fontSize: 9, color: Colors.black45, fontFamily: 'monospace'),
-            ),
+            if (!kIsWeb) ...[
+              const SizedBox(height: 6),
+              const Text(
+                'Добавьте в AndroidManifest.xml внутри <application>:\n'
+                '<meta-data android:name="com.google.mlkit.vision.DEPENDENCIES" android:value="ocr"/>',
+                style: TextStyle(fontSize: 9, color: Colors.black45, fontFamily: 'monospace'),
+              ),
+            ],
           ]),
         ),
       // Нет текста (OCR сработал но ничего не нашёл)

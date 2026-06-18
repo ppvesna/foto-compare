@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -102,6 +103,8 @@ class BarcodeService {
   }
 
   static Future<List<BarcodeResult>> scanImage(Uint8List bytes) async {
+    // ML Kit — нативный плагин (Android/iOS), в браузере нет реализации
+    if (kIsWeb) return [];
     File? tmp;
     BarcodeScanner? scanner;
     try {
