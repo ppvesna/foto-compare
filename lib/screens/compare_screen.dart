@@ -87,6 +87,8 @@ class _CompareScreenState extends State<CompareScreen>
   bool   _stacking      = false;
   bool   _showDiffL3    = false;
   double _resultOpacity = 0.5;
+  final _resultRefCtrl = TransformationController();
+  final _resultCmpCtrl = TransformationController();
 
   final _history = [
     {'file': 'photo_001.jpg', 'sim': 87.4, 'date': '16.04.2026'},
@@ -422,6 +424,8 @@ class _CompareScreenState extends State<CompareScreen>
     _cmp2Ctrl.dispose();
     _refAlignCtrl.dispose();
     _cmpAlignCtrl.dispose();
+    _resultRefCtrl.dispose();
+    _resultCmpCtrl.dispose();
     super.dispose();
   }
 
@@ -1712,6 +1716,51 @@ class _CompareScreenState extends State<CompareScreen>
                 _tableRow('Дата:', dateStr),
               ],
             )),
+        // ── Эталон и образец отдельно, с увеличением ──
+        if (_refImg != null && _cmpImg != null)
+          XpGroup(
+              label: 'Изображения',
+              child: XpCollapsible(
+                title: 'Эталон и образец (увеличение)',
+                child: LayoutBuilder(builder: (_, constraints) {
+                  final wide = constraints.maxWidth > 480;
+                  final panels = [
+                    _alignPanel(
+                      label: 'Эталон',
+                      bytes: _refAligned ?? _refImg!,
+                      imgSize: null,
+                      anchorPts: null,
+                      ctrl: _resultRefCtrl,
+                      availableWidth: wide
+                          ? (constraints.maxWidth - 8) / 2
+                          : constraints.maxWidth,
+                    ),
+                    _alignPanel(
+                      label: 'Образец',
+                      bytes: _cmpAligned ?? _cmpImg!,
+                      imgSize: null,
+                      anchorPts: null,
+                      ctrl: _resultCmpCtrl,
+                      availableWidth: wide
+                          ? (constraints.maxWidth - 8) / 2
+                          : constraints.maxWidth,
+                    ),
+                  ];
+                  if (wide) {
+                    return Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(child: panels[0]),
+                        const SizedBox(width: 8),
+                        Expanded(child: panels[1]),
+                      ],
+                    );
+                  }
+                  return Column(
+                      children: [panels[0], const SizedBox(height: 8), panels[1]]);
+                }),
+              )),
+
         // ── Наложение: эталон + образец с ползунком ──
         if (_refImg != null && _cmpImg != null)
           XpGroup(

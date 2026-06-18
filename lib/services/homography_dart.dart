@@ -32,8 +32,18 @@ Future<DartAlignResult?> dartAlignByAnchors(
   final refW = refImg.width, refH = refImg.height;
   final srcW = srcImg.width, srcH = srcImg.height;
 
-  final canonW = canonicalDim(AppConfig.printWidthMm);
-  final canonH = canonicalDim(AppConfig.printHeightMm);
+  // Целевая плотность пикселей берётся из физического размера печати, но
+  // рамка сохраняет родную пропорцию эталона — иначе непрямоугольный кадр
+  // (типичное фото) сплющивается/растягивается в квадрат из AppConfig.
+  final longPx = canonicalDim(math.max(AppConfig.printWidthMm, AppConfig.printHeightMm));
+  int canonW, canonH;
+  if (refW >= refH) {
+    canonW = longPx;
+    canonH = math.max(27, (((refH / refW) * longPx) / 27).round() * 27);
+  } else {
+    canonH = longPx;
+    canonW = math.max(27, (((refW / refH) * longPx) / 27).round() * 27);
+  }
 
   // Якоря эталона нормализованы относительно его собственных пикселей —
   // переводим их в каноническую рамку независимыми по осям масштабами.
