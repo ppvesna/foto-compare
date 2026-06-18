@@ -243,6 +243,7 @@ class _CompareScreenState extends State<CompareScreen>
       setState(() {
         _layoutProfile = profile;
         _cmpAligned = alignResult.alignedBytes;
+        _refAligned = alignResult.refCanonicalBytes;
         _refAnchorPts = refPts;
         _cmpAnchorPts = cmpPts;
         _calStep = 0;
@@ -316,6 +317,7 @@ class _CompareScreenState extends State<CompareScreen>
       setState(() {
         _layoutProfile = profile;
         _cmpAligned = alignResult.alignedBytes;
+        _refAligned = alignResult.refCanonicalBytes;
         _refAnchorPts = refPtsRaw;
         _cmpAnchorPts = srcPtsRaw;
       });

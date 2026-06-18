@@ -260,6 +260,7 @@ class OpenCvService {
     final q = r.reprojError < 3 ? 'excellent' : r.reprojError < 6 ? 'good' : 'warning';
     return AlignByAnchorsResult(
       alignedBytes: r.alignedBytes,
+      refCanonicalBytes: r.refCanonicalBytes,
       homography: r.homography,
       reprojError: r.reprojError,
       eccScore: 0.0,
@@ -274,6 +275,9 @@ class OpenCvService {
 
 class AlignByAnchorsResult {
   final Uint8List alignedBytes;
+  // Канонизированный эталон (только web-фолбэк; null на нативном пути,
+  // где компенсация разрешений делается внутри compareImages).
+  final Uint8List? refCanonicalBytes;
   final List<double> homography;       // 3×3 row-major, 9 values
   final double reprojError;            // средняя ошибка репроекции в пикселях
   final double eccScore;               // ECC correlation 0..1
@@ -283,6 +287,7 @@ class AlignByAnchorsResult {
 
   const AlignByAnchorsResult({
     required this.alignedBytes,
+    this.refCanonicalBytes,
     required this.homography,
     required this.reprojError,
     required this.eccScore,

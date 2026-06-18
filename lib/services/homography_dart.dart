@@ -2,8 +2,20 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/painting.dart' show Offset;
 import 'package:image/image.dart' as img;
+import '../config/app_config.dart';
 
-const int _kMaxDim = 900;
+// Источник на вход warp ограничиваем по перфомансу — само число не влияет
+// на итоговый кадр (только на качество билинейной выборки).
+const int _kMaxSrcDim = 1600;
+
+// Каноническое разрешение печати: 70 л/см × 2 (Найквист) / 10 мм/см,
+// округлённое до кратного 27 (см. OpenCvPlugin.kt canonicalRes — тот же
+// стандарт применяется нативно). Используется как единая целевая рамка
+// и для эталона, и для выровненного образца, иначе их размеры расходятся.
+int canonicalDim(double mm) {
+  const pxPerMm = 14.0;
+  return ((mm * pxPerMm) / 27).ceil() * 27;
+}
 
 /// Pure-Dart fallback for alignByAnchors (web / no OpenCV).
 /// Computes homography via normalised DLT, then warps srcBytes → ref space.
@@ -20,16 +32,17 @@ Future<DartAlignResult?> dartAlignByAnchors(
   final refW = refImg.width, refH = refImg.height;
   final srcW = srcImg.width, srcH = srcImg.height;
 
-  // Work at reduced resolution
-  final refScale = _kMaxDim / math.max(refW, refH);
-  final srcScale = _kMaxDim / math.max(srcW, srcH);
+  final canonW = canonicalDim(AppConfig.printWidthMm);
+  final canonH = canonicalDim(AppConfig.printHeightMm);
 
-  final refResW = (refW * refScale).round();
-  final refResH = (refH * refScale).round();
+  // Якоря эталона нормализованы относительно его собственных пикселей —
+  // переводим их в каноническую рамку независимыми по осям масштабами.
+  final refScaleX = canonW / refW;
+  final refScaleY = canonH / refH;
+  final srcScale = _kMaxSrcDim / math.max(srcW, srcH);
 
-  // Scale anchor points to resized image coordinates
   final scaledRef = refPoints
-      .map((p) => Offset(p.dx * refScale, p.dy * refScale))
+      .map((p) => Offset(p.dx * refScaleX, p.dy * refScaleY))
       .toList();
   final scaledSrc = srcPoints
       .map((p) => Offset(p.dx * srcScale, p.dy * srcScale))
@@ -46,13 +59,20 @@ Future<DartAlignResult?> dartAlignByAnchors(
 
   // Warp (RGBA — альфа=0 у пикселей, не покрытых исходником, чтобы дальше
   // их можно было исключить из сравнения, а не считать чёрным отличием)
-  final warped = _warpPerspective(srcResized, H, refResW, refResH);
+  final warped = _warpPerspective(srcResized, H, canonW, canonH);
   final warpedBytes = Uint8List.fromList(img.encodePng(warped));
+
+  // Эталон приводим к той же канонической рамке — иначе ref/cmp выходят
+  // из этой функции разного размера и веб-сравнение (Dart MAE) получает
+  // заведомо несопоставимые изображения.
+  final refCanonical = img.copyResize(refImg, width: canonW, height: canonH);
+  final refCanonicalBytes = Uint8List.fromList(img.encodePng(refCanonical));
 
   final reproj = _reprojError(H, scaledSrc, scaledRef);
 
   return DartAlignResult(
     alignedBytes: warpedBytes,
+    refCanonicalBytes: refCanonicalBytes,
     homography: H,
     reprojError: reproj,
   );
@@ -60,10 +80,12 @@ Future<DartAlignResult?> dartAlignByAnchors(
 
 class DartAlignResult {
   final Uint8List alignedBytes;
+  final Uint8List refCanonicalBytes;
   final List<double> homography; // 9-element row-major 3×3
   final double reprojError;
   const DartAlignResult({
     required this.alignedBytes,
+    required this.refCanonicalBytes,
     required this.homography,
     required this.reprojError,
   });
