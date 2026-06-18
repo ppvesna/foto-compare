@@ -647,7 +647,12 @@ class _CompareScreenState extends State<CompareScreen>
             : null;
       });
 
-      await _saveCheckResult();
+      try {
+        await _saveCheckResult();
+      } catch (_) {
+        // Результат уже показан пользователю — сохранение можно повторить
+        // вручную через Файл → Сохранить, не блокируем компаратор этим.
+      }
     } catch (e) {
       if (mounted) xpDlg(context, 'Ошибка сравнения', e.toString());
     } finally {
@@ -666,7 +671,6 @@ class _CompareScreenState extends State<CompareScreen>
 
   // ── Сохранить текстовые маркеры результата (без изображений) ──
   Future<void> _saveCheckResult() async {
-    if (kIsWeb) return; // sqflite недоступен в браузере
     final r = _result;
     if (r == null) return;
     final score = r.score;
@@ -688,8 +692,9 @@ class _CompareScreenState extends State<CompareScreen>
       if (_barcodeMatchPct() != null) 'barcodeMatch': _barcodeMatchPct(),
     };
 
-    await LocalDatabase().saveCheckResult({
-      'id':                   const Uuid().v4(),
+    // Пишем напрямую в Supabase — sqflite (LocalDatabase) недоступен на вебе,
+    // а Supabase работает одинаково на всех платформах.
+    await Supabase.instance.client.from('check_results').insert({
       'layout_id':            null,
       'layout_profile_id':    null,
       'device_id':            null,
@@ -704,8 +709,7 @@ class _CompareScreenState extends State<CompareScreen>
       'shift_da':             r.shiftDA,
       'shift_db':             r.shiftDB,
       'heatmap_url':          null,
-      'details':              jsonEncode(details),
-      'created_at':           DateTime.now().toIso8601String(),
+      'details':              details,
     });
   }
 
@@ -799,8 +803,20 @@ class _CompareScreenState extends State<CompareScreen>
               label: 'Сохранить',
               icon: '💾',
               shortcut: 'Ctrl+S',
-              onTap: () =>
-                  xpDlg(context, 'Сохранено', 'Результат сохранён в историю')),
+              onTap: () async {
+                if (_result == null) {
+                  xpDlg(context, 'Ошибка', 'Сначала выполните сравнение');
+                  return;
+                }
+                try {
+                  await _saveCheckResult();
+                  if (mounted) {
+                    xpDlg(context, 'Сохранено', 'Результат сохранён в историю');
+                  }
+                } catch (e) {
+                  if (mounted) xpDlg(context, 'Ошибка сохранения', e.toString());
+                }
+              }),
           XpMenuItem(
               label: 'Экспорт...',
               icon: '📤',
