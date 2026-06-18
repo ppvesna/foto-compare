@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/app_config.dart';
 import '../database/local_database.dart';
@@ -19,6 +20,7 @@ class SyncService {
 
   void start() {
     if (!AppConfig.featureServerSync) return;
+    if (kIsWeb) return; // sqflite недоступен в браузере
     _timer?.cancel();
     // Синхронизация каждые 30 секунд
     _timer = Timer.periodic(const Duration(seconds: 30), (_) => sync());

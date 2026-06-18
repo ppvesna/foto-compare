@@ -1,5 +1,5 @@
 import 'api_service.dart';
-import '../database/local_database.dart';
+import '../../database/local_database.dart';
 import '../../config/app_config.dart';
 
 /// Сервис авторизации.
