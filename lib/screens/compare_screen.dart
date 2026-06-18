@@ -1716,66 +1716,29 @@ class _CompareScreenState extends State<CompareScreen>
                 _tableRow('Дата:', dateStr),
               ],
             )),
-        // ── Эталон и образец отдельно, с увеличением ──
-        if (_refImg != null && _cmpImg != null)
-          XpGroup(
-              label: 'Изображения',
-              child: XpCollapsible(
-                title: 'Эталон и образец (увеличение)',
-                child: LayoutBuilder(builder: (_, constraints) {
-                  final wide = constraints.maxWidth > 480;
-                  final panels = [
-                    _alignPanel(
-                      label: 'Эталон',
-                      bytes: _refAligned ?? _refImg!,
-                      imgSize: null,
-                      anchorPts: null,
-                      ctrl: _resultRefCtrl,
-                      availableWidth: wide
-                          ? (constraints.maxWidth - 8) / 2
-                          : constraints.maxWidth,
-                    ),
-                    _alignPanel(
-                      label: 'Образец',
-                      bytes: _cmpAligned ?? _cmpImg!,
-                      imgSize: null,
-                      anchorPts: null,
-                      ctrl: _resultCmpCtrl,
-                      availableWidth: wide
-                          ? (constraints.maxWidth - 8) / 2
-                          : constraints.maxWidth,
-                    ),
-                  ];
-                  if (wide) {
-                    return Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(child: panels[0]),
-                        const SizedBox(width: 8),
-                        Expanded(child: panels[1]),
-                      ],
-                    );
-                  }
-                  return Column(
-                      children: [panels[0], const SizedBox(height: 8), panels[1]]);
-                }),
-              )),
-
         // ── Наложение: эталон + образец с ползунком ──
         if (_refImg != null && _cmpImg != null)
           XpGroup(
               label: 'Наложение',
               child: Column(children: [
-                Container(
-                  height: 220,
-                  color: Colors.black,
-                  child: Stack(fit: StackFit.expand, children: [
-                    Image.memory(_refAligned ?? _refImg!, fit: BoxFit.contain),
-                    Opacity(
-                      opacity: _resultOpacity,
-                      child: Image.memory(_cmpAligned ?? _cmpImg!, fit: BoxFit.contain),
+                ClipRect(
+                  child: Container(
+                    height: 220,
+                    color: Colors.black,
+                    child: InteractiveViewer(
+                      transformationController: _resultRefCtrl,
+                      boundaryMargin: const EdgeInsets.all(double.infinity),
+                      minScale: 0.5,
+                      maxScale: 8.0,
+                      child: Stack(fit: StackFit.expand, children: [
+                        Image.memory(_refAligned ?? _refImg!, fit: BoxFit.contain),
+                        Opacity(
+                          opacity: _resultOpacity,
+                          child: Image.memory(_cmpAligned ?? _cmpImg!, fit: BoxFit.contain),
+                        ),
+                      ]),
                     ),
-                  ]),
+                  ),
                 ),
                 const SizedBox(height: 4),
                 Row(children: [
@@ -1817,7 +1780,7 @@ class _CompareScreenState extends State<CompareScreen>
                 ]),
                 if (_showDiffL3) ...[
                   const SizedBox(height: 8),
-                  _diffOverlay(r.diffL3!, r.refCanonical),
+                  _diffOverlay(r.diffL3!, r.refCanonical, _resultCmpCtrl),
                 ],
               ])),
         if (_refBarcodes.isNotEmpty || _cmpBarcodes.isNotEmpty)
@@ -2418,16 +2381,26 @@ class _CompareScreenState extends State<CompareScreen>
       ]);
 
   // Карта ΔE поверх канонического ref — оба одного размера, наложение точное.
-  Widget _diffOverlay(Uint8List diffPng, Uint8List? canonRef) => Container(
-        height: 220,
-        color: Colors.black,
-        child: Stack(fit: StackFit.expand, children: [
-          if (canonRef != null)
-            Image.memory(canonRef, fit: BoxFit.contain)
-          else if (_refImg != null)
-            Image.memory(_refImg!, fit: BoxFit.contain),
-          Image.memory(diffPng, fit: BoxFit.contain),
-        ]),
+  Widget _diffOverlay(
+          Uint8List diffPng, Uint8List? canonRef, TransformationController ctrl) =>
+      ClipRect(
+        child: Container(
+          height: 220,
+          color: Colors.black,
+          child: InteractiveViewer(
+            transformationController: ctrl,
+            boundaryMargin: const EdgeInsets.all(double.infinity),
+            minScale: 0.5,
+            maxScale: 8.0,
+            child: Stack(fit: StackFit.expand, children: [
+              if (canonRef != null)
+                Image.memory(canonRef, fit: BoxFit.contain)
+              else if (_refImg != null)
+                Image.memory(_refImg!, fit: BoxFit.contain),
+              Image.memory(diffPng, fit: BoxFit.contain),
+            ]),
+          ),
+        ),
       );
 
   // Текстовый комментарий о цветовом сдвиге образца относительно эталона.
