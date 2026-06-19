@@ -51,6 +51,11 @@ class _CropFrameScreenState extends State<CropFrameScreen> {
 
   bool _loading = true;
 
+  // Декодированное изображение, переиспользуется при обрезке —
+  // чтобы не декодировать одни и те же байты дважды (это и так медленно
+  // для больших фото в чистом Dart).
+  img.Image? _decoded;
+
   @override
   void initState() {
     super.initState();
@@ -58,11 +63,12 @@ class _CropFrameScreenState extends State<CropFrameScreen> {
   }
 
   Future<void> _loadImageSize() async {
-    // Use img.decodeImage (same as _onConfirm) so EXIF rotation is applied
-    // and _imgSize matches the visual dimensions shown by Image.memory
+    // Use img.decodeImage so EXIF rotation is applied and _imgSize matches
+    // the visual dimensions shown by Image.memory
     final decoded = await compute((bytes) => img.decodeImage(bytes), widget.imageBytes);
     if (decoded != null && mounted) {
       setState(() {
+        _decoded = decoded;
         _imgSize = ui.Size(decoded.width.toDouble(), decoded.height.toDouble());
         _loading = false;
       });
@@ -152,7 +158,7 @@ class _CropFrameScreenState extends State<CropFrameScreen> {
   Future<void> _onConfirm() async {
     setState(() => _loading = true);
     final bytes = await compute(_performCrop, _CropTask(
-      bytes: widget.imageBytes,
+      decoded: _decoded!,
       imgWidth: _imgSize.width,
       imgHeight: _imgSize.height,
       viewWidth: _viewSize.width,
@@ -210,13 +216,13 @@ class _CropFrameScreenState extends State<CropFrameScreen> {
 enum _DragTarget { none, move, top, bottom, left, right, topLeft, topRight, bottomLeft, bottomRight }
 
 class _CropTask {
-  final Uint8List bytes;
+  final img.Image decoded;
   final double imgWidth, imgHeight;
   final double viewWidth, viewHeight;
   final double frameLeft, frameTop, frameWidth, frameHeight;
 
   const _CropTask({
-    required this.bytes,
+    required this.decoded,
     required this.imgWidth,
     required this.imgHeight,
     required this.viewWidth,
@@ -229,8 +235,7 @@ class _CropTask {
 }
 
 Uint8List _performCrop(_CropTask task) {
-  final decoded = img.decodeImage(task.bytes);
-  if (decoded == null) return task.bytes;
+  final decoded = task.decoded;
 
   final imgAspect = task.imgWidth / task.imgHeight;
   final viewAspect = task.viewWidth / task.viewHeight;
@@ -264,7 +269,9 @@ Uint8List _performCrop(_CropTask task) {
   final ch = (clipped.height * scaleY).round().clamp(1, decoded.height - cy);
 
   final cropped = img.copyCrop(decoded, x: cx, y: cy, width: cw, height: ch);
-  return Uint8List.fromList(img.encodePng(cropped));
+  // level: 1 — быстрое сжатие вместо дефолтного (6), на больших фото
+  // экономит большую часть времени кодирования PNG в чистом Dart.
+  return Uint8List.fromList(img.encodePng(cropped, level: 1));
 }
 
 class _CropPainter extends CustomPainter {
