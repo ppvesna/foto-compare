@@ -183,6 +183,7 @@ class CompareResult {
   final double?   shiftDA;        // глобальный сдвиг a*
   final double?   shiftDB;        // глобальный сдвиг b*
   final Uint8List? refCanonical;  // каноническое ref для наложения diff
+  final Uint8List? cmpCanonical;  // каноническое cmp, та же система координат
   final int       diffPixels;
   final int       totalPixels;
   final String    refSize;
@@ -201,6 +202,7 @@ class CompareResult {
     this.shiftDA,
     this.shiftDB,
     this.refCanonical,
+    this.cmpCanonical,
     required this.diffPixels,
     required this.totalPixels,
     required this.refSize,

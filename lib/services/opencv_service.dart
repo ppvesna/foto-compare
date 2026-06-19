@@ -193,6 +193,7 @@ class OpenCvService {
         shiftDA:      (raw['shiftDA'] as num).toDouble(),
         shiftDB:      (raw['shiftDB'] as num).toDouble(),
         refCanonical: raw['refCanonical'] as Uint8List,
+        cmpCanonical: raw['cmpCanonical'] as Uint8List?,
         diffL3:       raw['diffL3'] as Uint8List,
       );
     } on MissingPluginException {
@@ -320,6 +321,7 @@ class LabCompareResult {
   final double shiftDA;         // глобальный сдвиг a* (+ красный, − зелёный)
   final double shiftDB;         // глобальный сдвиг b* (+ жёлтый, − синий)
   final Uint8List refCanonical; // каноническое ref-изображение для наложения diff
+  final Uint8List? cmpCanonical; // каноническое cmp-изображение, та же система координат
   final Uint8List diffL3;       // PNG карта L3 27×27 детали
 
   const LabCompareResult({
@@ -334,6 +336,7 @@ class LabCompareResult {
     required this.shiftDA,
     required this.shiftDB,
     required this.refCanonical,
+    this.cmpCanonical,
     required this.diffL3,
   });
 }

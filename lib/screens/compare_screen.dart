@@ -622,6 +622,7 @@ class _CompareScreenState extends State<CompareScreen>
             shiftDA:       lab.shiftDA,
             shiftDB:       lab.shiftDB,
             refCanonical:  lab.refCanonical,
+            cmpCanonical:  lab.cmpCanonical,
             diffPixels:    r.diffPixels,
             totalPixels:   r.totalPixels,
             refSize:       r.refSize,
@@ -1784,7 +1785,7 @@ class _CompareScreenState extends State<CompareScreen>
                   _legendItem(const Color(0xFFDC1414), 'ΔE > 6'),
                 ]),
                 const SizedBox(height: 8),
-                _diffOverlay(r.diffL3!, r.refCanonical, _resultCmpCtrl),
+                _diffOverlay(r.diffL3!, r.refCanonical, r.cmpCanonical, _resultCmpCtrl),
                 const SizedBox(height: 2),
                 const Text('Ctrl+скролл/драг — зум и перемещение',
                     style: TextStyle(fontSize: 9, color: Colors.grey)),
@@ -2398,13 +2399,16 @@ class _CompareScreenState extends State<CompareScreen>
         Text(label, style: const TextStyle(fontSize: 10)),
       ]);
 
-  // Карта ΔE поверх канонического ref — оба одного размера, наложение точное.
+  // Карта ΔE поверх канонического ref/cmp — оба в одной системе координат,
+  // что и diffL3 (см. compareImages в OpenCvPlugin.kt), наложение точное.
+  // _cmpAligned/_cmpImg сюда НЕ годятся — они в другом масштабе/letterbox
+  // и дают видимое смещение подсветки относительно картинки.
   // Ползунок кросс-фейдит эталон → образец, подсветка отличий проявляется
   // вместе с образцом.
-  Widget _diffOverlay(
-          Uint8List diffPng, Uint8List? canonRef, TransformationController ctrl) {
+  Widget _diffOverlay(Uint8List diffPng, Uint8List? canonRef,
+      Uint8List? canonCmp, TransformationController ctrl) {
     final Uint8List? refBase = canonRef ?? _refImg;
-    final Uint8List? cmpBase = _cmpAligned ?? _cmpImg;
+    final Uint8List? cmpBase = canonCmp ?? _cmpAligned ?? _cmpImg;
     return ClipRect(
       child: Container(
         height: 220,

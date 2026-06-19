@@ -769,8 +769,10 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             "shiftDL"      to dL,
             "shiftDA"      to da,
             "shiftDB"      to db,
-            // Каноническое ref-изображение для корректного наложения diff-карты
+            // Каноническое ref/cmp-изображение для корректного наложения diff-карты —
+            // оба в одной системе координат, что и diffL3, поэтому выравнены пиксель-в-пиксель
             "refCanonical" to matToBytes(refCrp),
+            "cmpCanonical" to matToBytes(cmpCrp),
             // Diff-карта L3 (27×27 детали). L1 и L2 → только текст.
             "diffL3"       to buildZoneDiff(de3, GRID, nw, nh),
         )
