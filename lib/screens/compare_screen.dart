@@ -84,8 +84,7 @@ class _CompareScreenState extends State<CompareScreen>
   static const double _framePad = 0.10;
 
   bool   _stacking      = false;
-  bool   _showDiffL3    = false;
-  bool   _diffShowCmp   = false;
+  double _diffSlider    = 0.0;
   final _resultCmpCtrl = TransformationController();
 
   final _history = [
@@ -1783,53 +1782,23 @@ class _CompareScreenState extends State<CompareScreen>
                   _legendItem(const Color(0xFFE8A000), 'ΔE 3–6'),
                   const SizedBox(width: 10),
                   _legendItem(const Color(0xFFDC1414), 'ΔE > 6'),
-                  const Spacer(),
-                  XpBtn(
-                    label: _showDiffL3 ? 'Скрыть' : '🔍 Показать',
-                    onPressed: () => setState(() => _showDiffL3 = !_showDiffL3),
-                  ),
                 ]),
-                if (_showDiffL3) ...[
-                  const SizedBox(height: 8),
-                  _diffOverlay(r.diffL3!, r.refCanonical, _resultCmpCtrl),
-                  const SizedBox(height: 2),
-                  const Text('Ctrl+скролл/драг — зум и перемещение',
-                      style: TextStyle(fontSize: 9, color: Colors.grey)),
-                  const SizedBox(height: 4),
-                  Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                    GestureDetector(
-                      onTap: () => setState(() => _diffShowCmp = false),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: !_diffShowCmp
-                              ? AppTheme.blue.withOpacity(0.2) : null,
-                          border: Border.all(
-                            color: !_diffShowCmp ? AppTheme.blue : Colors.grey,
-                          ),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: const Text('🖼 Эталон', style: TextStyle(fontSize: 11)),
-                      ),
+                const SizedBox(height: 8),
+                _diffOverlay(r.diffL3!, r.refCanonical, _resultCmpCtrl),
+                const SizedBox(height: 2),
+                const Text('Ctrl+скролл/драг — зум и перемещение',
+                    style: TextStyle(fontSize: 9, color: Colors.grey)),
+                const SizedBox(height: 4),
+                Row(children: [
+                  const Text('🖼 Эталон', style: TextStyle(fontSize: 11)),
+                  Expanded(
+                    child: Slider(
+                      value: _diffSlider,
+                      onChanged: (v) => setState(() => _diffSlider = v),
                     ),
-                    const SizedBox(width: 12),
-                    GestureDetector(
-                      onTap: () => setState(() => _diffShowCmp = true),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: _diffShowCmp
-                              ? AppTheme.blue.withOpacity(0.2) : null,
-                          border: Border.all(
-                            color: _diffShowCmp ? AppTheme.blue : Colors.grey,
-                          ),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: const Text('📷 Образец', style: TextStyle(fontSize: 11)),
-                      ),
-                    ),
-                  ]),
-                ],
+                  ),
+                  const Text('📷 Образец', style: TextStyle(fontSize: 11)),
+                ]),
               ])),
         if (_refBarcodes.isNotEmpty || _cmpBarcodes.isNotEmpty)
           XpGroup(
@@ -2430,11 +2399,12 @@ class _CompareScreenState extends State<CompareScreen>
       ]);
 
   // Карта ΔE поверх канонического ref — оба одного размера, наложение точное.
+  // Ползунок кросс-фейдит эталон → образец, подсветка отличий проявляется
+  // вместе с образцом.
   Widget _diffOverlay(
           Uint8List diffPng, Uint8List? canonRef, TransformationController ctrl) {
-    final Uint8List? base = _diffShowCmp
-        ? (_cmpAligned ?? _cmpImg)
-        : (canonRef ?? _refImg);
+    final Uint8List? refBase = canonRef ?? _refImg;
+    final Uint8List? cmpBase = _cmpAligned ?? _cmpImg;
     return ClipRect(
       child: Container(
         height: 220,
@@ -2447,8 +2417,16 @@ class _CompareScreenState extends State<CompareScreen>
           panEnabled: _ctrlHeld,
           scaleEnabled: _ctrlHeld,
           child: Stack(fit: StackFit.expand, children: [
-            if (base != null) Image.memory(base, fit: BoxFit.contain),
-            if (_diffShowCmp) Image.memory(diffPng, fit: BoxFit.contain),
+            if (refBase != null) Image.memory(refBase, fit: BoxFit.contain),
+            if (cmpBase != null)
+              Opacity(
+                opacity: _diffSlider,
+                child: Image.memory(cmpBase, fit: BoxFit.contain),
+              ),
+            Opacity(
+              opacity: _diffSlider,
+              child: Image.memory(diffPng, fit: BoxFit.contain),
+            ),
           ]),
         ),
       ),
