@@ -460,28 +460,37 @@ class _AnchorPainter extends CustomPainter {
               ..style = PaintingStyle.stroke);
       }
 
-      canvas.drawCircle(wp, isDragging ? 14 : 10,
+      final r = isDragging ? 7.0 : 5.0;
+      canvas.drawCircle(wp, r + 2,
           Paint()..color = Colors.black.withOpacity(0.5));
-      canvas.drawCircle(wp, isDragging ? 12 : 8,
+      canvas.drawCircle(wp, r,
           Paint()..color = color);
-      canvas.drawCircle(wp, isDragging ? 12 : 8,
+      canvas.drawCircle(wp, r,
           Paint()
             ..color = Colors.white
             ..strokeWidth = 1.5
             ..style = PaintingStyle.stroke);
 
+      // Номер рядом с точкой, а не поверх неё — иначе он закрывает
+      // ровно то место, куда указывает якорь.
       final tp = TextPainter(
         text: TextSpan(
           text: '${i + 1}',
           style: TextStyle(
-            color: Colors.black,
+            color: Colors.white,
             fontSize: isDragging ? 11 : 9,
             fontWeight: FontWeight.bold,
           ),
         ),
         textDirection: TextDirection.ltr,
       )..layout();
-      tp.paint(canvas, wp - Offset(tp.width / 2, tp.height / 2));
+      final labelPos = wp + Offset(r + 6, -(r + 6));
+      final bgRect = Rect.fromLTWH(
+          labelPos.dx - 2, labelPos.dy - 1, tp.width + 4, tp.height + 2);
+      canvas.drawRRect(
+          RRect.fromRectAndRadius(bgRect, const Radius.circular(3)),
+          Paint()..color = Colors.black87);
+      tp.paint(canvas, labelPos);
     }
   }
 
