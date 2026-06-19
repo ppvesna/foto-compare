@@ -2,9 +2,8 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/gestures.dart' show PointerScrollEvent;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show HardwareKeyboard;
+import 'package:flutter/services.dart' show HardwareKeyboard, KeyEvent;
 import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -110,6 +109,7 @@ class _CompareScreenState extends State<CompareScreen>
     _tabs = TabController(length: 5, vsync: this);
     _loadSavedReference();
     _loadProfiles();
+    HardwareKeyboard.instance.addHandler(_handleCtrlKey);
   }
 
   Future<void> _loadProfiles() async {
@@ -419,6 +419,7 @@ class _CompareScreenState extends State<CompareScreen>
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleCtrlKey);
     _tabs.dispose();
     _overlayCtrl.dispose();
     _cmp2Ctrl.dispose();
@@ -427,6 +428,16 @@ class _CompareScreenState extends State<CompareScreen>
     _resultRefCtrl.dispose();
     _resultCmpCtrl.dispose();
     super.dispose();
+  }
+
+  // ── Зум/панорамирование картинок разрешён только при зажатом
+  // Ctrl — иначе колесо мыши/трекпад над картинкой перехватывает
+  // скролл страницы вместо её прокрутки.
+  bool _ctrlHeld = false;
+  bool _handleCtrlKey(KeyEvent event) {
+    final held = HardwareKeyboard.instance.isControlPressed;
+    if (held != _ctrlHeld) setState(() => _ctrlHeld = held);
+    return false;
   }
 
   // ── Сброс масштаба всех зумируемых панелей ────────
@@ -1606,24 +1617,19 @@ class _CompareScreenState extends State<CompareScreen>
         child: Text(label,
             style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
       ),
-      // Область изображения
+      // Область изображения. Зум/панорамирование колесом или драгом —
+      // только при зажатом Ctrl, иначе блокируется скролл страницы.
       ClipRect(
         child: SizedBox(
           height: panelHeight,
-          child: Listener(
-            onPointerSignal: (e) {
-              if (e is PointerScrollEvent &&
-                  HardwareKeyboard.instance.isControlPressed) {
-                zoom(e.scrollDelta.dy < 0 ? 1.15 : 0.87);
-              }
-            },
-            child: InteractiveViewer(
-              transformationController: ctrl,
-              boundaryMargin: const EdgeInsets.all(80),
-              minScale: 0.2,
-              maxScale: 8.0,
-              child: viewerChild,
-            ),
+          child: InteractiveViewer(
+            transformationController: ctrl,
+            boundaryMargin: const EdgeInsets.all(80),
+            minScale: 0.2,
+            maxScale: 8.0,
+            panEnabled: _ctrlHeld,
+            scaleEnabled: _ctrlHeld,
+            child: viewerChild,
           ),
         ),
       ),
@@ -1637,6 +1643,11 @@ class _CompareScreenState extends State<CompareScreen>
           _ZoomBtn(label: '+', onTap: () => zoom(1.3)),
           const SizedBox(width: 6),
           _ZoomBtn(label: '⊡', onTap: () => ctrl.value = Matrix4.identity()),
+          if (!placing) ...[
+            const SizedBox(width: 8),
+            const Text('Ctrl+скролл/драг — зум и перемещение',
+                style: TextStyle(fontSize: 9, color: Colors.grey)),
+          ],
           if (placing) ...[
             const Spacer(),
             Text(
@@ -1758,6 +1769,8 @@ class _CompareScreenState extends State<CompareScreen>
                       boundaryMargin: const EdgeInsets.all(double.infinity),
                       minScale: 0.5,
                       maxScale: 8.0,
+                      panEnabled: _ctrlHeld,
+                      scaleEnabled: _ctrlHeld,
                       child: Stack(fit: StackFit.expand, children: [
                         Image.memory(_refAligned ?? _refImg!, fit: BoxFit.contain),
                         Opacity(
@@ -1768,6 +1781,9 @@ class _CompareScreenState extends State<CompareScreen>
                     ),
                   ),
                 ),
+                const SizedBox(height: 2),
+                const Text('Ctrl+скролл/драг — зум и перемещение',
+                    style: TextStyle(fontSize: 9, color: Colors.grey)),
                 const SizedBox(height: 4),
                 Row(mainAxisAlignment: MainAxisAlignment.center, children: [
                   GestureDetector(
@@ -1833,6 +1849,9 @@ class _CompareScreenState extends State<CompareScreen>
                 if (_showDiffL3) ...[
                   const SizedBox(height: 8),
                   _diffOverlay(r.diffL3!, r.refCanonical, _resultCmpCtrl),
+                  const SizedBox(height: 2),
+                  const Text('Ctrl+скролл/драг — зум и перемещение',
+                      style: TextStyle(fontSize: 9, color: Colors.grey)),
                 ],
               ])),
         if (_refBarcodes.isNotEmpty || _cmpBarcodes.isNotEmpty)
@@ -2445,6 +2464,8 @@ class _CompareScreenState extends State<CompareScreen>
             boundaryMargin: const EdgeInsets.all(double.infinity),
             minScale: 0.5,
             maxScale: 8.0,
+            panEnabled: _ctrlHeld,
+            scaleEnabled: _ctrlHeld,
             child: Stack(fit: StackFit.expand, children: [
               if (canonRef != null)
                 Image.memory(canonRef, fit: BoxFit.contain)
@@ -2687,8 +2708,8 @@ class _AnchorPointMarker extends StatelessWidget {
     this.color = Colors.red,
   });
 
-  static const double _dotSize = 12;
-  static const double _labelOffset = 12;
+  static const double _dotSize = 8;
+  static const double _labelOffset = 16;
 
   @override
   Widget build(BuildContext context) {

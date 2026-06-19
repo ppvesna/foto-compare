@@ -460,7 +460,7 @@ class _AnchorPainter extends CustomPainter {
               ..style = PaintingStyle.stroke);
       }
 
-      final r = isDragging ? 7.0 : 5.0;
+      final r = isDragging ? 5.0 : 3.5;
       canvas.drawCircle(wp, r + 2,
           Paint()..color = Colors.black.withOpacity(0.5));
       canvas.drawCircle(wp, r,
@@ -484,7 +484,7 @@ class _AnchorPainter extends CustomPainter {
         ),
         textDirection: TextDirection.ltr,
       )..layout();
-      final labelPos = wp + Offset(r + 6, -(r + 6));
+      final labelPos = wp + Offset(r + 10, -(r + 10));
       final bgRect = Rect.fromLTWH(
           labelPos.dx - 2, labelPos.dy - 1, tp.width + 4, tp.height + 2);
       canvas.drawRRect(
