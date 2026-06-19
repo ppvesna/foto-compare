@@ -2448,7 +2448,7 @@ class _CompareScreenState extends State<CompareScreen>
           scaleEnabled: _ctrlHeld,
           child: Stack(fit: StackFit.expand, children: [
             if (base != null) Image.memory(base, fit: BoxFit.contain),
-            Image.memory(diffPng, fit: BoxFit.contain),
+            if (_diffShowCmp) Image.memory(diffPng, fit: BoxFit.contain),
           ]),
         ),
       ),
