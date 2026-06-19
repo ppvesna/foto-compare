@@ -743,10 +743,22 @@ class _CompareScreenState extends State<CompareScreen>
       title: isRef ? 'Рамка — Эталон' : 'Рамка — Образец',
     );
     if (result != null && mounted) {
+      // Обрезанная картинка имеет другие размеры — пересчитываем
+      // _refImgSize/_cmpImgSize, иначе панель якорных точек продолжает
+      // мапить клики по старым (необрезанным) размерам, и точки
+      // оказываются смещены относительно реального изображения.
+      final sz = await compute(_decodeSize, result);
+      if (!mounted) return;
+      final newSize = Size(sz.width.toDouble(), sz.height.toDouble());
       setState(() {
         _layoutProfile = null;
-        if (isRef) { _refImg = result; _refAligned = null; }
-        else        { _cmpImg = result; _cmpAligned = null; }
+        if (isRef) {
+          _refImg = result; _refImgSize = newSize;
+          _refAligned = null; _refAnchorPts = null;
+        } else {
+          _cmpImg = result; _cmpImgSize = newSize;
+          _cmpAligned = null; _cmpAnchorPts = null;
+        }
       });
     }
   }
