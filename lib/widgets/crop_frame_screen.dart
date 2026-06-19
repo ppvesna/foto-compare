@@ -150,47 +150,18 @@ class _CropFrameScreenState extends State<CropFrameScreen> {
   }
 
   Future<void> _onConfirm() async {
-    final decoded = img.decodeImage(widget.imageBytes);
-    if (decoded == null) { Navigator.pop(context); return; }
-
-    // Перевод из координат виджета в координаты изображения
-    // (с учётом letterbox внутри BoxFit.contain)
-    final imgAspect = _imgSize.width / _imgSize.height;
-    final viewAspect = _viewSize.width / _viewSize.height;
-
-    double imgX, imgY, imgW, imgH;
-    if (imgAspect > viewAspect) {
-      // Чёрные полосы сверху/снизу
-      imgW = _viewSize.width;
-      imgH = _viewSize.width / imgAspect;
-      imgX = 0;
-      imgY = (_viewSize.height - imgH) / 2;
-    } else {
-      // Чёрные полосы слева/справа
-      imgH = _viewSize.height;
-      imgW = _viewSize.height * imgAspect;
-      imgY = 0;
-      imgX = (_viewSize.width - imgW) / 2;
-    }
-
-    // Рамка в абсолютных координатах виджета
-    final fr = _frameRect;
-
-    // Пересечение рамки с реальной областью изображения
-    final imgRect = Rect.fromLTWH(imgX, imgY, imgW, imgH);
-    final clipped = fr.intersect(imgRect);
-
-    // Перевод в пиксели исходного изображения
-    final scaleX = _imgSize.width  / imgW;
-    final scaleY = _imgSize.height / imgH;
-
-    final cx = ((clipped.left  - imgX) * scaleX).round().clamp(0, decoded.width);
-    final cy = ((clipped.top   - imgY) * scaleY).round().clamp(0, decoded.height);
-    final cw = (clipped.width  * scaleX).round().clamp(1, decoded.width  - cx);
-    final ch = (clipped.height * scaleY).round().clamp(1, decoded.height - cy);
-
-    final cropped = img.copyCrop(decoded, x: cx, y: cy, width: cw, height: ch);
-    final bytes = Uint8List.fromList(img.encodePng(cropped));
+    setState(() => _loading = true);
+    final bytes = await compute(_performCrop, _CropTask(
+      bytes: widget.imageBytes,
+      imgWidth: _imgSize.width,
+      imgHeight: _imgSize.height,
+      viewWidth: _viewSize.width,
+      viewHeight: _viewSize.height,
+      frameLeft: _frame.left,
+      frameTop: _frame.top,
+      frameWidth: _frame.width,
+      frameHeight: _frame.height,
+    ));
     if (mounted) Navigator.pop(context, bytes);
   }
 
@@ -237,6 +208,64 @@ class _CropFrameScreenState extends State<CropFrameScreen> {
 }
 
 enum _DragTarget { none, move, top, bottom, left, right, topLeft, topRight, bottomLeft, bottomRight }
+
+class _CropTask {
+  final Uint8List bytes;
+  final double imgWidth, imgHeight;
+  final double viewWidth, viewHeight;
+  final double frameLeft, frameTop, frameWidth, frameHeight;
+
+  const _CropTask({
+    required this.bytes,
+    required this.imgWidth,
+    required this.imgHeight,
+    required this.viewWidth,
+    required this.viewHeight,
+    required this.frameLeft,
+    required this.frameTop,
+    required this.frameWidth,
+    required this.frameHeight,
+  });
+}
+
+Uint8List _performCrop(_CropTask task) {
+  final decoded = img.decodeImage(task.bytes);
+  if (decoded == null) return task.bytes;
+
+  final imgAspect = task.imgWidth / task.imgHeight;
+  final viewAspect = task.viewWidth / task.viewHeight;
+  double imgX, imgY, imgW, imgH;
+  if (imgAspect > viewAspect) {
+    imgW = task.viewWidth;
+    imgH = task.viewWidth / imgAspect;
+    imgX = 0;
+    imgY = (task.viewHeight - imgH) / 2;
+  } else {
+    imgH = task.viewHeight;
+    imgW = task.viewHeight * imgAspect;
+    imgY = 0;
+    imgX = (task.viewWidth - imgW) / 2;
+  }
+
+  final fr = Rect.fromLTWH(
+    task.frameLeft * task.viewWidth,
+    task.frameTop * task.viewHeight,
+    task.frameWidth * task.viewWidth,
+    task.frameHeight * task.viewHeight,
+  );
+  final imgRect = Rect.fromLTWH(imgX, imgY, imgW, imgH);
+  final clipped = fr.intersect(imgRect);
+
+  final scaleX = task.imgWidth / imgW;
+  final scaleY = task.imgHeight / imgH;
+  final cx = ((clipped.left - imgX) * scaleX).round().clamp(0, decoded.width);
+  final cy = ((clipped.top - imgY) * scaleY).round().clamp(0, decoded.height);
+  final cw = (clipped.width * scaleX).round().clamp(1, decoded.width - cx);
+  final ch = (clipped.height * scaleY).round().clamp(1, decoded.height - cy);
+
+  final cropped = img.copyCrop(decoded, x: cx, y: cy, width: cw, height: ch);
+  return Uint8List.fromList(img.encodePng(cropped));
+}
 
 class _CropPainter extends CustomPainter {
   final Rect frame;
