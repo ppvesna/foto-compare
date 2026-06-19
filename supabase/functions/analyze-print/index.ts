@@ -31,12 +31,14 @@ const USER_PROMPT = `Сравни эти два изображения. Перв
 Если печать качественная и проблем нет — issues должен быть пустым массивом.`;
 
 Deno.serve(async (req: Request) => {
-  // CORS
+  // CORS — supabase-js добавляет apikey и x-client-info к каждому вызову
+  // functions.invoke(), их нужно явно разрешить, иначе браузер блокирует
+  // запрос на этапе preflight (выглядит как "Failed to fetch").
   if (req.method === "OPTIONS") {
     return new Response(null, {
       headers: {
         "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Headers": "authorization, content-type",
+        "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
       },
     });
   }
