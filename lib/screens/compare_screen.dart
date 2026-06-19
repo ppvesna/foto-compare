@@ -86,7 +86,7 @@ class _CompareScreenState extends State<CompareScreen>
 
   bool   _stacking      = false;
   bool   _showDiffL3    = false;
-  double _resultOpacity = 0.5;
+  double _resultOpacity = 0.0;
   final _resultRefCtrl = TransformationController();
   final _resultCmpCtrl = TransformationController();
 
@@ -1757,14 +1757,38 @@ class _CompareScreenState extends State<CompareScreen>
                   ),
                 ),
                 const SizedBox(height: 4),
-                Row(children: [
-                  const Text('Эталон', style: TextStyle(fontSize: 10)),
-                  Expanded(child: Slider(
-                    value: _resultOpacity,
-                    onChanged: (v) => setState(() => _resultOpacity = v),
-                    activeColor: AppTheme.blue,
-                  )),
-                  const Text('Образец', style: TextStyle(fontSize: 10)),
+                Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  GestureDetector(
+                    onTap: () => setState(() => _resultOpacity = 0.0),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: _resultOpacity == 0.0
+                            ? AppTheme.blue.withOpacity(0.2) : null,
+                        border: Border.all(
+                          color: _resultOpacity == 0.0 ? AppTheme.blue : Colors.grey,
+                        ),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Text('🖼 Эталон', style: TextStyle(fontSize: 11)),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  GestureDetector(
+                    onTap: () => setState(() => _resultOpacity = 1.0),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: _resultOpacity == 1.0
+                            ? AppTheme.blue.withOpacity(0.2) : null,
+                        border: Border.all(
+                          color: _resultOpacity == 1.0 ? AppTheme.blue : Colors.grey,
+                        ),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Text('📷 Образец', style: TextStyle(fontSize: 11)),
+                    ),
+                  ),
                 ]),
               ])),
 
