@@ -429,6 +429,14 @@ class _CompareScreenState extends State<CompareScreen>
     super.dispose();
   }
 
+  // ── Сброс масштаба всех зумируемых панелей ────────
+  void _resetZoomControllers() {
+    _refAlignCtrl.value = Matrix4.identity();
+    _cmpAlignCtrl.value = Matrix4.identity();
+    _resultRefCtrl.value = Matrix4.identity();
+    _resultCmpCtrl.value = Matrix4.identity();
+  }
+
 
 
   // ── Второй эталон: выбор ─────────────────────────
@@ -584,6 +592,8 @@ class _CompareScreenState extends State<CompareScreen>
       _textDiff = null;
       _result = null;
     });
+    _resultRefCtrl.value = Matrix4.identity();
+    _resultCmpCtrl.value = Matrix4.identity();
     try {
       // Фаза 1: сравнение пикселей — быстро, показываем результат сразу
       final compareResult = await CompareService.compare(ref, cmp);
@@ -796,6 +806,7 @@ class _CompareScreenState extends State<CompareScreen>
                     _result = null; _aiResult = null;
                     _refBarcodes = []; _cmpBarcodes = [];
                     _refOcr = null; _cmpOcr = null; _textDiff = null;
+                    _resetZoomControllers();
                     _tabs.animateTo(0);
                   })),
           XpMenuItem.sep,
@@ -1547,9 +1558,10 @@ class _CompareScreenState extends State<CompareScreen>
       return pts.asMap().entries.map((e) {
         final px = e.value.dx * ratio + offX;
         final py = e.value.dy * ratio + offY;
-        return Positioned(
-          left: px - 10, top: py - 10,
-          child: _AnchorDot(index: e.key + 1, color: color),
+        return Positioned.fill(
+          child: _AnchorPointMarker(
+            ctrl: ctrl, x: px, y: py, index: e.key + 1, color: color,
+          ),
         );
       }).toList();
     }
@@ -1934,6 +1946,7 @@ class _CompareScreenState extends State<CompareScreen>
                         _refAligned = null;
                         _cmpAligned = null;
                         _layoutProfile = null;
+                        _resetZoomControllers();
                       });
                       _tabs.animateTo(0);
                     }),
@@ -2656,24 +2669,75 @@ class _ImgLabel extends StatelessWidget {
       );
 }
 
-class _AnchorDot extends StatelessWidget {
+// Якорная точка с цифрой рядом. Размер точки и подписи остаётся
+// постоянным на экране независимо от зума InteractiveViewer — мы
+// слушаем ctrl и компенсируем масштаб обратным Transform.scale, а
+// смещение подписи от точки тоже пересчитываем через inv, чтобы оно
+// не "разъезжалось" при увеличении.
+class _AnchorPointMarker extends StatelessWidget {
+  final TransformationController ctrl;
+  final double x, y;
   final int index;
   final Color color;
-  const _AnchorDot({required this.index, this.color = Colors.red});
+  const _AnchorPointMarker({
+    required this.ctrl,
+    required this.x,
+    required this.y,
+    required this.index,
+    this.color = Colors.red,
+  });
+
+  static const double _dotSize = 12;
+  static const double _labelOffset = 12;
+
   @override
-  Widget build(BuildContext context) => Container(
-        width: 20,
-        height: 20,
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.85),
-          shape: BoxShape.circle,
-          border: Border.all(color: Colors.white, width: 1.5),
-        ),
-        alignment: Alignment.center,
-        child: Text('$index',
-            style: const TextStyle(
-                color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
-      );
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: ctrl,
+      builder: (_, __) {
+        final scale = ctrl.value.getMaxScaleOnAxis();
+        final inv = scale <= 0 ? 1.0 : 1 / scale;
+        final off = _labelOffset * inv;
+        return Stack(children: [
+          Positioned(
+            left: x - _dotSize / 2,
+            top: y - _dotSize / 2,
+            width: _dotSize,
+            height: _dotSize,
+            child: Transform.scale(
+              scale: inv,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.85),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 1.5),
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            left: x + off - 8,
+            top: y - off - 8,
+            width: 16,
+            height: 16,
+            child: Transform.scale(
+              scale: inv,
+              child: Container(
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: Colors.black87,
+                  borderRadius: BorderRadius.circular(3),
+                ),
+                child: Text('$index',
+                    style: const TextStyle(
+                        color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
+              ),
+            ),
+          ),
+        ]);
+      },
+    );
+  }
 }
 
 class _ZoomBtn extends StatelessWidget {
