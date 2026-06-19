@@ -748,6 +748,11 @@ class _CompareScreenState extends State<CompareScreen>
       final newSize = Size(sz.width.toDouble(), sz.height.toDouble());
       setState(() {
         _layoutProfile = null;
+        // Точки незавершённой калибровки (_tempRefPts/_tempCmpPts) записаны
+        // в пиксельных координатах старого (необрезанного) изображения —
+        // после обрезки они "уезжают" относительно нового кадра, поэтому
+        // сбрасываем калибровку целиком, а не только подтверждённые точки.
+        _calStep = 0; _tempRefPts = []; _tempCmpPts = [];
         if (isRef) {
           _refImg = result; _refImgSize = newSize;
           _refAligned = null; _refAnchorPts = null;
