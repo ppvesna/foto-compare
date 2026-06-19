@@ -85,8 +85,7 @@ class _CompareScreenState extends State<CompareScreen>
 
   bool   _stacking      = false;
   bool   _showDiffL3    = false;
-  double _resultOpacity = 0.0;
-  final _resultRefCtrl = TransformationController();
+  bool   _diffShowCmp   = false;
   final _resultCmpCtrl = TransformationController();
 
   final _history = [
@@ -425,7 +424,6 @@ class _CompareScreenState extends State<CompareScreen>
     _cmp2Ctrl.dispose();
     _refAlignCtrl.dispose();
     _cmpAlignCtrl.dispose();
-    _resultRefCtrl.dispose();
     _resultCmpCtrl.dispose();
     super.dispose();
   }
@@ -444,7 +442,6 @@ class _CompareScreenState extends State<CompareScreen>
   void _resetZoomControllers() {
     _refAlignCtrl.value = Matrix4.identity();
     _cmpAlignCtrl.value = Matrix4.identity();
-    _resultRefCtrl.value = Matrix4.identity();
     _resultCmpCtrl.value = Matrix4.identity();
   }
 
@@ -603,7 +600,6 @@ class _CompareScreenState extends State<CompareScreen>
       _textDiff = null;
       _result = null;
     });
-    _resultRefCtrl.value = Matrix4.identity();
     _resultCmpCtrl.value = Matrix4.identity();
     try {
       // Фаза 1: сравнение пикселей — быстро, показываем результат сразу
@@ -1767,71 +1763,6 @@ class _CompareScreenState extends State<CompareScreen>
                 _tableRow('Дата:', dateStr),
               ],
             )),
-        // ── Наложение: эталон + образец с ползунком ──
-        if (_refImg != null && _cmpImg != null)
-          XpGroup(
-              label: 'Наложение',
-              child: Column(children: [
-                ClipRect(
-                  child: Container(
-                    height: 220,
-                    color: Colors.black,
-                    child: InteractiveViewer(
-                      transformationController: _resultRefCtrl,
-                      boundaryMargin: const EdgeInsets.all(double.infinity),
-                      minScale: 0.5,
-                      maxScale: 8.0,
-                      panEnabled: _ctrlHeld,
-                      scaleEnabled: _ctrlHeld,
-                      child: Stack(fit: StackFit.expand, children: [
-                        Image.memory(_refAligned ?? _refImg!, fit: BoxFit.contain),
-                        Opacity(
-                          opacity: _resultOpacity,
-                          child: Image.memory(_cmpAligned ?? _cmpImg!, fit: BoxFit.contain),
-                        ),
-                      ]),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 2),
-                const Text('Ctrl+скролл/драг — зум и перемещение',
-                    style: TextStyle(fontSize: 9, color: Colors.grey)),
-                const SizedBox(height: 4),
-                Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                  GestureDetector(
-                    onTap: () => setState(() => _resultOpacity = 0.0),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: _resultOpacity == 0.0
-                            ? AppTheme.blue.withOpacity(0.2) : null,
-                        border: Border.all(
-                          color: _resultOpacity == 0.0 ? AppTheme.blue : Colors.grey,
-                        ),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: const Text('🖼 Эталон', style: TextStyle(fontSize: 11)),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  GestureDetector(
-                    onTap: () => setState(() => _resultOpacity = 1.0),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: _resultOpacity == 1.0
-                            ? AppTheme.blue.withOpacity(0.2) : null,
-                        border: Border.all(
-                          color: _resultOpacity == 1.0 ? AppTheme.blue : Colors.grey,
-                        ),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: const Text('📷 Образец', style: TextStyle(fontSize: 11)),
-                    ),
-                  ),
-                ]),
-              ])),
-
         // ── Анализ цвета (уровень 0 — глобальный) ──
         if (r.shiftDL != null || r.shiftDA != null)
           XpGroup(
@@ -1864,6 +1795,40 @@ class _CompareScreenState extends State<CompareScreen>
                   const SizedBox(height: 2),
                   const Text('Ctrl+скролл/драг — зум и перемещение',
                       style: TextStyle(fontSize: 9, color: Colors.grey)),
+                  const SizedBox(height: 4),
+                  Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    GestureDetector(
+                      onTap: () => setState(() => _diffShowCmp = false),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: !_diffShowCmp
+                              ? AppTheme.blue.withOpacity(0.2) : null,
+                          border: Border.all(
+                            color: !_diffShowCmp ? AppTheme.blue : Colors.grey,
+                          ),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: const Text('🖼 Эталон', style: TextStyle(fontSize: 11)),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    GestureDetector(
+                      onTap: () => setState(() => _diffShowCmp = true),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: _diffShowCmp
+                              ? AppTheme.blue.withOpacity(0.2) : null,
+                          border: Border.all(
+                            color: _diffShowCmp ? AppTheme.blue : Colors.grey,
+                          ),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: const Text('📷 Образец', style: TextStyle(fontSize: 11)),
+                      ),
+                    ),
+                  ]),
                 ],
               ])),
         if (_refBarcodes.isNotEmpty || _cmpBarcodes.isNotEmpty)
@@ -2466,28 +2431,29 @@ class _CompareScreenState extends State<CompareScreen>
 
   // Карта ΔE поверх канонического ref — оба одного размера, наложение точное.
   Widget _diffOverlay(
-          Uint8List diffPng, Uint8List? canonRef, TransformationController ctrl) =>
-      ClipRect(
-        child: Container(
-          height: 220,
-          color: Colors.black,
-          child: InteractiveViewer(
-            transformationController: ctrl,
-            boundaryMargin: const EdgeInsets.all(double.infinity),
-            minScale: 0.5,
-            maxScale: 8.0,
-            panEnabled: _ctrlHeld,
-            scaleEnabled: _ctrlHeld,
-            child: Stack(fit: StackFit.expand, children: [
-              if (canonRef != null)
-                Image.memory(canonRef, fit: BoxFit.contain)
-              else if (_refImg != null)
-                Image.memory(_refImg!, fit: BoxFit.contain),
-              Image.memory(diffPng, fit: BoxFit.contain),
-            ]),
-          ),
+          Uint8List diffPng, Uint8List? canonRef, TransformationController ctrl) {
+    final Uint8List? base = _diffShowCmp
+        ? (_cmpAligned ?? _cmpImg)
+        : (canonRef ?? _refImg);
+    return ClipRect(
+      child: Container(
+        height: 220,
+        color: Colors.black,
+        child: InteractiveViewer(
+          transformationController: ctrl,
+          boundaryMargin: const EdgeInsets.all(double.infinity),
+          minScale: 0.5,
+          maxScale: 8.0,
+          panEnabled: _ctrlHeld,
+          scaleEnabled: _ctrlHeld,
+          child: Stack(fit: StackFit.expand, children: [
+            if (base != null) Image.memory(base, fit: BoxFit.contain),
+            Image.memory(diffPng, fit: BoxFit.contain),
+          ]),
         ),
-      );
+      ),
+    );
+  }
 
   // Текстовый комментарий о цветовом сдвиге образца относительно эталона.
   // da > 0 → образец краснее; da < 0 → зеленее
