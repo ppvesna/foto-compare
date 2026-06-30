@@ -1315,6 +1315,19 @@ class _CompareScreenState extends State<CompareScreen>
   }
 
   Widget _workspaceColumn() {
+    if (_calStep != 0) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _calibrationWorkbench(),
+          const SizedBox(height: 10),
+          _comparisonStage(),
+          const SizedBox(height: 10),
+          _historyStrip(),
+        ],
+      );
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1373,10 +1386,6 @@ class _CompareScreenState extends State<CompareScreen>
           ],
         ),
         const SizedBox(height: 10),
-        if (_calStep != 0) ...[
-          _calibrationWorkbench(),
-          const SizedBox(height: 10),
-        ],
         _comparisonStage(),
         const SizedBox(height: 10),
         _historyStrip(),
@@ -1587,12 +1596,11 @@ class _CompareScreenState extends State<CompareScreen>
             final wide = constraints.maxWidth > 760;
             final panelWidth =
                 wide ? (constraints.maxWidth - 8) / 2 : constraints.maxWidth;
-            final refPanel = _alignPanel(
+            final refPanel = _calibrationPointPanel(
               label: _calStep == 1 ? 'Эталон - ставьте точки' : 'Эталон',
               bytes: _refImg!,
               imgSize: _refImgSize,
               anchorPts: _refAnchorPts,
-              ctrl: _refAlignCtrl,
               availableWidth: panelWidth,
               placing: _calStep == 1,
               tempPts: _tempRefPts,
@@ -1600,12 +1608,11 @@ class _CompareScreenState extends State<CompareScreen>
               onUndo: _calStep == 1 ? _undoLastPoint : null,
               minPts: _minAnchorPts,
             );
-            final cmpPanel = _alignPanel(
+            final cmpPanel = _calibrationPointPanel(
               label: _calStep == 2 ? 'Образец - ставьте точки' : 'Образец',
               bytes: _cmpImg!,
               imgSize: _cmpImgSize,
               anchorPts: _cmpAnchorPts,
-              ctrl: _cmpAlignCtrl,
               availableWidth: panelWidth,
               placing: _calStep == 2,
               tempPts: _tempCmpPts,
@@ -1729,6 +1736,156 @@ class _CompareScreenState extends State<CompareScreen>
         ),
       ),
     );
+  }
+
+  Widget _calibrationPointPanel({
+    required String label,
+    required Uint8List bytes,
+    required Size? imgSize,
+    required List<Offset>? anchorPts,
+    required double availableWidth,
+    bool placing = false,
+    List<Offset> tempPts = const [],
+    void Function(Offset)? onTap,
+    VoidCallback? onUndo,
+    int minPts = 4,
+  }) {
+    final imageSize = imgSize;
+    final panelHeight = (availableWidth * 9 / 16).clamp(280.0, 520.0);
+
+    Rect imageRect(Size boxSize) {
+      if (imageSize == null || imageSize.width <= 0 || imageSize.height <= 0) {
+        return Offset.zero & boxSize;
+      }
+      final scale = min(
+        boxSize.width / imageSize.width,
+        boxSize.height / imageSize.height,
+      );
+      final w = imageSize.width * scale;
+      final h = imageSize.height * scale;
+      return Rect.fromLTWH(
+        (boxSize.width - w) / 2,
+        (boxSize.height - h) / 2,
+        w,
+        h,
+      );
+    }
+
+    Offset? toImagePoint(Offset local, Size boxSize) {
+      if (imageSize == null || imageSize.width <= 0 || imageSize.height <= 0) {
+        return null;
+      }
+      final rect = imageRect(boxSize);
+      if (!rect.contains(local)) return null;
+      final x = (local.dx - rect.left) / rect.width * imageSize.width;
+      final y = (local.dy - rect.top) / rect.height * imageSize.height;
+      return Offset(x, y);
+    }
+
+    List<Widget> pointWidgets(Size boxSize, List<Offset> points, Color color) {
+      if (imageSize == null) return [];
+      final rect = imageRect(boxSize);
+      return points.asMap().entries.map((entry) {
+        final p = entry.value;
+        final x = rect.left + p.dx / imageSize.width * rect.width;
+        final y = rect.top + p.dy / imageSize.height * rect.height;
+        return Positioned(
+          left: x - 9,
+          top: y - 9,
+          child: _CalibrationDot(
+            index: entry.key + 1,
+            color: color,
+          ),
+        );
+      }).toList();
+    }
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+        color: placing ? const Color(0xFF0A3E8C) : AppTheme.blueDark,
+        child: Row(children: [
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          if (placing)
+            Text(
+              '${tempPts.length} / $minPts',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+        ]),
+      ),
+      LayoutBuilder(builder: (_, constraints) {
+        final boxSize = Size(constraints.maxWidth, panelHeight);
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTapUp: onTap == null
+              ? null
+              : (details) {
+                  final p = toImagePoint(details.localPosition, boxSize);
+                  if (p != null) onTap(p);
+                },
+          child: Container(
+            height: panelHeight,
+            color: const Color(0xFF101216),
+            child: Stack(children: [
+              Positioned.fill(
+                child: Image.memory(bytes, fit: BoxFit.contain),
+              ),
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: CustomPaint(
+                    painter: _ImageBoundsPainter(imageRect(boxSize)),
+                  ),
+                ),
+              ),
+              ...pointWidgets(boxSize, anchorPts ?? [], Colors.red),
+              ...pointWidgets(boxSize, tempPts, Colors.amber),
+              if (placing)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        border: Border.all(color: AppTheme.blueLight, width: 2),
+                      ),
+                    ),
+                  ),
+                ),
+            ]),
+          ),
+        );
+      }),
+      Container(
+        color: const Color(0xFFE7E8E4),
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 5),
+        child: Row(children: [
+          Expanded(
+            child: Text(
+              placing
+                  ? 'Кликните по изображению, чтобы поставить точку'
+                  : 'Точки показаны в координатах изображения',
+              style: const TextStyle(fontSize: 10, color: Colors.black54),
+            ),
+          ),
+          if (placing)
+            XpBtn(
+              label: 'Убрать',
+              onPressed: tempPts.isNotEmpty ? onUndo : null,
+            ),
+        ]),
+      ),
+    ]);
   }
 
   Widget _resultSummaryBar(CompareResult r) {
@@ -4779,6 +4936,78 @@ class _FlowStep {
   final bool active;
 
   const _FlowStep(this.num, this.label, this.done, this.active);
+}
+
+class _CalibrationDot extends StatelessWidget {
+  final int index;
+  final Color color;
+
+  const _CalibrationDot({
+    required this.index,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 18,
+      height: 18,
+      child: Stack(clipBehavior: Clip.none, children: [
+        Container(
+          width: 18,
+          height: 18,
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.88),
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white, width: 1.5),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x77000000),
+                blurRadius: 3,
+                offset: Offset(1, 1),
+              ),
+            ],
+          ),
+        ),
+        Positioned(
+          left: 12,
+          top: -12,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+            color: Colors.black87,
+            child: Text(
+              '$index',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 9,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ),
+      ]),
+    );
+  }
+}
+
+class _ImageBoundsPainter extends CustomPainter {
+  final Rect rect;
+
+  const _ImageBoundsPainter(this.rect);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = Colors.white.withOpacity(0.22)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+    canvas.drawRect(rect, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _ImageBoundsPainter oldDelegate) {
+    return oldDelegate.rect != rect;
+  }
 }
 
 class _ZoomBtn extends StatelessWidget {
