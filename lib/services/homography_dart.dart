@@ -18,7 +18,7 @@ int canonicalDim(double mm) {
 }
 
 /// Pure-Dart fallback for alignByAnchors (web / no OpenCV).
-/// Computes homography via normalised DLT, then warps srcBytes → ref space.
+/// Computes similarity alignment, then warps srcBytes → ref space.
 Future<DartAlignResult?> dartAlignByAnchors(
   Uint8List refBytes,
   Uint8List srcBytes,
@@ -35,7 +35,8 @@ Future<DartAlignResult?> dartAlignByAnchors(
   // Целевая плотность пикселей берётся из физического размера печати, но
   // рамка сохраняет родную пропорцию эталона — иначе непрямоугольный кадр
   // (типичное фото) сплющивается/растягивается в квадрат из AppConfig.
-  final longPx = canonicalDim(math.max(AppConfig.printWidthMm, AppConfig.printHeightMm));
+  final longPx =
+      canonicalDim(math.max(AppConfig.printWidthMm, AppConfig.printHeightMm));
   int canonW, canonH;
   if (refW >= refH) {
     canonW = longPx;
@@ -51,21 +52,20 @@ Future<DartAlignResult?> dartAlignByAnchors(
   final refScaleY = canonH / refH;
   final srcScale = _kMaxSrcDim / math.max(srcW, srcH);
 
-  final scaledRef = refPoints
-      .map((p) => Offset(p.dx * refScaleX, p.dy * refScaleY))
-      .toList();
-  final scaledSrc = srcPoints
-      .map((p) => Offset(p.dx * srcScale, p.dy * srcScale))
-      .toList();
+  final scaledRef =
+      refPoints.map((p) => Offset(p.dx * refScaleX, p.dy * refScaleY)).toList();
+  final scaledSrc =
+      srcPoints.map((p) => Offset(p.dx * srcScale, p.dy * srcScale)).toList();
 
-  // Homography maps src coords → ref coords
-  final H = _computeHomography(scaledSrc, scaledRef);
+  // Similarity maps src coords → ref coords. We intentionally avoid full
+  // perspective/affine here: after manual crop + manual points, those warps
+  // can deform rectangular artwork and shift the diff map.
+  final H = _computeSimilarityHomography(scaledSrc, scaledRef);
   if (H == null) return null;
 
   // Resize source for warping
   final srcResized = img.copyResize(srcImg,
-      width: (srcW * srcScale).round(),
-      height: (srcH * srcScale).round());
+      width: (srcW * srcScale).round(), height: (srcH * srcScale).round());
 
   // Warp (RGBA — альфа=0 у пикселей, не покрытых исходником, чтобы дальше
   // их можно было исключить из сравнения, а не считать чёрным отличием)
@@ -101,82 +101,43 @@ class DartAlignResult {
   });
 }
 
-// ── DLT Homography ───────────────────────────────────
+// ── Similarity alignment ─────────────────────────────
 
-List<double>? _computeHomography(
+List<double>? _computeSimilarityHomography(
     List<Offset> srcPts, List<Offset> dstPts) {
-  if (srcPts.length < 4) return null;
+  if (srcPts.length < 2 || srcPts.length != dstPts.length) return null;
 
-  final sn = _normalizePoints(srcPts);
-  final dn = _normalizePoints(dstPts);
-
-  final n = srcPts.length;
-  final rows = 2 * n;
-  final A = List.generate(rows, (_) => List.filled(8, 0.0));
+  final rows = 2 * srcPts.length;
+  final a = List.generate(rows, (_) => List.filled(4, 0.0));
   final b = List.filled(rows, 0.0);
 
-  for (int i = 0; i < n; i++) {
-    final x = sn.pts[i].dx, y = sn.pts[i].dy;
-    final u = dn.pts[i].dx, v = dn.pts[i].dy;
-    final r1 = 2 * i, r2 = 2 * i + 1;
-    A[r1] = [x, y, 1, 0, 0, 0, -u * x, -u * y];
-    b[r1] = u;
-    A[r2] = [0, 0, 0, x, y, 1, -v * x, -v * y];
-    b[r2] = v;
+  for (int i = 0; i < srcPts.length; i++) {
+    final x = srcPts[i].dx;
+    final y = srcPts[i].dy;
+    final u = dstPts[i].dx;
+    final v = dstPts[i].dy;
+    // u = scale*cos*x - scale*sin*y + tx
+    // v = scale*sin*x + scale*cos*y + ty
+    a[2 * i] = [x, -y, 1, 0];
+    b[2 * i] = u;
+    a[2 * i + 1] = [y, x, 0, 1];
+    b[2 * i + 1] = v;
   }
 
-  // Normal equations: (A^T A) h = A^T b
-  final AtA = List.generate(8, (_) => List.filled(8, 0.0));
-  final Atb = List.filled(8, 0.0);
+  final ata = List.generate(4, (_) => List.filled(4, 0.0));
+  final atb = List.filled(4, 0.0);
   for (int i = 0; i < rows; i++) {
-    for (int j = 0; j < 8; j++) {
-      Atb[j] += A[i][j] * b[i];
-      for (int k = 0; k < 8; k++) {
-        AtA[j][k] += A[i][j] * A[i][k];
+    for (int j = 0; j < 4; j++) {
+      atb[j] += a[i][j] * b[i];
+      for (int k = 0; k < 4; k++) {
+        ata[j][k] += a[i][j] * a[i][k];
       }
     }
   }
 
-  final h = _solveLinear(AtA, Atb);
-  if (h == null) return null;
-
-  final Hn = [h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7], 1.0];
-  return _denormalize(Hn, sn.T, dn.T);
-}
-
-class _Norm {
-  final List<Offset> pts;
-  final List<double> T; // 3×3 row-major normalization transform
-  const _Norm(this.pts, this.T);
-}
-
-_Norm _normalizePoints(List<Offset> pts) {
-  double cx = 0, cy = 0;
-  for (final p in pts) {
-    cx += p.dx;
-    cy += p.dy;
-  }
-  cx /= pts.length;
-  cy /= pts.length;
-
-  double dist = 0;
-  for (final p in pts) {
-    final dx = p.dx - cx, dy = p.dy - cy;
-    dist += math.sqrt(dx * dx + dy * dy);
-  }
-  dist /= pts.length;
-  final s = dist < 1e-10 ? 1.0 : math.sqrt(2) / dist;
-
-  final norm = pts
-      .map((p) => Offset((p.dx - cx) * s, (p.dy - cy) * s))
-      .toList();
-
-  return _Norm(norm, [s, 0.0, -cx * s, 0.0, s, -cy * s, 0.0, 0.0, 1.0]);
-}
-
-List<double> _denormalize(
-    List<double> Hn, List<double> Tsrc, List<double> Tdst) {
-  return _mm(_invertH(Tdst), _mm(Hn, Tsrc));
+  final p = _solveLinear(ata, atb);
+  if (p == null) return null;
+  return [p[0], -p[1], p[2], p[1], p[0], p[3], 0.0, 0.0, 1.0];
 }
 
 List<double>? _solveLinear(List<List<double>> A, List<double> b) {
@@ -208,22 +169,12 @@ List<double>? _solveLinear(List<List<double>> A, List<double> b) {
   final x = List.filled(n, 0.0);
   for (int i = n - 1; i >= 0; i--) {
     x[i] = M[i][n];
-    for (int j = i + 1; j < n; j++) x[i] -= M[i][j] * x[j];
+    for (int j = i + 1; j < n; j++) {
+      x[i] -= M[i][j] * x[j];
+    }
     x[i] /= M[i][i];
   }
   return x;
-}
-
-List<double> _mm(List<double> A, List<double> B) {
-  final C = List.filled(9, 0.0);
-  for (int i = 0; i < 3; i++) {
-    for (int j = 0; j < 3; j++) {
-      for (int k = 0; k < 3; k++) {
-        C[i * 3 + j] += A[i * 3 + k] * B[k * 3 + j];
-      }
-    }
-  }
-  return C;
 }
 
 List<double> _invertH(List<double> H) {
@@ -238,30 +189,35 @@ List<double> _invertH(List<double> H) {
   final E = a * ii - c * g;
   final F = -(a * h - b * g);
   final G = b * f - c * e;
-  final Hv = -(a * f - c * d);
+  final hValue = -(a * f - c * d);
   final I = a * e - b * d;
 
   final det = a * A + b * B + c * C;
   if (det.abs() < 1e-12) return List.filled(9, 0.0);
 
   return [
-    A / det, D / det, G / det,
-    B / det, E / det, Hv / det,
-    C / det, F / det, I / det,
+    A / det,
+    D / det,
+    G / det,
+    B / det,
+    E / det,
+    hValue / det,
+    C / det,
+    F / det,
+    I / det,
   ];
 }
 
 // ── Perspective warp (inverse mapping + bilinear) ────
 
-img.Image _warpPerspective(
-    img.Image src, List<double> H, int dstW, int dstH) {
-  final Hi = _invertH(H);
+img.Image _warpPerspective(img.Image src, List<double> H, int dstW, int dstH) {
+  final inverseH = _invertH(H);
   // numChannels: 4 — непокрытые пиксели остаются alpha=0 (нет данных)
   final dst = img.Image(width: dstW, height: dstH, numChannels: 4);
 
-  final h0 = Hi[0], h1 = Hi[1], h2 = Hi[2];
-  final h3 = Hi[3], h4 = Hi[4], h5 = Hi[5];
-  final h6 = Hi[6], h7 = Hi[7], h8 = Hi[8];
+  final h0 = inverseH[0], h1 = inverseH[1], h2 = inverseH[2];
+  final h3 = inverseH[3], h4 = inverseH[4], h5 = inverseH[5];
+  final h6 = inverseH[6], h7 = inverseH[7], h8 = inverseH[8];
 
   final maxSX = src.width - 1.0;
   final maxSY = src.height - 1.0;
@@ -292,7 +248,8 @@ img.Image _warpPerspective(
       final g = _bl(p00.g, p10.g, p01.g, p11.g, fx, fy);
       final b = _bl(p00.b, p10.b, p01.b, p11.b, fx, fy);
 
-      dst.setPixel(dx, dy, img.ColorRgba8(r.round(), g.round(), b.round(), 255));
+      dst.setPixel(
+          dx, dy, img.ColorRgba8(r.round(), g.round(), b.round(), 255));
     }
   }
   return dst;
@@ -306,8 +263,7 @@ double _bl(num a, num b, num c, num d, double fx, double fy) =>
 
 // ── Reprojection error ────────────────────────────────
 
-double _reprojError(
-    List<double> H, List<Offset> src, List<Offset> dst) {
+double _reprojError(List<double> H, List<Offset> src, List<Offset> dst) {
   double total = 0;
   for (int i = 0; i < src.length; i++) {
     final x = src[i].dx, y = src[i].dy;
