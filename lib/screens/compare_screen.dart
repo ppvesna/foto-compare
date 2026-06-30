@@ -1599,6 +1599,7 @@ class _CompareScreenState extends State<CompareScreen>
               bytes: _refImg!,
               imgSize: _refImgSize,
               anchorPts: _refAnchorPts,
+              ctrl: _refAlignCtrl,
               availableWidth: panelWidth,
               placing: _calStep == 1,
               tempPts: _tempRefPts,
@@ -1611,6 +1612,7 @@ class _CompareScreenState extends State<CompareScreen>
               bytes: _cmpImg!,
               imgSize: _cmpImgSize,
               anchorPts: _cmpAnchorPts,
+              ctrl: _cmpAlignCtrl,
               availableWidth: panelWidth,
               placing: _calStep == 2,
               tempPts: _tempCmpPts,
@@ -1741,6 +1743,7 @@ class _CompareScreenState extends State<CompareScreen>
     required Uint8List bytes,
     required Size? imgSize,
     required List<Offset>? anchorPts,
+    required TransformationController ctrl,
     required double availableWidth,
     bool placing = false,
     List<Offset> tempPts = const [],
@@ -1788,8 +1791,8 @@ class _CompareScreenState extends State<CompareScreen>
         final x = rect.left + p.dx / imageSize.width * rect.width;
         final y = rect.top + p.dy / imageSize.height * rect.height;
         return Positioned(
-          left: x - 9,
-          top: y - 9,
+          left: x - 6,
+          top: y - 6,
           child: _CalibrationDot(
             index: entry.key + 1,
             color: color,
@@ -1826,41 +1829,58 @@ class _CompareScreenState extends State<CompareScreen>
       ),
       LayoutBuilder(builder: (_, constraints) {
         final boxSize = Size(constraints.maxWidth, panelHeight);
-        return GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTapUp: onTap == null
-              ? null
-              : (details) {
-                  final p = toImagePoint(details.localPosition, boxSize);
-                  if (p != null) onTap(p);
-                },
-          child: Container(
-            height: panelHeight,
-            color: const Color(0xFF101216),
-            child: Stack(children: [
-              Positioned.fill(
-                child: Image.memory(bytes, fit: BoxFit.contain),
-              ),
-              Positioned.fill(
-                child: IgnorePointer(
-                  child: CustomPaint(
-                    painter: _ImageBoundsPainter(imageRect(boxSize)),
-                  ),
-                ),
-              ),
-              ...pointWidgets(boxSize, anchorPts ?? [], Colors.red),
-              ...pointWidgets(boxSize, tempPts, Colors.amber),
-              if (placing)
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: Container(
-                      decoration: BoxDecoration(
-                        border: Border.all(color: AppTheme.blueLight, width: 2),
+        return Container(
+          height: panelHeight,
+          color: const Color(0xFF101216),
+          child: ClipRect(
+            child: InteractiveViewer(
+              transformationController: ctrl,
+              boundaryMargin: const EdgeInsets.all(80),
+              minScale: 0.8,
+              maxScale: 10.0,
+              panEnabled: _ctrlHeld,
+              scaleEnabled: _ctrlHeld,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTapUp: onTap == null
+                    ? null
+                    : (details) {
+                        final p = toImagePoint(details.localPosition, boxSize);
+                        if (p != null) onTap(p);
+                      },
+                child: SizedBox(
+                  width: boxSize.width,
+                  height: boxSize.height,
+                  child: Stack(children: [
+                    Positioned.fill(
+                      child: Image.memory(bytes, fit: BoxFit.contain),
+                    ),
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: CustomPaint(
+                          painter: _ImageBoundsPainter(imageRect(boxSize)),
+                        ),
                       ),
                     ),
-                  ),
+                    ...pointWidgets(boxSize, anchorPts ?? [], Colors.red),
+                    ...pointWidgets(boxSize, tempPts, Colors.amber),
+                    if (placing)
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: Container(
+                            decoration: BoxDecoration(
+                              border: Border.all(
+                                color: AppTheme.blueLight,
+                                width: 2,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ]),
                 ),
-            ]),
+              ),
+            ),
           ),
         );
       }),
@@ -1871,19 +1891,34 @@ class _CompareScreenState extends State<CompareScreen>
           Expanded(
             child: Text(
               placing
-                  ? 'Кликните по изображению, чтобы поставить точку'
-                  : 'Точки показаны в координатах изображения',
+                  ? 'Клик - точка. Ctrl+скролл/драг - зум и сдвиг.'
+                  : 'Ctrl+скролл/драг - зум и перемещение.',
               style: const TextStyle(fontSize: 10, color: Colors.black54),
             ),
           ),
-          if (placing)
+          if (placing) ...[
+            _ZoomBtn(label: '−', onTap: () => _zoomCalibration(ctrl, 0.77)),
+            const SizedBox(width: 4),
+            _ZoomBtn(label: '+', onTap: () => _zoomCalibration(ctrl, 1.3)),
+            const SizedBox(width: 4),
+            _ZoomBtn(label: '⊡', onTap: () => ctrl.value = Matrix4.identity()),
+            const SizedBox(width: 6),
             XpBtn(
               label: 'Убрать',
               onPressed: tempPts.isNotEmpty ? onUndo : null,
             ),
+          ],
         ]),
       ),
     ]);
+  }
+
+  void _zoomCalibration(TransformationController ctrl, double factor) {
+    final m = ctrl.value.clone();
+    m.scale(factor, factor);
+    final s = m.getMaxScaleOnAxis();
+    if (s < 0.8 || s > 10.0) return;
+    ctrl.value = m;
   }
 
   Widget _resultSummaryBar(CompareResult r) {
@@ -4948,36 +4983,36 @@ class _CalibrationDot extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 18,
-      height: 18,
+      width: 12,
+      height: 12,
       child: Stack(clipBehavior: Clip.none, children: [
         Container(
-          width: 18,
-          height: 18,
+          width: 12,
+          height: 12,
           decoration: BoxDecoration(
             color: color.withOpacity(0.88),
             shape: BoxShape.circle,
-            border: Border.all(color: Colors.white, width: 1.5),
+            border: Border.all(color: Colors.white, width: 1),
             boxShadow: const [
               BoxShadow(
                 color: Color(0x77000000),
-                blurRadius: 3,
+                blurRadius: 2,
                 offset: Offset(1, 1),
               ),
             ],
           ),
         ),
         Positioned(
-          left: 12,
-          top: -12,
+          left: 8,
+          top: -10,
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+            padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
             color: Colors.black87,
             child: Text(
               '$index',
               style: const TextStyle(
                 color: Colors.white,
-                fontSize: 9,
+                fontSize: 8,
                 fontWeight: FontWeight.bold,
               ),
             ),
