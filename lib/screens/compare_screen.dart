@@ -161,11 +161,27 @@ class _CompareScreenState extends State<CompareScreen>
   }
 
   // ── Калибровка: пошаговая расстановка точек прямо на панелях ───────────
-  void _startCalibration() {
+  Future<void> _startCalibration() async {
+    if (_refImg == null || _cmpImg == null) return;
+    Size? refSize = _refImgSize;
+    Size? cmpSize = _cmpImgSize;
+    if (refSize == null) {
+      final decoded = await compute(_decodeSize, _refImg!);
+      refSize = Size(decoded.width.toDouble(), decoded.height.toDouble());
+    }
+    if (cmpSize == null) {
+      final decoded = await compute(_decodeSize, _cmpImg!);
+      cmpSize = Size(decoded.width.toDouble(), decoded.height.toDouble());
+    }
+    if (!mounted) return;
     setState(() {
       _calStep = 1;
       _tempRefPts = [];
       _tempCmpPts = [];
+      _refImgSize = refSize;
+      _cmpImgSize = cmpSize;
+      _refAlignCtrl.value = Matrix4.identity();
+      _cmpAlignCtrl.value = Matrix4.identity();
     });
   }
 
@@ -1118,7 +1134,7 @@ class _CompareScreenState extends State<CompareScreen>
     final inspectorWidth = width >= 1200 ? 320.0 : 280.0;
 
     return Container(
-      color: const Color(0xFFD7D4C8),
+      color: const Color(0xFFC9CDD3),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -1142,7 +1158,7 @@ class _CompareScreenState extends State<CompareScreen>
 
   Widget _mobileWorkbench() {
     return Container(
-      color: const Color(0xFFD7D4C8),
+      color: const Color(0xFFC9CDD3),
       child: Scrollbar(
         controller: _workspaceScrollCtrl,
         thumbVisibility: true,
@@ -1206,8 +1222,8 @@ class _CompareScreenState extends State<CompareScreen>
 
     return Container(
       decoration: const BoxDecoration(
-        gradient: AppTheme.silverGrad,
-        border: Border(right: BorderSide(color: AppTheme.border)),
+        color: Color(0xFFE7E8E4),
+        border: Border(right: BorderSide(color: Color(0xFF8C929C))),
       ),
       padding: horizontal
           ? const EdgeInsets.all(6)
@@ -1244,7 +1260,7 @@ class _CompareScreenState extends State<CompareScreen>
       margin: const EdgeInsets.only(top: 6),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
       decoration: BoxDecoration(
-        color: step.active ? Colors.white : const Color(0xFFF2F0E7),
+        color: step.active ? Colors.white : const Color(0xFFEDEDE8),
         border: Border.all(color: color.withOpacity(step.active ? 0.9 : 0.35)),
         boxShadow: step.active ? AppTheme.shadowSubtle : null,
       ),
@@ -1288,7 +1304,7 @@ class _CompareScreenState extends State<CompareScreen>
     return Container(
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.55),
+        color: const Color(0xFFF7F8F5),
         border: Border.all(color: AppTheme.silverDark),
       ),
       child: const Text(
@@ -1350,11 +1366,17 @@ class _CompareScreenState extends State<CompareScreen>
             _toolBtn(
               Icons.tune,
               'Точки',
-              _refImg != null && _cmpImg != null ? _startCalibration : null,
+              _refImg != null && _cmpImg != null
+                  ? () => _startCalibration()
+                  : null,
             ),
           ],
         ),
         const SizedBox(height: 10),
+        if (_calStep != 0) ...[
+          _calibrationWorkbench(),
+          const SizedBox(height: 10),
+        ],
         _comparisonStage(),
         const SizedBox(height: 10),
         _historyStrip(),
@@ -1530,6 +1552,185 @@ class _CompareScreenState extends State<CompareScreen>
     );
   }
 
+  Widget _calibrationWorkbench() {
+    if (_refImg == null || _cmpImg == null) {
+      return const SizedBox.shrink();
+    }
+    final title = _calStep == 1
+        ? 'Калибровка: точки на эталоне'
+        : _calStep == 2
+            ? 'Калибровка: точки на образце'
+            : 'Калибровка: расчёт совмещения';
+    final message = _calStep == 1
+        ? 'Поставьте $_minAnchorPts-$_maxAnchorPts одинаковых контрольных точек на эталоне. Лучше выбирать углы, метки и контрастные детали.'
+        : _calStep == 2
+            ? 'Поставьте те же ${_tempRefPts.length} точек на образце в том же порядке. От порядка зависит масштаб и геометрия совмещения.'
+            : 'OpenCV рассчитывает гомографию и проверяет качество совмещения.';
+
+    return _xpWindow(
+      title: title,
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _toolBtn(Icons.undo, 'Убрать последнюю точку',
+              _calStep == 1 || _calStep == 2 ? _undoLastPoint : null),
+          _toolBtn(Icons.close, 'Отмена', _cancelCalibration, danger: true),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child:
+            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          _calibrationBanner(message),
+          const SizedBox(height: 8),
+          LayoutBuilder(builder: (_, constraints) {
+            final wide = constraints.maxWidth > 760;
+            final panelWidth =
+                wide ? (constraints.maxWidth - 8) / 2 : constraints.maxWidth;
+            final refPanel = _alignPanel(
+              label: _calStep == 1 ? 'Эталон - ставьте точки' : 'Эталон',
+              bytes: _refImg!,
+              imgSize: _refImgSize,
+              anchorPts: _refAnchorPts,
+              ctrl: _refAlignCtrl,
+              availableWidth: panelWidth,
+              placing: _calStep == 1,
+              tempPts: _tempRefPts,
+              onTap: _calStep == 1 ? _addPanelPoint : null,
+              onUndo: _calStep == 1 ? _undoLastPoint : null,
+              minPts: _minAnchorPts,
+            );
+            final cmpPanel = _alignPanel(
+              label: _calStep == 2 ? 'Образец - ставьте точки' : 'Образец',
+              bytes: _cmpImg!,
+              imgSize: _cmpImgSize,
+              anchorPts: _cmpAnchorPts,
+              ctrl: _cmpAlignCtrl,
+              availableWidth: panelWidth,
+              placing: _calStep == 2,
+              tempPts: _tempCmpPts,
+              onTap: _calStep == 2 ? _addPanelPoint : null,
+              onUndo: _calStep == 2 ? _undoLastPoint : null,
+              minPts: _tempRefPts.isEmpty ? _minAnchorPts : _tempRefPts.length,
+            );
+            if (wide) {
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: refPanel),
+                  const SizedBox(width: 8),
+                  Expanded(child: cmpPanel),
+                ],
+              );
+            }
+            return Column(children: [
+              refPanel,
+              const SizedBox(height: 8),
+              cmpPanel,
+            ]);
+          }),
+          const SizedBox(height: 8),
+          _calibrationControls(),
+        ]),
+      ),
+    );
+  }
+
+  Widget _calibrationBanner(String message) {
+    final color = _calStep == 1
+        ? AppTheme.blue
+        : _calStep == 2
+            ? const Color(0xFF1D6E68)
+            : AppTheme.simMid;
+    return Container(
+      padding: const EdgeInsets.all(9),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.10),
+        border: Border.all(color: color.withOpacity(0.65)),
+      ),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Icon(Icons.control_camera, size: 16, color: color),
+        const SizedBox(width: 7),
+        Expanded(
+          child: Text(
+            message,
+            style: TextStyle(fontSize: 11, height: 1.35, color: color),
+          ),
+        ),
+      ]),
+    );
+  }
+
+  Widget _calibrationControls() {
+    if (_calStep == 3) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 8),
+        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          SizedBox(width: 10),
+          Text('Расчёт совмещения...', style: TextStyle(fontSize: 12)),
+        ]),
+      );
+    }
+    if (_calStep == 1) {
+      return Row(children: [
+        _pointCounter('Эталон', _tempRefPts.length, _minAnchorPts),
+        const Spacer(),
+        XpBtn(label: 'Отмена', danger: true, onPressed: _cancelCalibration),
+        const SizedBox(width: 8),
+        XpBtn(
+          label: 'Далее',
+          primary: true,
+          onPressed:
+              _tempRefPts.length >= _minAnchorPts ? _advanceToStep2 : null,
+        ),
+      ]);
+    }
+    return Row(children: [
+      _pointCounter('Образец', _tempCmpPts.length, _tempRefPts.length),
+      const Spacer(),
+      XpBtn(
+        label: 'Назад',
+        onPressed: () => setState(() {
+          _calStep = 1;
+          _tempCmpPts = [];
+        }),
+      ),
+      const SizedBox(width: 8),
+      XpBtn(
+        label: 'Рассчитать',
+        primary: true,
+        onPressed:
+            _tempCmpPts.length == _tempRefPts.length && _tempRefPts.isNotEmpty
+                ? _runAlignmentFromPoints
+                : null,
+      ),
+    ]);
+  }
+
+  Widget _pointCounter(String label, int count, int required) {
+    final ok = count >= required && required > 0;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+      decoration: BoxDecoration(
+        color: ok ? AppTheme.simHigh.withOpacity(0.10) : Colors.white,
+        border: Border.all(color: ok ? AppTheme.simHigh : AppTheme.silverDark),
+      ),
+      child: Text(
+        '$label: $count / $required точек',
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.bold,
+          color: ok ? AppTheme.simHigh : Colors.black87,
+        ),
+      ),
+    );
+  }
+
   Widget _resultSummaryBar(CompareResult r) {
     return Container(
       padding: const EdgeInsets.all(8),
@@ -1595,8 +1796,8 @@ class _CompareScreenState extends State<CompareScreen>
     final r = _result;
     return Container(
       decoration: const BoxDecoration(
-        color: Color(0xFFECE9D8),
-        border: Border(left: BorderSide(color: AppTheme.border)),
+        color: Color(0xFFE3E5E1),
+        border: Border(left: BorderSide(color: Color(0xFF8C929C))),
       ),
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(10),
@@ -1663,6 +1864,8 @@ class _CompareScreenState extends State<CompareScreen>
               ),
             ]),
             const SizedBox(height: 8),
+            _aiInspectorSection(),
+            const SizedBox(height: 8),
             _inspectorSection('Действия', [
               SizedBox(
                 width: double.infinity,
@@ -1680,7 +1883,7 @@ class _CompareScreenState extends State<CompareScreen>
                 child: XpBtn(
                   label: 'Калибровка точек',
                   onPressed: _refImg != null && _cmpImg != null
-                      ? _startCalibration
+                      ? () => _startCalibration()
                       : null,
                 ),
               ),
@@ -1689,7 +1892,9 @@ class _CompareScreenState extends State<CompareScreen>
                 width: double.infinity,
                 child: XpBtn(
                   label: 'AI анализ',
-                  onPressed: r != null && !_aiLoading ? _runAiAnalysis : null,
+                  onPressed: _refImg != null && _cmpImg != null && !_aiLoading
+                      ? _runAiAnalysis
+                      : null,
                 ),
               ),
             ]),
@@ -1768,11 +1973,85 @@ class _CompareScreenState extends State<CompareScreen>
     ]);
   }
 
+  Widget _aiInspectorSection() {
+    if (_aiLoading) {
+      return _inspectorSection('AI анализ', const [
+        Padding(
+          padding: EdgeInsets.symmetric(vertical: 8),
+          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+            SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            SizedBox(width: 10),
+            Text('AI анализирует изображения...',
+                style: TextStyle(fontSize: 11)),
+          ]),
+        ),
+      ]);
+    }
+
+    final ai = _aiResult;
+    if (ai == null) {
+      return _inspectorSection('AI анализ', [
+        const Text(
+          'AI-отчёт появится здесь: краткий вывод, найденные проблемы печати и рекомендации.',
+          style: TextStyle(fontSize: 11, height: 1.4, color: Colors.black54),
+        ),
+        const SizedBox(height: 8),
+        XpBtn(
+          label: 'Запустить AI',
+          primary: true,
+          onPressed: _refImg != null && _cmpImg != null ? _runAiAnalysis : null,
+        ),
+      ]);
+    }
+
+    return _inspectorSection('AI анализ', [
+      _aiVerdictBadge(ai),
+      if (ai.summary.trim().isNotEmpty) ...[
+        const SizedBox(height: 8),
+        Text(ai.summary, style: const TextStyle(fontSize: 11, height: 1.45)),
+      ],
+      if (ai.issues.isNotEmpty) ...[
+        const SizedBox(height: 8),
+        ...ai.issues.take(4).map(_aiIssueTile),
+      ],
+      if (ai.recommendations.isNotEmpty) ...[
+        const SizedBox(height: 8),
+        const Text(
+          'Рекомендации',
+          style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 4),
+        ...ai.recommendations.take(4).map(
+              (text) => Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('• ', style: TextStyle(fontSize: 11)),
+                      Expanded(
+                        child: Text(
+                          text,
+                          style: const TextStyle(fontSize: 11, height: 1.35),
+                        ),
+                      ),
+                    ]),
+              ),
+            ),
+      ],
+      const SizedBox(height: 8),
+      XpBtn(label: 'Повторить AI', onPressed: _runAiAnalysis),
+    ]);
+  }
+
   Widget _inspectorSection(String title, List<Widget> children) {
     return Container(
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.78),
+        color: const Color(0xFFF9FAF7),
         border: Border.all(color: AppTheme.silverDark),
       ),
       child: Column(
@@ -1901,8 +2180,15 @@ class _CompareScreenState extends State<CompareScreen>
     String tip,
     VoidCallback? onTap, {
     bool primary = false,
+    bool danger = false,
   }) {
     final enabled = onTap != null;
+    final bg = danger
+        ? const Color(0xFF8B1E1E)
+        : primary
+            ? const Color(0xFF0A3E8C)
+            : const Color(0xFFF4F5F1);
+    final fg = primary || danger ? Colors.white : const Color(0xFF1D2430);
     return Tooltip(
       message: tip,
       child: GestureDetector(
@@ -1914,16 +2200,21 @@ class _CompareScreenState extends State<CompareScreen>
             height: 24,
             margin: const EdgeInsets.only(left: 4),
             decoration: BoxDecoration(
-              color: primary ? const Color(0xFF003388) : AppTheme.silver,
+              color: bg,
               border: Border.all(
-                color: primary ? Colors.white60 : AppTheme.border,
+                color: primary || danger
+                    ? Colors.white70
+                    : const Color(0xFF8C929C),
               ),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x33000000),
+                  blurRadius: 2,
+                  offset: Offset(1, 1),
+                ),
+              ],
             ),
-            child: Icon(
-              icon,
-              size: 15,
-              color: primary ? Colors.white : Colors.black87,
-            ),
+            child: Icon(icon, size: 15, color: fg),
           ),
         ),
       ),
@@ -2826,7 +3117,7 @@ class _CompareScreenState extends State<CompareScreen>
                     XpBtn(
                       label: '🔧 Калибровка',
                       primary: _layoutProfile == null,
-                      onPressed: _startCalibration,
+                      onPressed: () => _startCalibration(),
                     ),
                     const SizedBox(width: 8),
                     if (_result != null) ...[
