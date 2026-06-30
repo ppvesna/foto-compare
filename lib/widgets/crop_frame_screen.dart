@@ -1,4 +1,3 @@
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -51,11 +50,6 @@ class _CropFrameScreenState extends State<CropFrameScreen> {
 
   bool _loading = true;
 
-  // Декодированное изображение, переиспользуется при обрезке —
-  // чтобы не декодировать одни и те же байты дважды (это и так медленно
-  // для больших фото в чистом Dart).
-  img.Image? _decoded;
-
   @override
   void initState() {
     super.initState();
@@ -63,13 +57,20 @@ class _CropFrameScreenState extends State<CropFrameScreen> {
   }
 
   Future<void> _loadImageSize() async {
-    // Use img.decodeImage so EXIF rotation is applied and _imgSize matches
-    // the visual dimensions shown by Image.memory
-    final decoded = await compute((bytes) => img.decodeImage(bytes), widget.imageBytes);
-    if (decoded != null && mounted) {
+    ui.Size size;
+    try {
+      final codec = await ui.instantiateImageCodec(widget.imageBytes);
+      final frame = await codec.getNextFrame();
+      final image = frame.image;
+      size = ui.Size(image.width.toDouble(), image.height.toDouble());
+      image.dispose();
+    } catch (_) {
+      final decoded = await compute(_decodeCropSize, widget.imageBytes);
+      size = ui.Size(decoded.width.toDouble(), decoded.height.toDouble());
+    }
+    if (mounted) {
       setState(() {
-        _decoded = decoded;
-        _imgSize = ui.Size(decoded.width.toDouble(), decoded.height.toDouble());
+        _imgSize = size;
         _loading = false;
       });
     }
@@ -85,7 +86,7 @@ class _CropFrameScreenState extends State<CropFrameScreen> {
 
   _DragTarget _hitTest(Offset pos) {
     final r = _frameRect;
-    final h = _handleSize;
+    const h = _handleSize;
 
     // Углы
     if ((pos - r.topLeft).distance < h) return _DragTarget.topLeft;
@@ -119,8 +120,10 @@ class _CropFrameScreenState extends State<CropFrameScreen> {
     final dy = d.delta.dy / _viewSize.height;
 
     setState(() {
-      double l = _frame.left, t = _frame.top,
-             r = _frame.right, b = _frame.bottom;
+      double l = _frame.left,
+          t = _frame.top,
+          r = _frame.right,
+          b = _frame.bottom;
 
       switch (_dragTarget!) {
         case _DragTarget.move:
@@ -157,17 +160,19 @@ class _CropFrameScreenState extends State<CropFrameScreen> {
 
   Future<void> _onConfirm() async {
     setState(() => _loading = true);
-    final bytes = await compute(_performCrop, _CropTask(
-      decoded: _decoded!,
-      imgWidth: _imgSize.width,
-      imgHeight: _imgSize.height,
-      viewWidth: _viewSize.width,
-      viewHeight: _viewSize.height,
-      frameLeft: _frame.left,
-      frameTop: _frame.top,
-      frameWidth: _frame.width,
-      frameHeight: _frame.height,
-    ));
+    final bytes = await compute(
+        _performCrop,
+        _CropTask(
+          bytes: widget.imageBytes,
+          imgWidth: _imgSize.width,
+          imgHeight: _imgSize.height,
+          viewWidth: _viewSize.width,
+          viewHeight: _viewSize.height,
+          frameLeft: _frame.left,
+          frameTop: _frame.top,
+          frameWidth: _frame.width,
+          frameHeight: _frame.height,
+        ));
     if (mounted) Navigator.pop(context, bytes);
   }
 
@@ -184,7 +189,8 @@ class _CropFrameScreenState extends State<CropFrameScreen> {
           TextButton(
             onPressed: _loading ? null : _onConfirm,
             child: const Text('Готово',
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                style: TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -198,7 +204,12 @@ class _CropFrameScreenState extends State<CropFrameScreen> {
                 child: Stack(children: [
                   // Изображение
                   Positioned.fill(
-                    child: Image.memory(widget.imageBytes, fit: BoxFit.contain),
+                    child: Image.memory(
+                      widget.imageBytes,
+                      fit: BoxFit.contain,
+                      cacheWidth: 1600,
+                      filterQuality: FilterQuality.medium,
+                    ),
                   ),
                   // Рамка
                   Positioned.fill(
@@ -213,16 +224,27 @@ class _CropFrameScreenState extends State<CropFrameScreen> {
   }
 }
 
-enum _DragTarget { none, move, top, bottom, left, right, topLeft, topRight, bottomLeft, bottomRight }
+enum _DragTarget {
+  none,
+  move,
+  top,
+  bottom,
+  left,
+  right,
+  topLeft,
+  topRight,
+  bottomLeft,
+  bottomRight
+}
 
 class _CropTask {
-  final img.Image decoded;
+  final Uint8List bytes;
   final double imgWidth, imgHeight;
   final double viewWidth, viewHeight;
   final double frameLeft, frameTop, frameWidth, frameHeight;
 
   const _CropTask({
-    required this.decoded,
+    required this.bytes,
     required this.imgWidth,
     required this.imgHeight,
     required this.viewWidth,
@@ -234,8 +256,14 @@ class _CropTask {
   });
 }
 
+({int width, int height}) _decodeCropSize(Uint8List bytes) {
+  final decoded = img.decodeImage(bytes);
+  return (width: decoded?.width ?? 0, height: decoded?.height ?? 0);
+}
+
 Uint8List _performCrop(_CropTask task) {
-  final decoded = task.decoded;
+  final decoded = img.decodeImage(task.bytes);
+  if (decoded == null) return task.bytes;
 
   final imgAspect = task.imgWidth / task.imgHeight;
   final viewAspect = task.viewWidth / task.viewHeight;
@@ -315,15 +343,24 @@ class _CropPainter extends CustomPainter {
     // Средние маркеры
     _drawHandle(canvas, Offset(frame.center.dx, frame.top));
     _drawHandle(canvas, Offset(frame.center.dx, frame.bottom));
-    _drawHandle(canvas, Offset(frame.left,  frame.center.dy));
+    _drawHandle(canvas, Offset(frame.left, frame.center.dy));
     _drawHandle(canvas, Offset(frame.right, frame.center.dy));
   }
 
   void _drawHandle(Canvas canvas, Offset center) {
-    canvas.drawCircle(center, 8,
-        Paint()..color = AppTheme.blue..style = PaintingStyle.fill);
-    canvas.drawCircle(center, 8,
-        Paint()..color = Colors.white..style = PaintingStyle.stroke..strokeWidth = 1.5);
+    canvas.drawCircle(
+        center,
+        8,
+        Paint()
+          ..color = AppTheme.blue
+          ..style = PaintingStyle.fill);
+    canvas.drawCircle(
+        center,
+        8,
+        Paint()
+          ..color = Colors.white
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5);
   }
 
   @override

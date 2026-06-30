@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show HardwareKeyboard, KeyEvent;
@@ -93,6 +94,39 @@ class _CompareScreenState extends State<CompareScreen>
 
   String? _savedRefLabel;
 
+  static const int _uiImageCacheWidth = 1600;
+
+  Widget _uiImage(
+    Uint8List bytes, {
+    BoxFit fit = BoxFit.contain,
+    double? width,
+    double? height,
+  }) {
+    return Image.memory(
+      bytes,
+      fit: fit,
+      width: width,
+      height: height,
+      cacheWidth: _uiImageCacheWidth,
+      filterQuality: FilterQuality.medium,
+      gaplessPlayback: true,
+    );
+  }
+
+  Future<Size> _readImageSize(Uint8List bytes) async {
+    try {
+      final codec = await ui.instantiateImageCodec(bytes);
+      final frame = await codec.getNextFrame();
+      final image = frame.image;
+      final size = Size(image.width.toDouble(), image.height.toDouble());
+      image.dispose();
+      return size;
+    } catch (_) {
+      final decoded = await compute(_decodeSize, bytes);
+      return Size(decoded.width.toDouble(), decoded.height.toDouble());
+    }
+  }
+
   // ── Калибровка / Layout Profile ──────────────────
   LayoutProfile? _layoutProfile;
   bool _calibrating = false;
@@ -116,8 +150,11 @@ class _CompareScreenState extends State<CompareScreen>
     final bytes = await ReferenceStorage.load();
     final label = await ReferenceStorage.loadLabel();
     if (bytes != null && mounted) {
+      final size = await _readImageSize(bytes);
+      if (!mounted) return;
       setState(() {
         _refImg = bytes;
+        _refImgSize = size;
         _savedRefLabel = label;
       });
     }
@@ -166,12 +203,10 @@ class _CompareScreenState extends State<CompareScreen>
     Size? refSize = _refImgSize;
     Size? cmpSize = _cmpImgSize;
     if (refSize == null) {
-      final decoded = await compute(_decodeSize, _refImg!);
-      refSize = Size(decoded.width.toDouble(), decoded.height.toDouble());
+      refSize = await _readImageSize(_refImg!);
     }
     if (cmpSize == null) {
-      final decoded = await compute(_decodeSize, _cmpImg!);
-      cmpSize = Size(decoded.width.toDouble(), decoded.height.toDouble());
+      cmpSize = await _readImageSize(_cmpImg!);
     }
     if (!mounted) return;
     setState(() {
@@ -273,9 +308,9 @@ class _CompareScreenState extends State<CompareScreen>
         return;
       }
 
-      final refDecoded = await compute(_decodeSize, _refImg!);
-      final refW = refDecoded.width.toDouble();
-      final refH = refDecoded.height.toDouble();
+      final refSize = await _readImageSize(_refImg!);
+      final refW = refSize.width;
+      final refH = refSize.height;
       final refAnchors = refPts
           .asMap()
           .entries
@@ -298,8 +333,8 @@ class _CompareScreenState extends State<CompareScreen>
         cropRegion: CropRegion.defaultCrop,
         widthMm: AppConfig.printWidthMm,
         heightMm: AppConfig.printHeightMm,
-        refImageWidth: refDecoded.width,
-        refImageHeight: refDecoded.height,
+        refImageWidth: refSize.width.round(),
+        refImageHeight: refSize.height.round(),
         alignment: AlignmentInfo(
           reprojectionError: alignResult.reprojError,
           eccScore: alignResult.eccScore,
@@ -348,9 +383,9 @@ class _CompareScreenState extends State<CompareScreen>
     setState(() => _calibrating = true);
     try {
       // Decode sample image size for denormalization of predicted points
-      final cmpDecoded = await compute(_decodeSize, _cmpImg!);
-      final cmpW = cmpDecoded.width.toDouble();
-      final cmpH = cmpDecoded.height.toDouble();
+      final cmpSize = await _readImageSize(_cmpImg!);
+      final cmpW = cmpSize.width;
+      final cmpH = cmpSize.height;
 
       // Предсказываем позиции на новом образце из нормализованных координат профиля
       // (простое прямое применение — нормализованные позиции те же)
@@ -612,11 +647,11 @@ class _CompareScreenState extends State<CompareScreen>
       final fused =
           src != null ? await OpenCvService.fuseImages(ref, src) : ref;
       if (!mounted) return;
-      final sz = await compute(_decodeSize, fused);
+      final sz = await _readImageSize(fused);
       if (!mounted) return;
       setState(() {
         _refImg = fused;
-        _refImgSize = Size(sz.width.toDouble(), sz.height.toDouble());
+        _refImgSize = sz;
         _refAligned = null;
         _layoutProfile = null;
         _refAnchorPts = null;
@@ -660,11 +695,11 @@ class _CompareScreenState extends State<CompareScreen>
       final fused =
           src != null ? await OpenCvService.fuseImages(ref, src) : ref;
       if (!mounted) return;
-      final sz = await compute(_decodeSize, fused);
+      final sz = await _readImageSize(fused);
       if (!mounted) return;
       setState(() {
         _cmpImg = fused;
-        _cmpImgSize = Size(sz.width.toDouble(), sz.height.toDouble());
+        _cmpImgSize = sz;
         _cmpAligned = null;
         _layoutProfile = null;
         _cmpAnchorPts = null;
@@ -905,9 +940,9 @@ class _CompareScreenState extends State<CompareScreen>
       // _refImgSize/_cmpImgSize, иначе панель якорных точек продолжает
       // мапить клики по старым (необрезанным) размерам, и точки
       // оказываются смещены относительно реального изображения.
-      final sz = await compute(_decodeSize, result);
+      final sz = await _readImageSize(result);
       if (!mounted) return;
-      final newSize = Size(sz.width.toDouble(), sz.height.toDouble());
+      final newSize = sz;
       setState(() {
         _layoutProfile = null;
         // Точки незавершённой калибровки (_tempRefPts/_tempCmpPts) записаны
@@ -977,11 +1012,11 @@ class _CompareScreenState extends State<CompareScreen>
       });
       await _selectRef(bytes);
     } else {
-      final sz = await compute(_decodeSize, bytes);
+      final sz = await _readImageSize(bytes);
       if (!mounted) return;
       setState(() {
         _cmpImg = bytes;
-        _cmpImgSize = Size(sz.width.toDouble(), sz.height.toDouble());
+        _cmpImgSize = sz;
         _cmpAligned = null;
         _layoutProfile = null;
         _cmpAnchorPts = null;
@@ -1430,7 +1465,7 @@ class _CompareScreenState extends State<CompareScreen>
                         child: CircularProgressIndicator(color: Colors.white),
                       )
                     : bytes != null
-                        ? Image.memory(bytes, fit: BoxFit.contain)
+                        ? _uiImage(bytes, fit: BoxFit.contain)
                         : Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
@@ -1853,7 +1888,7 @@ class _CompareScreenState extends State<CompareScreen>
                   height: boxSize.height,
                   child: Stack(children: [
                     Positioned.fill(
-                      child: Image.memory(bytes, fit: BoxFit.contain),
+                      child: _uiImage(bytes, fit: BoxFit.contain),
                     ),
                     Positioned.fill(
                       child: IgnorePointer(
@@ -2485,7 +2520,7 @@ class _CompareScreenState extends State<CompareScreen>
                             ),
                           )
                         : _refImg != null
-                            ? Image.memory(_refImg!, fit: BoxFit.contain)
+                            ? _uiImage(_refImg!, fit: BoxFit.contain)
                             : const Column(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
@@ -2618,7 +2653,7 @@ class _CompareScreenState extends State<CompareScreen>
                                   child: Stack(
                                     fit: StackFit.expand,
                                     children: [
-                                      Image.memory(
+                                      _uiImage(
                                         _refImg!,
                                         fit: BoxFit.contain,
                                       ),
@@ -2632,7 +2667,7 @@ class _CompareScreenState extends State<CompareScreen>
                                           ),
                                           minScale: 0.1,
                                           maxScale: 6.0,
-                                          child: Image.memory(
+                                          child: _uiImage(
                                             _ref2Img!,
                                             fit: BoxFit.contain,
                                           ),
@@ -2865,7 +2900,7 @@ class _CompareScreenState extends State<CompareScreen>
                             ),
                           )
                         : _cmpImg != null
-                            ? Image.memory(_cmpImg!, fit: BoxFit.contain)
+                            ? _uiImage(_cmpImg!, fit: BoxFit.contain)
                             : const Column(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
@@ -2939,7 +2974,7 @@ class _CompareScreenState extends State<CompareScreen>
                                   child: Stack(
                                     fit: StackFit.expand,
                                     children: [
-                                      Image.memory(
+                                      _uiImage(
                                         _cmpImg!,
                                         fit: BoxFit.contain,
                                       ),
@@ -2952,7 +2987,7 @@ class _CompareScreenState extends State<CompareScreen>
                                           ),
                                           minScale: 0.1,
                                           maxScale: 6.0,
-                                          child: Image.memory(
+                                          child: _uiImage(
                                             _cmp2Img!,
                                             fit: BoxFit.contain,
                                           ),
@@ -3435,7 +3470,7 @@ class _CompareScreenState extends State<CompareScreen>
 
     final stackContent = Stack(
       children: [
-        Image.memory(
+        _uiImage(
           bytes,
           width: availableWidth,
           height: panelHeight,
@@ -4608,15 +4643,15 @@ class _CompareScreenState extends State<CompareScreen>
           child: Stack(
             fit: StackFit.expand,
             children: [
-              if (refBase != null) Image.memory(refBase, fit: BoxFit.contain),
+              if (refBase != null) _uiImage(refBase, fit: BoxFit.contain),
               if (cmpBase != null)
                 Opacity(
                   opacity: _diffSlider,
-                  child: Image.memory(cmpBase, fit: BoxFit.contain),
+                  child: _uiImage(cmpBase, fit: BoxFit.contain),
                 ),
               Opacity(
                 opacity: _diffSlider,
-                child: Image.memory(diffPng, fit: BoxFit.contain),
+                child: _uiImage(diffPng, fit: BoxFit.contain),
               ),
             ],
           ),
@@ -4764,6 +4799,8 @@ class _SharpnessCard extends StatelessWidget {
                   height: 140,
                   fit: BoxFit.cover,
                   width: double.infinity,
+                  cacheWidth: 1000,
+                  filterQuality: FilterQuality.medium,
                 ),
                 if (isBetter)
                   const Positioned(
