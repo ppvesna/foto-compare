@@ -1339,7 +1339,6 @@ class _CompareScreenState extends State<CompareScreen>
           bytes: _refImg,
           placeholderIcon: Icons.image_outlined,
           placeholder: 'Нажмите, чтобы загрузить эталон',
-          compact: _refImg != null,
           onTap: () => _pickImage(true),
           onOpen: _refImg != null ? () => _openFullScreen(_refImg!) : null,
           actions: [
@@ -1401,10 +1400,9 @@ class _CompareScreenState extends State<CompareScreen>
     required String placeholder,
     required VoidCallback onTap,
     VoidCallback? onOpen,
-    bool compact = false,
     List<Widget> actions = const [],
   }) {
-    final ratio = compact ? 21 / 7 : 16 / 9;
+    const ratio = 16 / 9;
     return _xpWindow(
       title: title,
       trailing: Row(mainAxisSize: MainAxisSize.min, children: actions),
