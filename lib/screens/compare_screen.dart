@@ -82,6 +82,8 @@ class _CompareScreenState extends State<CompareScreen>
   static const double _framePad = 0.10;
 
   bool _stacking = false;
+  bool _imageBusy = false;
+  String _imageBusyLabel = 'Обработка изображения...';
   double _diffSlider = 0.0;
   final _resultCmpCtrl = TransformationController();
 
@@ -936,34 +938,42 @@ class _CompareScreenState extends State<CompareScreen>
       title: isRef ? 'Рамка — Эталон' : 'Рамка — Образец',
     );
     if (result != null && mounted) {
-      // Обрезанная картинка имеет другие размеры — пересчитываем
-      // _refImgSize/_cmpImgSize, иначе панель якорных точек продолжает
-      // мапить клики по старым (необрезанным) размерам, и точки
-      // оказываются смещены относительно реального изображения.
-      final sz = await _readImageSize(result);
-      if (!mounted) return;
-      final newSize = sz;
       setState(() {
-        _layoutProfile = null;
-        // Точки незавершённой калибровки (_tempRefPts/_tempCmpPts) записаны
-        // в пиксельных координатах старого (необрезанного) изображения —
-        // после обрезки они "уезжают" относительно нового кадра, поэтому
-        // сбрасываем калибровку целиком, а не только подтверждённые точки.
-        _calStep = 0;
-        _tempRefPts = [];
-        _tempCmpPts = [];
-        if (isRef) {
-          _refImg = result;
-          _refImgSize = newSize;
-          _refAligned = null;
-          _refAnchorPts = null;
-        } else {
-          _cmpImg = result;
-          _cmpImgSize = newSize;
-          _cmpAligned = null;
-          _cmpAnchorPts = null;
-        }
+        _imageBusy = true;
+        _imageBusyLabel = 'Применение рамки...';
       });
+      try {
+        // Обрезанная картинка имеет другие размеры — пересчитываем
+        // _refImgSize/_cmpImgSize, иначе панель якорных точек продолжает
+        // мапить клики по старым (необрезанным) размерам, и точки
+        // оказываются смещены относительно реального изображения.
+        final sz = await _readImageSize(result);
+        if (!mounted) return;
+        final newSize = sz;
+        setState(() {
+          _layoutProfile = null;
+          // Точки незавершённой калибровки (_tempRefPts/_tempCmpPts) записаны
+          // в пиксельных координатах старого (необрезанного) изображения —
+          // после обрезки они "уезжают" относительно нового кадра, поэтому
+          // сбрасываем калибровку целиком, а не только подтверждённые точки.
+          _calStep = 0;
+          _tempRefPts = [];
+          _tempCmpPts = [];
+          if (isRef) {
+            _refImg = result;
+            _refImgSize = newSize;
+            _refAligned = null;
+            _refAnchorPts = null;
+          } else {
+            _cmpImg = result;
+            _cmpImgSize = newSize;
+            _cmpAligned = null;
+            _cmpAnchorPts = null;
+          }
+        });
+      } finally {
+        if (mounted) setState(() => _imageBusy = false);
+      }
     }
   }
 
@@ -1002,25 +1012,34 @@ class _CompareScreenState extends State<CompareScreen>
     final x = await _picker.pickImage(source: source, imageQuality: 92);
     if (x == null) return;
 
-    final bytes = await x.readAsBytes();
-    if (isRef) {
-      // Сбрасываем второй снимок и пропускаем через _selectRef (перспектива)
-      setState(() {
-        _ref2Img = null;
-        _ref1Sharpness = null;
-        _ref2Sharpness = null;
-      });
-      await _selectRef(bytes);
-    } else {
-      final sz = await _readImageSize(bytes);
-      if (!mounted) return;
-      setState(() {
-        _cmpImg = bytes;
-        _cmpImgSize = sz;
-        _cmpAligned = null;
-        _layoutProfile = null;
-        _cmpAnchorPts = null;
-      });
+    setState(() {
+      _imageBusy = true;
+      _imageBusyLabel = isRef ? 'Загрузка эталона...' : 'Загрузка образца...';
+    });
+    try {
+      final bytes = await x.readAsBytes();
+      if (isRef) {
+        // Сбрасываем второй снимок и пропускаем через _selectRef (перспектива)
+        if (!mounted) return;
+        setState(() {
+          _ref2Img = null;
+          _ref1Sharpness = null;
+          _ref2Sharpness = null;
+        });
+        await _selectRef(bytes);
+      } else {
+        final sz = await _readImageSize(bytes);
+        if (!mounted) return;
+        setState(() {
+          _cmpImg = bytes;
+          _cmpImgSize = sz;
+          _cmpAligned = null;
+          _layoutProfile = null;
+          _cmpAnchorPts = null;
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _imageBusy = false);
     }
   }
 
@@ -1438,6 +1457,8 @@ class _CompareScreenState extends State<CompareScreen>
     List<Widget> actions = const [],
   }) {
     const ratio = 16 / 9;
+    final busy = _stacking || _imageBusy;
+    final busyLabel = _stacking ? 'Объединение снимков...' : _imageBusyLabel;
     return _xpWindow(
       title: title,
       trailing: Row(mainAxisSize: MainAxisSize.min, children: actions),
@@ -1453,16 +1474,31 @@ class _CompareScreenState extends State<CompareScreen>
           ),
           const SizedBox(height: 7),
           GestureDetector(
-            onTap: onTap,
-            onDoubleTap: onOpen,
+            onTap: busy ? null : onTap,
+            onDoubleTap: busy ? null : onOpen,
             child: AspectRatio(
               aspectRatio: ratio,
               child: Container(
                 margin: const EdgeInsets.symmetric(horizontal: 8),
                 color: Colors.black,
-                child: _stacking
-                    ? const Center(
-                        child: CircularProgressIndicator(color: Colors.white),
+                child: busy
+                    ? Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const CircularProgressIndicator(
+                              color: Colors.white,
+                            ),
+                            const SizedBox(height: 10),
+                            Text(
+                              busyLabel,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: Colors.white70,
+                              ),
+                            ),
+                          ],
+                        ),
                       )
                     : bytes != null
                         ? _uiImage(bytes, fit: BoxFit.contain)
