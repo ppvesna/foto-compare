@@ -2069,6 +2069,90 @@ class _CompareScreenState extends State<CompareScreen>
             const SizedBox(height: 8),
             _inspectorStatusCard(),
             const SizedBox(height: 8),
+            _inspectorSection('Порядок действий', [
+              SizedBox(
+                width: double.infinity,
+                child: XpBtn(
+                  label: '1. Загрузить эталон',
+                  icon: Icons.upload_file,
+                  primary: _refImg == null,
+                  onPressed: _imageBusy ? null : () => _pickImage(true),
+                ),
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: XpBtn(
+                  label: '2. Рамка эталона',
+                  icon: Icons.crop,
+                  onPressed: _refImg != null && !_imageBusy
+                      ? () => _cropImage(true)
+                      : null,
+                ),
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: XpBtn(
+                  label: '3. Загрузить образец',
+                  icon: Icons.add_a_photo,
+                  primary: _refImg != null && _cmpImg == null,
+                  onPressed: _imageBusy ? null : () => _pickImage(false),
+                ),
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: XpBtn(
+                  label: '4. Рамка образца',
+                  icon: Icons.crop,
+                  onPressed: _cmpImg != null && !_imageBusy
+                      ? () => _cropImage(false)
+                      : null,
+                ),
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: XpBtn(
+                  label: '5. Калибровочные точки',
+                  icon: Icons.tune,
+                  primary: _refImg != null &&
+                      _cmpImg != null &&
+                      _layoutProfile == null,
+                  onPressed: _refImg != null && _cmpImg != null && !_imageBusy
+                      ? () => _startCalibration()
+                      : null,
+                ),
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: XpBtn(
+                  label: _comparing ? '6. Сравнение...' : '6. Сравнить',
+                  icon: Icons.compare,
+                  primary: _refImg != null && _cmpImg != null,
+                  onPressed: _refImg != null &&
+                          _cmpImg != null &&
+                          !_comparing &&
+                          !_imageBusy
+                      ? _runCompare
+                      : null,
+                ),
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: XpBtn(
+                  label: _aiLoading ? '7. AI анализ...' : '7. AI анализ',
+                  icon: Icons.auto_awesome,
+                  onPressed: _refImg != null && _cmpImg != null && !_aiLoading
+                      ? _runAiAnalysis
+                      : null,
+                ),
+              ),
+            ]),
+            const SizedBox(height: 8),
             _inspectorSection('Файлы', [
               _checkRow(
                 'Эталон',
@@ -2126,39 +2210,6 @@ class _CompareScreenState extends State<CompareScreen>
             ]),
             const SizedBox(height: 8),
             _aiInspectorSection(),
-            const SizedBox(height: 8),
-            _inspectorSection('Действия', [
-              SizedBox(
-                width: double.infinity,
-                child: XpBtn(
-                  label: _comparing ? 'Сравнение...' : 'Сравнить',
-                  primary: true,
-                  onPressed: _refImg != null && _cmpImg != null && !_comparing
-                      ? _runCompare
-                      : null,
-                ),
-              ),
-              const SizedBox(height: 6),
-              SizedBox(
-                width: double.infinity,
-                child: XpBtn(
-                  label: 'Калибровка точек',
-                  onPressed: _refImg != null && _cmpImg != null
-                      ? () => _startCalibration()
-                      : null,
-                ),
-              ),
-              const SizedBox(height: 6),
-              SizedBox(
-                width: double.infinity,
-                child: XpBtn(
-                  label: 'AI анализ',
-                  onPressed: _refImg != null && _cmpImg != null && !_aiLoading
-                      ? _runAiAnalysis
-                      : null,
-                ),
-              ),
-            ]),
           ],
         ),
       ),
@@ -2445,11 +2496,16 @@ class _CompareScreenState extends State<CompareScreen>
   }) {
     final enabled = onTap != null;
     final bg = danger
-        ? const Color(0xFF8B1E1E)
+        ? const Color(0xFFB4232A)
         : primary
-            ? const Color(0xFF0A3E8C)
-            : const Color(0xFFF4F5F1);
-    final fg = primary || danger ? Colors.white : const Color(0xFF1D2430);
+            ? const Color(0xFF2563EB)
+            : const Color(0xFFF8FAFC);
+    final border = danger
+        ? const Color(0xFF7F1D1D)
+        : primary
+            ? const Color(0xFF1D4ED8)
+            : const Color(0xFFCBD5E1);
+    final fg = primary || danger ? Colors.white : const Color(0xFF1F2937);
     return Tooltip(
       message: tip,
       child: GestureDetector(
@@ -2457,25 +2513,27 @@ class _CompareScreenState extends State<CompareScreen>
         child: Opacity(
           opacity: enabled ? 1 : 0.35,
           child: Container(
-            width: 27,
-            height: 24,
-            margin: const EdgeInsets.only(left: 4),
+            width: 34,
+            height: 32,
+            margin: const EdgeInsets.only(left: 6),
             decoration: BoxDecoration(
               color: bg,
-              border: Border.all(
-                color: primary || danger
-                    ? Colors.white70
-                    : const Color(0xFF8C929C),
-              ),
+              borderRadius: BorderRadius.circular(9),
+              border: Border.all(color: border),
               boxShadow: const [
                 BoxShadow(
-                  color: Color(0x33000000),
-                  blurRadius: 2,
-                  offset: Offset(1, 1),
+                  color: Color(0x260F172A),
+                  blurRadius: 7,
+                  offset: Offset(0, 3),
+                ),
+                BoxShadow(
+                  color: Color(0x55FFFFFF),
+                  blurRadius: 1,
+                  offset: Offset(0, -1),
                 ),
               ],
             ),
-            child: Icon(icon, size: 15, color: fg),
+            child: Icon(icon, size: 18, color: fg),
           ),
         ),
       ),
@@ -4975,8 +5033,9 @@ class _AnchorPointMarker extends StatelessWidget {
     this.color = Colors.red,
   });
 
-  static const double _dotSize = 8;
-  static const double _labelOffset = 16;
+  static const double _dotSize = 3;
+  static const double _labelOffset = 24;
+  static const double _labelSize = 16;
 
   @override
   Widget build(BuildContext context) {
@@ -4999,16 +5058,16 @@ class _AnchorPointMarker extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: color.withOpacity(0.85),
                     shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white, width: 1.5),
+                    border: Border.all(color: Colors.white, width: 0.8),
                   ),
                 ),
               ),
             ),
             Positioned(
-              left: x + off - 8,
-              top: y - off - 8,
-              width: 16,
-              height: 16,
+              left: x + off,
+              top: y - off - _labelSize,
+              width: _labelSize,
+              height: _labelSize,
               child: Transform.scale(
                 scale: inv,
                 child: Container(
@@ -5056,31 +5115,38 @@ class _CalibrationDot extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 12,
-      height: 12,
+      width: 34,
+      height: 28,
       child: Stack(clipBehavior: Clip.none, children: [
-        Container(
-          width: 12,
-          height: 12,
-          decoration: BoxDecoration(
-            color: color.withOpacity(0.88),
-            shape: BoxShape.circle,
-            border: Border.all(color: Colors.white, width: 1),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x77000000),
-                blurRadius: 2,
-                offset: Offset(1, 1),
-              ),
-            ],
+        Positioned(
+          left: 4,
+          top: 13,
+          child: Container(
+            width: 4,
+            height: 4,
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.88),
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 0.7),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x77000000),
+                  blurRadius: 2,
+                  offset: Offset(1, 1),
+                ),
+              ],
+            ),
           ),
         ),
         Positioned(
-          left: 8,
-          top: -10,
+          left: 16,
+          top: 2,
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
-            color: Colors.black87,
+            decoration: BoxDecoration(
+              color: Colors.black87,
+              borderRadius: BorderRadius.circular(4),
+            ),
             child: Text(
               '$index',
               style: const TextStyle(

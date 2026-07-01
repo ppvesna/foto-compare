@@ -23,11 +23,17 @@ class XpBtn extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final Color bg = danger
-        ? const Color(0xFF880000)
+        ? const Color(0xFFB4232A)
         : primary
-            ? const Color(0xFF003388)
-            : const Color(0xFFE0DDD4);
-    final Color fg = (primary || danger) ? Colors.white : Colors.black87;
+            ? const Color(0xFF2563EB)
+            : const Color(0xFFF8FAFC);
+    final Color fg =
+        (primary || danger) ? Colors.white : const Color(0xFF1F2937);
+    final Color border = danger
+        ? const Color(0xFF7F1D1D)
+        : primary
+            ? const Color(0xFF1D4ED8)
+            : const Color(0xFFCBD5E1);
 
     return SizedBox(
       width: width,
@@ -36,27 +42,30 @@ class XpBtn extends StatelessWidget {
         style: ElevatedButton.styleFrom(
           backgroundColor: bg,
           foregroundColor: fg,
-          elevation: 2,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          minimumSize: Size.zero,
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          disabledBackgroundColor: const Color(0xFFE5E7EB),
+          disabledForegroundColor: const Color(0xFF94A3B8),
+          elevation: onPressed == null ? 0 : 5,
+          shadowColor: const Color(0x330F172A),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          minimumSize: const Size(0, 42),
+          tapTargetSize: MaterialTapTargetSize.padded,
           textStyle: const TextStyle(
-              fontSize: 13, fontWeight: FontWeight.w600),
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0,
+          ),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(3),
-            side: BorderSide(
-                color: (primary || danger)
-                    ? Colors.white38
-                    : Colors.grey.shade500),
+            borderRadius: BorderRadius.circular(11),
+            side: BorderSide(color: border),
           ),
         ),
         child: icon != null
             ? Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(icon, size: 14),
-                const SizedBox(width: 5),
-                Text(label),
+                Icon(icon, size: 18),
+                const SizedBox(width: 8),
+                Flexible(child: Text(label, textAlign: TextAlign.center)),
               ])
-            : Text(label),
+            : Text(label, textAlign: TextAlign.center),
       ),
     );
   }
@@ -89,9 +98,7 @@ class XpInput extends StatelessWidget {
         border: Border.all(color: Colors.grey.shade600),
         boxShadow: const [
           BoxShadow(
-              color: Color(0x18000000),
-              blurRadius: 2,
-              offset: Offset(1, 1)),
+              color: Color(0x18000000), blurRadius: 2, offset: Offset(1, 1)),
         ],
       ),
       child: TextField(
@@ -103,8 +110,7 @@ class XpInput extends StatelessWidget {
         style: const TextStyle(fontSize: 13, color: Colors.black),
         decoration: InputDecoration(
           hintText: placeholder,
-          hintStyle:
-              const TextStyle(fontSize: 13, color: Colors.grey),
+          hintStyle: const TextStyle(fontSize: 13, color: Colors.grey),
           contentPadding:
               const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
           border: InputBorder.none,
@@ -142,8 +148,7 @@ class XpGroup extends StatelessWidget {
             left: 8,
             child: Container(
               color: AppTheme.silver,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
               child: Text(label,
                   style: const TextStyle(
                       fontSize: 12, fontWeight: FontWeight.bold)),
@@ -215,14 +220,12 @@ Future<void> xpDlg(BuildContext context, String title, String msg) {
     barrierColor: Colors.black45,
     builder: (_) => Dialog(
       backgroundColor: AppTheme.silver,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.zero),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.zero),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             color: const Color(0xFF003388),
             child: Row(children: [
               Expanded(
@@ -234,26 +237,22 @@ Future<void> xpDlg(BuildContext context, String title, String msg) {
               GestureDetector(
                 onTap: () => Navigator.pop(context),
                 child: const Text('✕',
-                    style:
-                        TextStyle(color: Colors.white, fontSize: 16)),
+                    style: TextStyle(color: Colors.white, fontSize: 16)),
               ),
             ]),
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
-            child: Text(msg,
-                style: const TextStyle(fontSize: 13, height: 1.7)),
+            child: Text(msg, style: const TextStyle(fontSize: 13, height: 1.7)),
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
-            child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  XpBtn(
-                      label: 'ОК',
-                      primary: true,
-                      onPressed: () => Navigator.pop(context)),
-                ]),
+            child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+              XpBtn(
+                  label: 'ОК',
+                  primary: true,
+                  onPressed: () => Navigator.pop(context)),
+            ]),
           ),
         ],
       ),
@@ -261,21 +260,18 @@ Future<void> xpDlg(BuildContext context, String title, String msg) {
   );
 }
 
-Future<bool> xpConfirm(
-    BuildContext context, String title, String msg) async {
+Future<bool> xpConfirm(BuildContext context, String title, String msg) async {
   final result = await showDialog<bool>(
     context: context,
     barrierColor: Colors.black45,
     builder: (_) => Dialog(
       backgroundColor: AppTheme.silver,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.zero),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.zero),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             color: const Color(0xFF003388),
             child: Row(children: [
               Expanded(
@@ -287,30 +283,26 @@ Future<bool> xpConfirm(
               GestureDetector(
                 onTap: () => Navigator.pop(context, false),
                 child: const Text('✕',
-                    style:
-                        TextStyle(color: Colors.white, fontSize: 16)),
+                    style: TextStyle(color: Colors.white, fontSize: 16)),
               ),
             ]),
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
-            child: Text(msg,
-                style: const TextStyle(fontSize: 13, height: 1.7)),
+            child: Text(msg, style: const TextStyle(fontSize: 13, height: 1.7)),
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
-            child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  XpBtn(
-                      label: 'Отмена',
-                      onPressed: () => Navigator.pop(context, false)),
-                  const SizedBox(width: 6),
-                  XpBtn(
-                      label: 'Да',
-                      primary: true,
-                      onPressed: () => Navigator.pop(context, true)),
-                ]),
+            child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+              XpBtn(
+                  label: 'Отмена',
+                  onPressed: () => Navigator.pop(context, false)),
+              const SizedBox(width: 6),
+              XpBtn(
+                  label: 'Да',
+                  primary: true,
+                  onPressed: () => Navigator.pop(context, true)),
+            ]),
           ),
         ],
       ),
@@ -386,14 +378,12 @@ class _XpMenuBarState extends State<XpMenuBar> {
                             item.onTap?.call();
                           },
                     child: Container(
-                      padding:
-                          const EdgeInsets.fromLTRB(10, 8, 16, 8),
+                      padding: const EdgeInsets.fromLTRB(10, 8, 16, 8),
                       color: Colors.transparent,
                       child: Row(children: [
                         if (item.icon != null) ...[
                           Text(item.icon!,
-                              style:
-                                  const TextStyle(fontSize: 13)),
+                              style: const TextStyle(fontSize: 13)),
                           const SizedBox(width: 6),
                         ],
                         Text(item.label,
@@ -406,8 +396,7 @@ class _XpMenuBarState extends State<XpMenuBar> {
                           const Spacer(),
                           Text(item.shortcut!,
                               style: const TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.grey)),
+                                  fontSize: 11, color: Colors.grey)),
                         ],
                       ]),
                     ),
@@ -449,10 +438,8 @@ class _XpMenuBarState extends State<XpMenuBar> {
           Row(
             children: [
               Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 8, vertical: 5),
-                child: Text(widget.icon,
-                    style: const TextStyle(fontSize: 16)),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                child: Text(widget.icon, style: const TextStyle(fontSize: 16)),
               ),
               ...widget.menus.asMap().entries.map((e) {
                 final i = e.key;
@@ -470,9 +457,7 @@ class _XpMenuBarState extends State<XpMenuBar> {
                       child: Text(menu.label,
                           style: TextStyle(
                               fontSize: 13,
-                              color: _open == i
-                                  ? Colors.white
-                                  : Colors.black)),
+                              color: _open == i ? Colors.white : Colors.black)),
                     ),
                   ),
                 );
@@ -532,9 +517,7 @@ class SimBadge extends StatelessWidget {
       child: Text(
         '${value.toStringAsFixed(1)}%',
         style: TextStyle(
-            color: color,
-            fontWeight: FontWeight.bold,
-            fontSize: fontSize),
+            color: color, fontWeight: FontWeight.bold, fontSize: fontSize),
       ),
     );
   }
@@ -563,8 +546,7 @@ class XpStatusBar extends StatelessWidget {
   }
 
   Widget _panel(String t) => Container(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
         decoration: BoxDecoration(
           border: Border.all(color: Colors.grey.shade400),
         ),
