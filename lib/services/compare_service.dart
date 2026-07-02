@@ -109,7 +109,7 @@ CompareResult _run(List<Uint8List> args) {
     throw Exception('Не удалось декодировать изображение');
   }
 
-  const maxSize = kIsWeb ? 128 : 256;
+  const maxSize = kIsWeb ? 512 : 256;
   const iters = kIsWeb ? 1 : AppConfig.comparisonIter;
   final sizes = [64, 128, maxSize].take(iters).toList();
 
