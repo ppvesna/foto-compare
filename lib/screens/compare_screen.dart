@@ -1720,9 +1720,7 @@ class _CompareScreenState extends State<CompareScreen>
           _calibrationBanner(message),
           const SizedBox(height: 8),
           LayoutBuilder(builder: (_, constraints) {
-            final wide = constraints.maxWidth > 760;
-            final panelWidth =
-                wide ? (constraints.maxWidth - 8) / 2 : constraints.maxWidth;
+            final panelWidth = constraints.maxWidth;
             final refPanel = _calibrationPointPanel(
               label: _calStep == 1 ? 'Эталон - ставьте точки' : 'Эталон',
               bytes: _refImg!,
@@ -1749,24 +1747,14 @@ class _CompareScreenState extends State<CompareScreen>
               onUndo: _calStep == 2 ? _undoLastPoint : null,
               minPts: _tempRefPts.isEmpty ? _minAnchorPts : _tempRefPts.length,
             );
-            if (wide) {
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(child: refPanel),
-                  const SizedBox(width: 8),
-                  Expanded(child: cmpPanel),
-                ],
-              );
-            }
             return Column(children: [
               refPanel,
+              const SizedBox(height: 8),
+              _calibrationControls(),
               const SizedBox(height: 8),
               cmpPanel,
             ]);
           }),
-          const SizedBox(height: 8),
-          _calibrationControls(),
         ]),
       ),
     );
@@ -1813,39 +1801,60 @@ class _CompareScreenState extends State<CompareScreen>
       );
     }
     if (_calStep == 1) {
-      return Row(children: [
-        _pointCounter('Эталон', _tempRefPts.length, _minAnchorPts),
-        const Spacer(),
-        XpBtn(label: 'Отмена', danger: true, onPressed: _cancelCalibration),
-        const SizedBox(width: 8),
-        XpBtn(
-          label: 'Далее',
+      return _calibrationActionStrip(
+        counter: _pointCounter('Эталон', _tempRefPts.length, _minAnchorPts),
+        back:
+            XpBtn(label: 'Отмена', danger: true, onPressed: _cancelCalibration),
+        next: XpBtn(
+          label: 'Далее ›',
           primary: true,
           onPressed:
               _tempRefPts.length >= _minAnchorPts ? _advanceToStep2 : null,
         ),
-      ]);
+      );
     }
-    return Row(children: [
-      _pointCounter('Образец', _tempCmpPts.length, _tempRefPts.length),
-      const Spacer(),
-      XpBtn(
-        label: 'Назад',
+    return _calibrationActionStrip(
+      counter: _pointCounter('Образец', _tempCmpPts.length, _tempRefPts.length),
+      back: XpBtn(
+        label: '‹ Назад',
         onPressed: () => setState(() {
           _calStep = 1;
           _tempCmpPts = [];
         }),
       ),
-      const SizedBox(width: 8),
-      XpBtn(
-        label: 'Рассчитать',
+      next: XpBtn(
+        label: 'Рассчитать ›',
         primary: true,
         onPressed:
             _tempCmpPts.length == _tempRefPts.length && _tempRefPts.isNotEmpty
                 ? _runAlignmentFromPoints
                 : null,
       ),
-    ]);
+    );
+  }
+
+  Widget _calibrationActionStrip({
+    required Widget counter,
+    required Widget back,
+    required Widget next,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF6F8FB),
+        border: Border.all(color: const Color(0xFFD6E0EA)),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          back,
+          const Spacer(),
+          counter,
+          const Spacer(),
+          next,
+        ],
+      ),
+    );
   }
 
   Widget _pointCounter(String label, int count, int required) {
@@ -2324,23 +2333,14 @@ class _CompareScreenState extends State<CompareScreen>
     return _inspectorSection('Точки', [
       Text(text, style: const TextStyle(fontSize: 11, height: 1.35)),
       const SizedBox(height: 6),
-      if (_calStep == 1)
-        XpBtn(
-          label: 'Далее',
-          primary: true,
-          onPressed:
-              _tempRefPts.length >= _minAnchorPts ? _advanceToStep2 : null,
-        )
-      else if (_calStep == 2)
-        XpBtn(
-          label: 'Рассчитать',
-          primary: true,
-          onPressed: _tempCmpPts.length == _tempRefPts.length
-              ? _runAlignmentFromPoints
-              : null,
-        ),
-      const SizedBox(height: 6),
-      XpBtn(label: 'Отмена', danger: true, onPressed: _cancelCalibration),
+      Text(
+        _calStep == 1
+            ? 'Кнопка «Далее» находится между эталоном и образцом.'
+            : _calStep == 2
+                ? 'Кнопка «Рассчитать» находится между эталоном и образцом.'
+                : 'Идёт расчёт совмещения.',
+        style: const TextStyle(fontSize: 11, color: Colors.black54),
+      ),
     ]);
   }
 
