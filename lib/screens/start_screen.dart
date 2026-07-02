@@ -21,6 +21,7 @@ class _StartScreenState extends State<StartScreen>
   final _emailCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
   final _nameCtrl = TextEditingController();
+  final _nickCtrl = TextEditingController();
   final _pass2Ctrl = TextEditingController();
 
   @override
@@ -38,6 +39,7 @@ class _StartScreenState extends State<StartScreen>
     _emailCtrl.dispose();
     _passCtrl.dispose();
     _nameCtrl.dispose();
+    _nickCtrl.dispose();
     _pass2Ctrl.dispose();
     super.dispose();
   }
@@ -101,9 +103,9 @@ class _StartScreenState extends State<StartScreen>
                           ? Row(
                               crossAxisAlignment: CrossAxisAlignment.center,
                               children: [
+                                _authPanel(width: 372),
+                                const SizedBox(width: 42),
                                 Expanded(child: _brandHero(wide: true)),
-                                const SizedBox(width: 34),
-                                _authPanel(width: 360),
                               ],
                             )
                           : Column(
@@ -307,13 +309,13 @@ class _StartScreenState extends State<StartScreen>
         child: Column(children: [
       const Align(
           alignment: Alignment.centerLeft,
-          child: Text('Email:', style: TextStyle(fontSize: 11))),
+          child: Text('Email или ник:', style: TextStyle(fontSize: 11))),
       const SizedBox(height: 3),
       XpInput(
-          placeholder: 'user@example.com',
+          placeholder: 'user@example.com или printer_oleg',
           controller: _emailCtrl,
           keyboardType: TextInputType.emailAddress,
-          autofillHints: const [AutofillHints.email]),
+          autofillHints: const [AutofillHints.username, AutofillHints.email]),
       const SizedBox(height: 8),
       const Align(
           alignment: Alignment.centerLeft,
@@ -359,6 +361,15 @@ class _StartScreenState extends State<StartScreen>
       const SizedBox(height: 8),
       const Align(
           alignment: Alignment.centerLeft,
+          child: Text('Ник пользователя:', style: TextStyle(fontSize: 11))),
+      const SizedBox(height: 3),
+      XpInput(
+          placeholder: 'printer_oleg',
+          controller: _nickCtrl,
+          autofillHints: const [AutofillHints.username]),
+      const SizedBox(height: 8),
+      const Align(
+          alignment: Alignment.centerLeft,
           child: Text('Email:', style: TextStyle(fontSize: 11))),
       const SizedBox(height: 3),
       XpInput(
@@ -394,16 +405,94 @@ class _StartScreenState extends State<StartScreen>
     ]));
   }
 
+  String _normalizeNick(String value) {
+    return value.trim().toLowerCase();
+  }
+
+  bool _looksLikeEmail(String value) {
+    return value.contains('@');
+  }
+
+  Future<String?> _emailForLogin(String login) async {
+    final cleaned = login.trim();
+    if (_looksLikeEmail(cleaned)) return cleaned;
+    final nick = _normalizeNick(cleaned);
+    try {
+      final row = await Supabase.instance.client
+          .from('user_profiles')
+          .select('email')
+          .eq('nickname', nick)
+          .maybeSingle();
+      return row?['email'] as String?;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<bool> _isNickAvailable(String nickname) async {
+    try {
+      final row = await Supabase.instance.client
+          .from('user_profiles')
+          .select('user_id')
+          .eq('nickname', _normalizeNick(nickname))
+          .maybeSingle();
+      return row == null;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  Future<void> _saveUserProfile({
+    required String userId,
+    required String email,
+    required String nickname,
+    required String displayName,
+  }) async {
+    try {
+      await Supabase.instance.client.from('user_profiles').upsert({
+        'user_id': userId,
+        'email': email,
+        'nickname': _normalizeNick(nickname),
+        'display_name': displayName,
+      });
+    } catch (_) {
+      // Таблица профилей может быть ещё не применена в Supabase.
+      // Auth-аккаунт уже создан/выполнен, не блокируем пользователя.
+    }
+  }
+
   void _doLogin() async {
-    if (_emailCtrl.text.isEmpty || _passCtrl.text.isEmpty) {
-      xpDlg(context, 'Ошибка', 'Введите email и пароль');
+    final login = _emailCtrl.text.trim();
+    if (login.isEmpty || _passCtrl.text.isEmpty) {
+      xpDlg(context, 'Ошибка', 'Введите email или ник и пароль');
       return;
     }
     try {
+      final email = await _emailForLogin(login);
+      if (email == null) {
+        if (mounted) {
+          xpDlg(context, 'Ошибка входа', 'Ник не найден. Попробуйте email.');
+        }
+        return;
+      }
       await Supabase.instance.client.auth.signInWithPassword(
-        email: _emailCtrl.text.trim(),
+        email: email,
         password: _passCtrl.text,
       );
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user != null) {
+        final metadata = user.userMetadata ?? {};
+        final nickname = metadata['nickname'] as String?;
+        final displayName = metadata['display_name'] as String?;
+        if (nickname != null && nickname.isNotEmpty) {
+          await _saveUserProfile(
+            userId: user.id,
+            email: user.email ?? email,
+            nickname: nickname,
+            displayName: displayName ?? '',
+          );
+        }
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -420,16 +509,41 @@ class _StartScreenState extends State<StartScreen>
       xpDlg(context, 'Ошибка', 'Пароли не совпадают');
       return;
     }
-    if (_emailCtrl.text.isEmpty || _passCtrl.text.isEmpty) {
+    final nick = _normalizeNick(_nickCtrl.text);
+    if (_emailCtrl.text.isEmpty ||
+        _passCtrl.text.isEmpty ||
+        _nameCtrl.text.trim().isEmpty ||
+        nick.isEmpty) {
       xpDlg(context, 'Ошибка', 'Заполните все поля');
       return;
     }
+    if (!RegExp(r'^[a-z0-9_]{3,24}$').hasMatch(nick)) {
+      xpDlg(context, 'Ошибка',
+          'Ник: 3-24 символа, латиница, цифры и подчёркивание.');
+      return;
+    }
+    final nickAvailable = await _isNickAvailable(nick);
+    if (!nickAvailable) {
+      if (mounted) xpDlg(context, 'Ошибка', 'Такой ник уже занят.');
+      return;
+    }
     try {
-      await Supabase.instance.client.auth.signUp(
-        email: _emailCtrl.text.trim(),
+      final email = _emailCtrl.text.trim();
+      final name = _nameCtrl.text.trim();
+      final response = await Supabase.instance.client.auth.signUp(
+        email: email,
         password: _passCtrl.text,
-        data: {'display_name': _nameCtrl.text.trim()},
+        data: {'display_name': name, 'nickname': nick},
       );
+      final user = response.user;
+      if (user != null) {
+        await _saveUserProfile(
+          userId: user.id,
+          email: email,
+          nickname: nick,
+          displayName: name,
+        );
+      }
       if (mounted) {
         xpDlg(context, 'Готово',
             'Аккаунт создан!\nПроверьте email для подтверждения.');
