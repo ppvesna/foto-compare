@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
 
@@ -13,14 +15,56 @@ class CompareService {
 bool _noData(img.Pixel p) => p.a < 250;
 
 const int _tileSize = 512;
+const int _defectZoneSize = 64;
+const double _minorDeltaE = 3.0;
+const double _strongDeltaE = 6.0;
+const double _criticalDeltaE = 12.0;
+
+double _pivotRgb(num v) {
+  final c = v / 255.0;
+  return c <= 0.04045
+      ? c / 12.92
+      : math.pow((c + 0.055) / 1.055, 2.4) as double;
+}
+
+double _pivotXyz(double v) {
+  return v > 0.008856 ? math.pow(v, 1 / 3) as double : (7.787 * v) + 16 / 116;
+}
+
+({double l, double a, double b}) _rgbToLab(img.Pixel p) {
+  final r = _pivotRgb(p.r);
+  final g = _pivotRgb(p.g);
+  final b = _pivotRgb(p.b);
+
+  final x = (r * 0.4124564 + g * 0.3575761 + b * 0.1804375) / 0.95047;
+  final y = (r * 0.2126729 + g * 0.7151522 + b * 0.0721750) / 1.00000;
+  final z = (r * 0.0193339 + g * 0.1191920 + b * 0.9503041) / 1.08883;
+
+  final fx = _pivotXyz(x);
+  final fy = _pivotXyz(y);
+  final fz = _pivotXyz(z);
+  return (l: 116 * fy - 16, a: 500 * (fx - fy), b: 200 * (fy - fz));
+}
+
+double _deltaE76(img.Pixel ref, img.Pixel cmp) {
+  final a = _rgbToLab(ref);
+  final b = _rgbToLab(cmp);
+  final dl = a.l - b.l;
+  final da = a.a - b.a;
+  final db = a.b - b.b;
+  return math.sqrt(dl * dl + da * da + db * db);
+}
 
 _TileCompareData _compareTiles(img.Image r, img.Image c) {
   final w = r.width;
   final h = r.height;
+  final zoneCols = (w + _defectZoneSize - 1) ~/ _defectZoneSize;
   final out = img.Image(width: w, height: h, numChannels: 4);
   double diff = 0;
+  double maxDeltaE = 0;
   int diffPx = 0;
   int validPx = 0;
+  final defectZones = <int>{};
 
   for (int y0 = 0; y0 < h; y0 += _tileSize) {
     final y1 = (y0 + _tileSize).clamp(0, h);
@@ -34,20 +78,28 @@ _TileCompareData _compareTiles(img.Image r, img.Image c) {
             out.setPixelRgba(x, y, 0, 0, 0, 0);
             continue;
           }
-          final d = ((pr.r - pc.r).abs() +
-                  (pr.g - pc.g).abs() +
-                  (pr.b - pc.b).abs()) /
-              (3 * 255.0);
-          diff += d;
+          final deltaE = _deltaE76(pr, pc);
+          diff += deltaE;
+          if (deltaE > maxDeltaE) maxDeltaE = deltaE;
           validPx++;
-          if (d > 0.08) diffPx++;
-          if (d < 0.04) {
+          if (deltaE >= _minorDeltaE) diffPx++;
+          if (deltaE >= _strongDeltaE) {
+            defectZones
+                .add((y ~/ _defectZoneSize) * zoneCols + x ~/ _defectZoneSize);
+          }
+          if (deltaE < _minorDeltaE) {
             out.setPixelRgba(x, y, 0, 0, 0, 0); // прозрачный
-          } else if (d < 0.20) {
-            final a = ((d - 0.04) / 0.16 * 210).toInt();
+          } else if (deltaE < _strongDeltaE) {
+            final a =
+                ((deltaE - _minorDeltaE) / (_strongDeltaE - _minorDeltaE) * 210)
+                    .toInt();
             out.setPixelRgba(x, y, 30, 210, 30, a); // зелёный
-          } else if (d < 0.45) {
-            final a = 180 + ((d - 0.20) / 0.25 * 50).toInt();
+          } else if (deltaE < _criticalDeltaE) {
+            final a = 180 +
+                ((deltaE - _strongDeltaE) /
+                        (_criticalDeltaE - _strongDeltaE) *
+                        50)
+                    .toInt();
             out.setPixelRgba(x, y, 255, 170, 0, a.clamp(0, 230)); // жёлтый
           } else {
             out.setPixelRgba(x, y, 240, 20, 20, 230); // красный
@@ -61,6 +113,8 @@ _TileCompareData _compareTiles(img.Image r, img.Image c) {
     diff: diff,
     diffPixels: diffPx,
     totalPixels: validPx == 0 ? w * h : validPx,
+    maxDeltaE: maxDeltaE,
+    defectZoneCount: defectZones.length,
     diffPng: Uint8List.fromList(img.encodePng(out)),
   );
 }
@@ -69,12 +123,16 @@ class _TileCompareData {
   final double diff;
   final int diffPixels;
   final int totalPixels;
+  final double maxDeltaE;
+  final int defectZoneCount;
   final Uint8List diffPng;
 
   const _TileCompareData({
     required this.diff,
     required this.diffPixels,
     required this.totalPixels,
+    required this.maxDeltaE,
+    required this.defectZoneCount,
     required this.diffPng,
   });
 }
@@ -143,7 +201,7 @@ CompareResult _run(List<Uint8List> args) {
   final avgDiff = tileResult.totalPixels == 0
       ? 0.0
       : tileResult.diff / tileResult.totalPixels;
-  final scaled = (avgDiff * 3.5).clamp(0.0, 1.0);
+  final scaled = (avgDiff / _criticalDeltaE).clamp(0.0, 1.0);
   final similarity = ((1 - scaled) * 100).clamp(0.0, 100.0);
 
   return CompareResult(
@@ -152,6 +210,10 @@ CompareResult _run(List<Uint8List> args) {
     totalPixels: tileResult.totalPixels,
     refSize: '${imgRef.width}×${imgRef.height}',
     cmpSize: '${imgCmp.width}×${imgCmp.height}',
+    meanDeltaE: avgDiff,
+    maxDeltaE: tileResult.maxDeltaE,
+    defectZoneCount: tileResult.defectZoneCount,
+    defectAreaPercent: tileResult.diffPixels / tileResult.totalPixels * 100,
     refCanonical: Uint8List.fromList(img.encodePng(refCanonical)),
     cmpCanonical: Uint8List.fromList(img.encodePng(cmpCanonical)),
     diffL3: tileResult.diffPng,
@@ -169,6 +231,10 @@ class CompareResult {
   final double? shiftDL; // глобальный сдвиг L*
   final double? shiftDA; // глобальный сдвиг a*
   final double? shiftDB; // глобальный сдвиг b*
+  final double? meanDeltaE;
+  final double? maxDeltaE;
+  final int? defectZoneCount;
+  final double? defectAreaPercent;
   final Uint8List? refCanonical; // каноническое ref для наложения diff
   final Uint8List? cmpCanonical; // каноническое cmp, та же система координат
   final int diffPixels;
@@ -188,6 +254,10 @@ class CompareResult {
     this.shiftDL,
     this.shiftDA,
     this.shiftDB,
+    this.meanDeltaE,
+    this.maxDeltaE,
+    this.defectZoneCount,
+    this.defectAreaPercent,
     this.refCanonical,
     this.cmpCanonical,
     required this.diffPixels,

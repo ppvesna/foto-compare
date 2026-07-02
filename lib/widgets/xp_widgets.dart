@@ -23,17 +23,17 @@ class XpBtn extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final Color bg = danger
-        ? const Color(0xFFB4232A)
+        ? const Color(0xFFDC2626)
         : primary
             ? const Color(0xFF2563EB)
-            : const Color(0xFFF8FAFC);
+            : const Color(0xFFFFFFFF);
     final Color fg =
         (primary || danger) ? Colors.white : const Color(0xFF1F2937);
     final Color border = danger
-        ? const Color(0xFF7F1D1D)
+        ? const Color(0xFFB91C1C)
         : primary
             ? const Color(0xFF1D4ED8)
-            : const Color(0xFFCBD5E1);
+            : const Color(0xFFD6E0EA);
 
     return SizedBox(
       width: width,
@@ -44,10 +44,10 @@ class XpBtn extends StatelessWidget {
           foregroundColor: fg,
           disabledBackgroundColor: const Color(0xFFE5E7EB),
           disabledForegroundColor: const Color(0xFF94A3B8),
-          elevation: onPressed == null ? 0 : 5,
-          shadowColor: const Color(0x330F172A),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          minimumSize: const Size(0, 42),
+          elevation: onPressed == null ? 0 : 4,
+          shadowColor: const Color(0x260F172A),
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 13),
+          minimumSize: const Size(0, 46),
           tapTargetSize: MaterialTapTargetSize.padded,
           textStyle: const TextStyle(
             fontSize: 14,
@@ -55,7 +55,7 @@ class XpBtn extends StatelessWidget {
             letterSpacing: 0,
           ),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(11),
+            borderRadius: BorderRadius.circular(16),
             side: BorderSide(color: border),
           ),
         ),

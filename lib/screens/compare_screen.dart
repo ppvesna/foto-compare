@@ -826,6 +826,11 @@ class _CompareScreenState extends State<CompareScreen>
             shiftDL: lab.shiftDL,
             shiftDA: lab.shiftDA,
             shiftDB: lab.shiftDB,
+            meanDeltaE: _meanOf(lab.level3) ?? r.meanDeltaE,
+            maxDeltaE: _maxOf(lab.level3) ?? r.maxDeltaE,
+            defectZoneCount: _countAbove(lab.level3, 6.0) ?? r.defectZoneCount,
+            defectAreaPercent:
+                _percentAbove(lab.level3, 6.0) ?? r.defectAreaPercent,
             refCanonical: lab.refCanonical,
             cmpCanonical: lab.cmpCanonical,
             diffPixels: r.diffPixels,
@@ -892,6 +897,33 @@ class _CompareScreenState extends State<CompareScreen>
     }
   }
 
+  // ── Сводные значения по Lab-зонам ────────────────
+  double? _meanOf(List<double>? values) {
+    if (values == null || values.isEmpty) return null;
+    final active = values.where((v) => v.isFinite).toList();
+    if (active.isEmpty) return null;
+    return active.reduce((a, b) => a + b) / active.length;
+  }
+
+  double? _maxOf(List<double>? values) {
+    if (values == null || values.isEmpty) return null;
+    final active = values.where((v) => v.isFinite).toList();
+    if (active.isEmpty) return null;
+    return active.reduce(max);
+  }
+
+  int? _countAbove(List<double>? values, double threshold) {
+    if (values == null || values.isEmpty) return null;
+    return values.where((v) => v.isFinite && v >= threshold).length;
+  }
+
+  double? _percentAbove(List<double>? values, double threshold) {
+    if (values == null || values.isEmpty) return null;
+    final count = _countAbove(values, threshold);
+    if (count == null) return null;
+    return count / values.length * 100;
+  }
+
   // ── % совпадения штрихкодов эталон/образец ───────
   double? _barcodeMatchPct() {
     if (_refBarcodes.isEmpty && _cmpBarcodes.isEmpty) return null;
@@ -918,6 +950,10 @@ class _CompareScreenState extends State<CompareScreen>
       'refSize': r.refSize,
       'cmpSize': r.cmpSize,
       'diffPercent': r.diffPercent,
+      'meanDeltaE': r.meanDeltaE,
+      'maxDeltaE': r.maxDeltaE,
+      'defectZoneCount': r.defectZoneCount,
+      'defectAreaPercent': r.defectAreaPercent,
       if (_textDiff != null) 'textSimilarity': _textDiff!.similarity,
       if (_textDiff != null) 'textMissing': _textDiff!.missing,
       if (_textDiff != null) 'textExtra': _textDiff!.extra,
@@ -936,7 +972,7 @@ class _CompareScreenState extends State<CompareScreen>
       'alignment_confidence': _layoutProfile?.alignment?.confidence,
       'reproj_error': _layoutProfile?.alignment?.reprojectionError,
       'ecc_score': _layoutProfile?.alignment?.eccScore,
-      'color_deviation': null,
+      'color_deviation': r.meanDeltaE,
       'shift_dl': r.shiftDL,
       'shift_da': r.shiftDA,
       'shift_db': r.shiftDB,
@@ -2073,6 +2109,10 @@ class _CompareScreenState extends State<CompareScreen>
         children: [
           _metricChip('Сходство', '${r.score.toStringAsFixed(1)}%'),
           _metricChip('Отличия', '${r.diffPercent.toStringAsFixed(1)}%'),
+          if (r.maxDeltaE != null)
+            _metricChip('Макс. ΔE', r.maxDeltaE!.toStringAsFixed(1)),
+          if (r.defectZoneCount != null)
+            _metricChip('Зоны', '${r.defectZoneCount}'),
           if (r.labScore != null)
             _metricChip('Lab', '${r.labScore!.toStringAsFixed(1)}%'),
           _metricChip('Размер эталона', r.refSize),
@@ -2258,6 +2298,8 @@ class _CompareScreenState extends State<CompareScreen>
                     _colorComment(r.shiftDL, r.shiftDA, r.shiftDB),
                   ),
               ]),
+              const SizedBox(height: 8),
+              _technicalConclusionSection(r),
             ],
             const SizedBox(height: 8),
             _inspectorSection('OCR и коды', [
@@ -2416,6 +2458,78 @@ class _CompareScreenState extends State<CompareScreen>
       const SizedBox(height: 8),
       XpBtn(label: 'Повторить AI', onPressed: _runAiAnalysis),
     ]);
+  }
+
+  Widget _technicalConclusionSection(CompareResult r) {
+    final shift = _layoutProfile?.reprojError;
+    final defectZones = r.defectZoneCount ?? 0;
+    final maxDe = r.maxDeltaE;
+    final meanDe = r.meanDeltaE;
+    final defectArea = r.defectAreaPercent;
+    return _inspectorSection('Техническое заключение', [
+      _verdictBanner(_technicalVerdict(r, shift)),
+      const SizedBox(height: 6),
+      _metricLine(
+        'Макс. ΔE',
+        maxDe == null ? 'нет данных' : maxDe.toStringAsFixed(1),
+      ),
+      _metricLine(
+        'Среднее ΔE',
+        meanDe == null ? 'нет данных' : meanDe.toStringAsFixed(1),
+      ),
+      _metricLine(
+        'Пятна/зоны',
+        defectZones == 0
+            ? 'не обнаружены'
+            : '$defectZones зон${defectArea == null ? '' : ' · ${defectArea.toStringAsFixed(1)}%'}',
+      ),
+      _metricLine(
+        'Смещение',
+        shift == null ? 'нет профиля' : '${shift.toStringAsFixed(1)} px',
+      ),
+      _metricLine('Цвет', _colorComment(r.shiftDL, r.shiftDA, r.shiftDB)),
+    ]);
+  }
+
+  Widget _verdictBanner(String text) {
+    final lower = text.toLowerCase();
+    final color = lower.contains('крит')
+        ? AppTheme.simLow
+        : lower.contains('вним')
+            ? AppTheme.simMid
+            : AppTheme.simHigh;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.10),
+        border: Border.all(color: color.withOpacity(0.5)),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 12,
+          height: 1.35,
+          fontWeight: FontWeight.w700,
+          color: color,
+        ),
+      ),
+    );
+  }
+
+  String _technicalVerdict(CompareResult r, double? shiftPx) {
+    final maxDe = r.maxDeltaE ?? 0;
+    final meanDe = r.meanDeltaE ?? 0;
+    final defectZones = r.defectZoneCount ?? 0;
+    final shift = shiftPx ?? 0;
+    if (maxDe >= 12 || meanDe >= 6 || defectZones >= 12 || shift >= 4) {
+      return 'Критичные отклонения: требуется проверка макета и печати.';
+    }
+    if (maxDe >= 6 || meanDe >= 3 || defectZones > 0 || shift >= 2) {
+      return 'Есть заметные отклонения: проверьте подсвеченные зоны.';
+    }
+    return 'Существенных отклонений не обнаружено.';
   }
 
   Widget _inspectorSection(String title, List<Widget> children) {
