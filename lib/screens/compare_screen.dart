@@ -13,6 +13,7 @@ import '../services/reference_storage.dart';
 import '../services/opencv_service.dart';
 import '../services/ai_compare_service.dart';
 import '../services/barcode_service.dart';
+import '../services/lab_fingerprint_service.dart';
 import '../services/ocr_service.dart';
 import '../config/app_config.dart';
 import '../widgets/crop_frame_screen.dart';
@@ -43,6 +44,9 @@ class _CompareScreenState extends State<CompareScreen>
   OcrResult? _refOcr;
   OcrResult? _cmpOcr;
   TextDiff? _textDiff;
+  LabFingerprint? _refLabFingerprint;
+  LabFingerprint? _cmpLabFingerprint;
+  double? _labFingerprintMatch;
 
   Uint8List? _refAligned;
   Uint8List? _cmpAligned;
@@ -88,7 +92,7 @@ class _CompareScreenState extends State<CompareScreen>
   double _diffSlider = 0.0;
   final _resultCmpCtrl = TransformationController();
 
-  final _history = [
+  final List<Map<String, dynamic>> _history = [
     {'file': 'photo_001.jpg', 'sim': 87.4, 'date': '16.04.2026'},
     {'file': 'photo_002.jpg', 'sim': 71.2, 'date': '15.04.2026'},
     {'file': 'photo_003.jpg', 'sim': 45.8, 'date': '14.04.2026'},
@@ -797,6 +801,9 @@ class _CompareScreenState extends State<CompareScreen>
       _refOcr = null;
       _cmpOcr = null;
       _textDiff = null;
+      _refLabFingerprint = null;
+      _cmpLabFingerprint = null;
+      _labFingerprintMatch = null;
       _result = null;
       _compareStatus = 'Готовлю изображения к проверке...';
     });
@@ -879,11 +886,27 @@ class _CompareScreenState extends State<CompareScreen>
         _textDiff = (!ro.isEmpty || !co.isEmpty)
             ? OcrService.compareTexts(ro.fullText, co.fullText)
             : null;
-        _compareStatus = 'Текст проверен. Сохраняю результат...';
+        _compareStatus = 'Текст проверен. Строю Lab ID...';
+      });
+
+      final fingerprints = await Future.wait([
+        LabFingerprintService.create(ref),
+        LabFingerprintService.create(cmp),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _refLabFingerprint = fingerprints[0];
+        _cmpLabFingerprint = fingerprints[1];
+        _labFingerprintMatch = LabFingerprintService.matchScore(
+          _refLabFingerprint,
+          _cmpLabFingerprint,
+        );
+        _compareStatus = 'Lab ID готов. Сохраняю результат...';
       });
 
       try {
         await _saveCheckResult();
+        _addCurrentCheckToHistory();
         _setCompareStatus('Проверка завершена.');
       } catch (_) {
         // Результат уже показан пользователю — сохранение можно повторить
@@ -955,6 +978,11 @@ class _CompareScreenState extends State<CompareScreen>
       'defectZoneCount': r.defectZoneCount,
       'defectAreaPercent': r.defectAreaPercent,
       'levelConclusions': _levelConclusionDetails(r),
+      'labFingerprint': {
+        'reference': _refLabFingerprint?.toJson(),
+        'compare': _cmpLabFingerprint?.toJson(),
+        'matchScore': _labFingerprintMatch,
+      },
       if (_textDiff != null) 'textSimilarity': _textDiff!.similarity,
       if (_textDiff != null) 'textMissing': _textDiff!.missing,
       if (_textDiff != null) 'textExtra': _textDiff!.extra,
@@ -980,6 +1008,28 @@ class _CompareScreenState extends State<CompareScreen>
       'heatmap_url': null,
       'details': details,
     });
+  }
+
+  void _addCurrentCheckToHistory() {
+    final r = _result;
+    if (r == null) return;
+    final now = DateTime.now();
+    final date =
+        '${now.day.toString().padLeft(2, '0')}.${now.month.toString().padLeft(2, '0')}.${now.year}';
+    setState(() {
+      _history.insert(0, {
+        'file': 'Текущая проверка',
+        'sim': r.score,
+        'date': date,
+        'labId': _shortLabId(_refLabFingerprint?.labId),
+        'labMatch': _labFingerprintMatch,
+      });
+    });
+  }
+
+  String _shortLabId(String? value) {
+    if (value == null || value.isEmpty) return '-';
+    return value.length <= 8 ? value : value.substring(0, 8);
   }
 
   // ── Кроп рамкой ──────────────────────────────────
@@ -2134,6 +2184,7 @@ class _CompareScreenState extends State<CompareScreen>
               children: [
                 _histCell('Файл', flex: 3, bold: true),
                 _histCell('Сходство', flex: 2, bold: true),
+                _histCell('Lab ID', flex: 2, bold: true),
                 _histCell('Дата', flex: 2, bold: true),
               ],
             ),
@@ -2151,6 +2202,10 @@ class _CompareScreenState extends State<CompareScreen>
                       padding: const EdgeInsets.all(4),
                       child: SimBadge(value: sim, fontSize: 10),
                     ),
+                  ),
+                  _histCell(
+                    item['labId'] as String? ?? '-',
+                    flex: 2,
                   ),
                   _histCell(item['date'] as String, flex: 2),
                 ],
@@ -4402,6 +4457,8 @@ class _CompareScreenState extends State<CompareScreen>
                   children: [
                     _histCell('Файл', flex: 3, bold: true),
                     _histCell('Схожесть', flex: 2, bold: true),
+                    _histCell('Lab ID', flex: 2, bold: true),
+                    _histCell('Lab match', flex: 2, bold: true),
                     _histCell('Дата', flex: 2, bold: true),
                   ],
                 ),
@@ -4423,6 +4480,13 @@ class _CompareScreenState extends State<CompareScreen>
                             padding: const EdgeInsets.all(4),
                             child: SimBadge(value: sim, fontSize: 10),
                           ),
+                        ),
+                        _histCell(item['labId'] as String? ?? '-', flex: 2),
+                        _histCell(
+                          item['labMatch'] is num
+                              ? '${(item['labMatch'] as num).toStringAsFixed(0)}%'
+                              : '-',
+                          flex: 2,
                         ),
                         _histCell(item['date'] as String, flex: 2),
                       ],

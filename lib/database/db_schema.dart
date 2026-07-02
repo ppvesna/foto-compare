@@ -155,6 +155,11 @@ class DbSchema {
       width_mm    REAL NOT NULL DEFAULT 100,
       height_mm   REAL NOT NULL DEFAULT 100,
       thumbnail   TEXT,
+      lab_id      TEXT,
+      lab_global_hash TEXT,
+      lab_zone_hash   TEXT,
+      lab_detail_hash TEXT,
+      lab_signature   TEXT,
       created_by  TEXT,
       created_at  TEXT NOT NULL,
       updated_at  TEXT NOT NULL,
@@ -199,6 +204,9 @@ class DbSchema {
       shift_da             REAL,
       shift_db             REAL,
       heatmap_url          TEXT,
+      reference_lab_id     TEXT,
+      compare_lab_id       TEXT,
+      lab_match_score      REAL,
       details              TEXT,        -- JSON
       created_at           TEXT NOT NULL,
       synced_at            TEXT,
@@ -263,4 +271,3 @@ class DbSchema {
 
   static List<String> get all => [...v1, ...v2];
 }
-
