@@ -12,36 +12,71 @@ class CompareService {
 // исключаем, иначе на стыке остаётся ложная зелёная "тень"
 bool _noData(img.Pixel p) => p.a < 250;
 
-// Diff-карта: прозрачная → зелёная → жёлтая → красная
-Uint8List _buildDiffImage(img.Image r, img.Image c) {
+const int _tileSize = 512;
+
+_TileCompareData _compareTiles(img.Image r, img.Image c) {
   final w = r.width;
   final h = r.height;
   final out = img.Image(width: w, height: h, numChannels: 4);
-  for (int y = 0; y < h; y++) {
-    for (int x = 0; x < w; x++) {
-      final pr = r.getPixel(x, y);
-      final pc = c.getPixel(x, y);
-      if (_noData(pc)) {
-        out.setPixelRgba(x, y, 0, 0, 0, 0);
-        continue;
-      }
-      final d =
-          ((pr.r - pc.r).abs() + (pr.g - pc.g).abs() + (pr.b - pc.b).abs()) /
+  double diff = 0;
+  int diffPx = 0;
+  int validPx = 0;
+
+  for (int y0 = 0; y0 < h; y0 += _tileSize) {
+    final y1 = (y0 + _tileSize).clamp(0, h);
+    for (int x0 = 0; x0 < w; x0 += _tileSize) {
+      final x1 = (x0 + _tileSize).clamp(0, w);
+      for (int y = y0; y < y1; y++) {
+        for (int x = x0; x < x1; x++) {
+          final pr = r.getPixel(x, y);
+          final pc = c.getPixel(x, y);
+          if (_noData(pr) || _noData(pc)) {
+            out.setPixelRgba(x, y, 0, 0, 0, 0);
+            continue;
+          }
+          final d = ((pr.r - pc.r).abs() +
+                  (pr.g - pc.g).abs() +
+                  (pr.b - pc.b).abs()) /
               (3 * 255.0);
-      if (d < 0.04) {
-        out.setPixelRgba(x, y, 0, 0, 0, 0); // прозрачный
-      } else if (d < 0.20) {
-        final a = ((d - 0.04) / 0.16 * 210).toInt();
-        out.setPixelRgba(x, y, 30, 210, 30, a); // зелёный
-      } else if (d < 0.45) {
-        final a = 180 + ((d - 0.20) / 0.25 * 50).toInt();
-        out.setPixelRgba(x, y, 255, 170, 0, a.clamp(0, 230)); // жёлтый
-      } else {
-        out.setPixelRgba(x, y, 240, 20, 20, 230); // красный
+          diff += d;
+          validPx++;
+          if (d > 0.08) diffPx++;
+          if (d < 0.04) {
+            out.setPixelRgba(x, y, 0, 0, 0, 0); // прозрачный
+          } else if (d < 0.20) {
+            final a = ((d - 0.04) / 0.16 * 210).toInt();
+            out.setPixelRgba(x, y, 30, 210, 30, a); // зелёный
+          } else if (d < 0.45) {
+            final a = 180 + ((d - 0.20) / 0.25 * 50).toInt();
+            out.setPixelRgba(x, y, 255, 170, 0, a.clamp(0, 230)); // жёлтый
+          } else {
+            out.setPixelRgba(x, y, 240, 20, 20, 230); // красный
+          }
+        }
       }
     }
   }
-  return Uint8List.fromList(img.encodePng(out));
+
+  return _TileCompareData(
+    diff: diff,
+    diffPixels: diffPx,
+    totalPixels: validPx == 0 ? w * h : validPx,
+    diffPng: Uint8List.fromList(img.encodePng(out)),
+  );
+}
+
+class _TileCompareData {
+  final double diff;
+  final int diffPixels;
+  final int totalPixels;
+  final Uint8List diffPng;
+
+  const _TileCompareData({
+    required this.diff,
+    required this.diffPixels,
+    required this.totalPixels,
+    required this.diffPng,
+  });
 }
 
 // Применяет масштаб яркости к (уже уменьшенному) изображению
@@ -104,36 +139,22 @@ CompareResult _run(List<Uint8List> args) {
   final lumScale = cmpMean < 1 ? 1.0 : refMean / cmpMean;
   final cmpCanonical = _applyLuminanceScale(cmpCanonicalRaw, lumScale);
 
-  double diff = 0;
-  int diffPx = 0;
-  int validPx = 0;
-  for (int y = 0; y < refCanonical.height; y++) {
-    for (int x = 0; x < refCanonical.width; x++) {
-      final pr = refCanonical.getPixel(x, y);
-      final pc = cmpCanonical.getPixel(x, y);
-      if (_noData(pc)) continue;
-      validPx++;
-      final d =
-          ((pr.r - pc.r).abs() + (pr.g - pc.g).abs() + (pr.b - pc.b).abs()) /
-              (3 * 255);
-      diff += d;
-      if (d > 0.08) diffPx++;
-    }
-  }
-  final avgDiff = validPx == 0 ? 0.0 : diff / validPx;
+  final tileResult = _compareTiles(refCanonical, cmpCanonical);
+  final avgDiff = tileResult.totalPixels == 0
+      ? 0.0
+      : tileResult.diff / tileResult.totalPixels;
   final scaled = (avgDiff * 3.5).clamp(0.0, 1.0);
   final similarity = ((1 - scaled) * 100).clamp(0.0, 100.0);
 
   return CompareResult(
     similarity: similarity,
-    diffPixels: diffPx,
-    totalPixels:
-        validPx == 0 ? refCanonical.width * refCanonical.height : validPx,
+    diffPixels: tileResult.diffPixels,
+    totalPixels: tileResult.totalPixels,
     refSize: '${imgRef.width}×${imgRef.height}',
     cmpSize: '${imgCmp.width}×${imgCmp.height}',
     refCanonical: Uint8List.fromList(img.encodePng(refCanonical)),
     cmpCanonical: Uint8List.fromList(img.encodePng(cmpCanonical)),
-    diffL3: _buildDiffImage(refCanonical, cmpCanonical),
+    diffL3: tileResult.diffPng,
   );
 }
 

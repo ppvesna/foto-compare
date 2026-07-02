@@ -34,6 +34,7 @@ class _CompareScreenState extends State<CompareScreen>
   Uint8List? _cmpImg;
   final _picker = ImagePicker();
   bool _comparing = false;
+  String? _compareStatus;
   bool _aiLoading = false;
   CompareResult? _result;
   AiAnalysis? _aiResult;
@@ -660,6 +661,8 @@ class _CompareScreenState extends State<CompareScreen>
         _ref2Img = null;
         _ref1Sharpness = null;
         _ref2Sharpness = null;
+        _result = null;
+        _compareStatus = null;
       });
     } finally {
       if (mounted) setState(() => _stacking = false);
@@ -709,6 +712,8 @@ class _CompareScreenState extends State<CompareScreen>
         _cmp2Ctrl.value = Matrix4.identity();
         _cmp1Sharpness = null;
         _cmp2Sharpness = null;
+        _result = null;
+        _compareStatus = null;
       });
     } finally {
       if (mounted) setState(() => _stacking = false);
@@ -772,6 +777,11 @@ class _CompareScreenState extends State<CompareScreen>
   }
 
   // ── Сравнение ─────────────────────────────────────
+  void _setCompareStatus(String message) {
+    if (!mounted) return;
+    setState(() => _compareStatus = message);
+  }
+
   Future<void> _runCompare() async {
     final ref = _refAligned ?? _refImg;
     final cmp = _cmpAligned ?? _cmpImg;
@@ -788,85 +798,92 @@ class _CompareScreenState extends State<CompareScreen>
       _cmpOcr = null;
       _textDiff = null;
       _result = null;
+      _compareStatus = 'Готовлю изображения к проверке...';
     });
     _resultCmpCtrl.value = Matrix4.identity();
     try {
-      // Фаза 1: сравнение пикселей — быстро, показываем результат сразу
+      _setCompareStatus('Проверяю основные отличия по тайлам...');
       final compareResult = await CompareService.compare(ref, cmp);
       if (!mounted) return;
       setState(() {
         _result = compareResult;
-        _comparing = false;
+        _compareStatus = 'Карта отличий готова. Проверяю цветовой сдвиг...';
       });
       _tabs.animateTo(3);
 
-      // Lab-пирамида — точнее MAE, обновляем результат если OpenCV доступен
-      OpenCvService.compareImages(ref, cmp).then((lab) {
-        if (lab != null && mounted && _result != null) {
-          final r = _result!;
-          setState(
-            () => _result = CompareResult(
-              similarity: r.similarity,
-              labScore: lab.score,
-              labLevel0: lab.level0,
-              labLevel1: lab.level1,
-              labLevel2: lab.level2,
-              labLevel3: lab.level3,
-              shiftDL: lab.shiftDL,
-              shiftDA: lab.shiftDA,
-              shiftDB: lab.shiftDB,
-              refCanonical: lab.refCanonical,
-              cmpCanonical: lab.cmpCanonical,
-              diffPixels: r.diffPixels,
-              totalPixels: r.totalPixels,
-              refSize: r.refSize,
-              cmpSize: r.cmpSize,
-              diffL3: lab.diffL3,
-            ),
-          );
-        }
-      }).catchError((_) {});
-
-      // Фаза 2: штрихкоды + OCR — фоном, обновляем результат когда готово
-      Future<OcrResult> ocrSafe(Uint8List b) async {
-        try {
-          return await OcrService.recognize(b).timeout(
-            const Duration(seconds: 15),
-            onTimeout: () => OcrResult('', [], error: 'Таймаут OCR'),
-          );
-        } catch (e) {
-          return OcrResult('', [], error: e.toString());
-        }
+      // Lab-пирамида — точнее MAE, обновляем результат если OpenCV доступен.
+      final lab = await OpenCvService.compareImages(ref, cmp);
+      if (lab != null && mounted && _result != null) {
+        final r = _result!;
+        setState(
+          () => _result = CompareResult(
+            similarity: r.similarity,
+            labScore: lab.score,
+            labLevel0: lab.level0,
+            labLevel1: lab.level1,
+            labLevel2: lab.level2,
+            labLevel3: lab.level3,
+            shiftDL: lab.shiftDL,
+            shiftDA: lab.shiftDA,
+            shiftDB: lab.shiftDB,
+            refCanonical: lab.refCanonical,
+            cmpCanonical: lab.cmpCanonical,
+            diffPixels: r.diffPixels,
+            totalPixels: r.totalPixels,
+            refSize: r.refSize,
+            cmpSize: r.cmpSize,
+            diffL3: lab.diffL3,
+          ),
+        );
       }
 
-      final extras = await Future.wait([
+      _setCompareStatus('Проверяю штрихкоды...');
+      final barcodeResults = await Future.wait([
         BarcodeService.scanImage(
           ref,
         ).catchError((Object _) => <BarcodeResult>[]),
         BarcodeService.scanImage(
           cmp,
         ).catchError((Object _) => <BarcodeResult>[]),
-        ocrSafe(ref),
-        ocrSafe(cmp),
       ]);
       if (!mounted) return;
-      final ro = extras[2] as OcrResult;
-      final co = extras[3] as OcrResult;
       setState(() {
-        _refBarcodes = extras[0] as List<BarcodeResult>;
-        _cmpBarcodes = extras[1] as List<BarcodeResult>;
+        _refBarcodes = barcodeResults[0];
+        _cmpBarcodes = barcodeResults[1];
+        _compareStatus = 'Штрихкоды проверены. Проверяю текст...';
+      });
+
+      Future<OcrResult> ocrSafe(Uint8List b) async {
+        try {
+          return await OcrService.recognize(b).timeout(
+            const Duration(seconds: 15),
+            onTimeout: () => const OcrResult('', [], error: 'Таймаут OCR'),
+          );
+        } catch (e) {
+          return OcrResult('', [], error: e.toString());
+        }
+      }
+
+      final ocrResults = await Future.wait([ocrSafe(ref), ocrSafe(cmp)]);
+      if (!mounted) return;
+      final ro = ocrResults[0];
+      final co = ocrResults[1];
+      setState(() {
         _refOcr = ro;
         _cmpOcr = co;
         _textDiff = (!ro.isEmpty || !co.isEmpty)
             ? OcrService.compareTexts(ro.fullText, co.fullText)
             : null;
+        _compareStatus = 'Текст проверен. Сохраняю результат...';
       });
 
       try {
         await _saveCheckResult();
+        _setCompareStatus('Проверка завершена.');
       } catch (_) {
         // Результат уже показан пользователю — сохранение можно повторить
         // вручную через Файл → Сохранить, не блокируем компаратор этим.
+        _setCompareStatus('Проверка завершена. Результат не сохранён.');
       }
     } catch (e) {
       if (mounted) xpDlg(context, 'Ошибка сравнения', e.toString());
@@ -1036,6 +1053,8 @@ class _CompareScreenState extends State<CompareScreen>
           _cmpAligned = null;
           _layoutProfile = null;
           _cmpAnchorPts = null;
+          _result = null;
+          _compareStatus = null;
         });
       }
     } finally {
@@ -1069,6 +1088,7 @@ class _CompareScreenState extends State<CompareScreen>
                     _refAnchorPts = null;
                     _cmpAnchorPts = null;
                     _result = null;
+                    _compareStatus = null;
                     _aiResult = null;
                     _refBarcodes = [];
                     _cmpBarcodes = [];
@@ -1559,12 +1579,11 @@ class _CompareScreenState extends State<CompareScreen>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            if (_comparing)
-              const SizedBox(
-                height: 230,
-                child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
-              )
-            else if (r?.diffL3 != null) ...[
+            if (_compareStatus != null) ...[
+              _compareStatusBanner(_compareStatus!, busy: _comparing),
+              const SizedBox(height: 8),
+            ],
+            if (r?.diffL3 != null) ...[
               Row(
                 children: [
                   _legendItem(const Color(0xFF1EC81E), 'ΔE < 3'),
@@ -1594,7 +1613,12 @@ class _CompareScreenState extends State<CompareScreen>
                   const Text('Образец + diff', style: TextStyle(fontSize: 11)),
                 ],
               ),
-            ] else
+            ] else if (_comparing)
+              const SizedBox(
+                height: 230,
+                child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+              )
+            else
               AspectRatio(
                 aspectRatio: 16 / 9,
                 child: Container(
@@ -1626,6 +1650,40 @@ class _CompareScreenState extends State<CompareScreen>
             if (r != null) ...[const SizedBox(height: 8), _resultSummaryBar(r)],
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _compareStatusBanner(String message, {required bool busy}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: busy ? const Color(0xFFEAF3FF) : const Color(0xFFEAF8EF),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: busy ? const Color(0xFF9BC7F5) : const Color(0xFF9ED8AF),
+        ),
+      ),
+      child: Row(
+        children: [
+          if (busy) ...[
+            const SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            const SizedBox(width: 8),
+          ] else ...[
+            const Icon(Icons.check_circle, size: 16, color: Color(0xFF28894A)),
+            const SizedBox(width: 8),
+          ],
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -4013,6 +4071,7 @@ class _CompareScreenState extends State<CompareScreen>
                         _refImg = null;
                         _cmpImg = null;
                         _result = null;
+                        _compareStatus = null;
                         _aiResult = null;
                         _refAligned = null;
                         _cmpAligned = null;
