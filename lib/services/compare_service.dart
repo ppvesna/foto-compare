@@ -1,5 +1,3 @@
-import 'dart:math';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
 import '../config/app_config.dart';
@@ -17,15 +15,17 @@ img.Image _fitCrop(img.Image source, int size) {
   // Масштабируем по короткой стороне
   final img.Image resized;
   if (w < h) {
-    resized = img.copyResize(source, width: size,
-        interpolation: img.Interpolation.average);
+    resized = img.copyResize(source,
+        width: size, interpolation: img.Interpolation.average);
   } else {
-    resized = img.copyResize(source, height: size,
-        interpolation: img.Interpolation.average);
+    resized = img.copyResize(source,
+        height: size, interpolation: img.Interpolation.average);
   }
   // Центральный кроп до size×size
-  final cx = ((resized.width - size) / 2).floor().clamp(0, resized.width - size);
-  final cy = ((resized.height - size) / 2).floor().clamp(0, resized.height - size);
+  final cx =
+      ((resized.width - size) / 2).floor().clamp(0, resized.width - size);
+  final cy =
+      ((resized.height - size) / 2).floor().clamp(0, resized.height - size);
   return img.copyCrop(resized, x: cx, y: cy, width: size, height: size);
 }
 
@@ -47,19 +47,19 @@ Uint8List _buildDiffImage(img.Image r, img.Image c) {
         out.setPixelRgba(x, y, 0, 0, 0, 0);
         continue;
       }
-      final d = ((pr.r - pc.r).abs() +
-                 (pr.g - pc.g).abs() +
-                 (pr.b - pc.b).abs()) / (3 * 255.0);
+      final d =
+          ((pr.r - pc.r).abs() + (pr.g - pc.g).abs() + (pr.b - pc.b).abs()) /
+              (3 * 255.0);
       if (d < 0.04) {
-        out.setPixelRgba(x, y, 0, 0, 0, 0);              // прозрачный
+        out.setPixelRgba(x, y, 0, 0, 0, 0); // прозрачный
       } else if (d < 0.20) {
         final a = ((d - 0.04) / 0.16 * 210).toInt();
-        out.setPixelRgba(x, y, 30, 210, 30, a);           // зелёный
+        out.setPixelRgba(x, y, 30, 210, 30, a); // зелёный
       } else if (d < 0.45) {
         final a = 180 + ((d - 0.20) / 0.25 * 50).toInt();
         out.setPixelRgba(x, y, 255, 170, 0, a.clamp(0, 230)); // жёлтый
       } else {
-        out.setPixelRgba(x, y, 240, 20, 20, 230);         // красный
+        out.setPixelRgba(x, y, 240, 20, 20, 230); // красный
       }
     }
   }
@@ -69,11 +69,14 @@ Uint8List _buildDiffImage(img.Image r, img.Image c) {
 // Применяет масштаб яркости к (уже уменьшенному) изображению
 img.Image _applyLuminanceScale(img.Image src, double scale) {
   if ((scale - 1.0).abs() < 0.001) return src;
-  final out = img.Image(width: src.width, height: src.height, numChannels: src.numChannels);
+  final out = img.Image(
+      width: src.width, height: src.height, numChannels: src.numChannels);
   for (int y = 0; y < src.height; y++) {
     for (int x = 0; x < src.width; x++) {
       final p = src.getPixel(x, y);
-      out.setPixelRgba(x, y,
+      out.setPixelRgba(
+        x,
+        y,
         (p.r * scale).clamp(0, 255).toInt(),
         (p.g * scale).clamp(0, 255).toInt(),
         (p.b * scale).clamp(0, 255).toInt(),
@@ -106,9 +109,9 @@ CompareResult _run(List<Uint8List> args) {
     throw Exception('Не удалось декодировать изображение');
   }
 
-  final maxSize = kIsWeb ? 128 : 256;
-  final iters   = kIsWeb ? 1   : AppConfig.comparisonIter;
-  final sizes   = [64, 128, maxSize].take(iters).toList();
+  const maxSize = kIsWeb ? 128 : 256;
+  const iters = kIsWeb ? 1 : AppConfig.comparisonIter;
+  final sizes = [64, 128, maxSize].take(iters).toList();
 
   // Эталон и сравниваемое — уменьшенные копии (быстро, не зависит от исходного разрешения)
   final refThumb = _fitCrop(imgRef, maxSize);
@@ -131,14 +134,14 @@ CompareResult _run(List<Uint8List> args) {
         final pr = r.getPixel(x, y);
         final pc = c.getPixel(x, y);
         if (_noData(pc)) continue;
-        diff += ((pr.r - pc.r).abs() +
-                 (pr.g - pc.g).abs() +
-                 (pr.b - pc.b).abs()) / (3 * 255);
+        diff +=
+            ((pr.r - pc.r).abs() + (pr.g - pc.g).abs() + (pr.b - pc.b).abs()) /
+                (3 * 255);
         valid++;
       }
     }
     final avgDiff = valid == 0 ? 0.0 : diff / valid;
-    final scaled  = (avgDiff * 3.5).clamp(0.0, 1.0);
+    final scaled = (avgDiff * 3.5).clamp(0.0, 1.0);
     totalSim += (1 - scaled) * 100;
   }
   final similarity = (totalSim / iters).clamp(0.0, 100.0);
@@ -154,41 +157,43 @@ CompareResult _run(List<Uint8List> args) {
       final pc = c2.getPixel(x, y);
       if (_noData(pc)) continue;
       validPx++;
-      final d = ((pr.r - pc.r).abs() +
-                 (pr.g - pc.g).abs() +
-                 (pr.b - pc.b).abs()) / (3 * 255);
+      final d =
+          ((pr.r - pc.r).abs() + (pr.g - pc.g).abs() + (pr.b - pc.b).abs()) /
+              (3 * 255);
       if (d > 0.08) diffPx++;
     }
   }
 
   return CompareResult(
-    similarity:  similarity,
-    diffPixels:  diffPx,
+    similarity: similarity,
+    diffPixels: diffPx,
     totalPixels: validPx == 0 ? maxSize * maxSize : validPx,
-    refSize:     '${imgRef.width}×${imgRef.height}',
-    cmpSize:     '${imgCmp.width}×${imgCmp.height}',
-    diffL3:      _buildDiffImage(r2, c2),
+    refSize: '${imgRef.width}×${imgRef.height}',
+    cmpSize: '${imgCmp.width}×${imgCmp.height}',
+    refCanonical: Uint8List.fromList(img.encodePng(r2)),
+    cmpCanonical: Uint8List.fromList(img.encodePng(c2)),
+    diffL3: _buildDiffImage(r2, c2),
   );
 }
 
 class CompareResult {
-  final double    similarity;
-  final double?   ssim;
-  final double?   labScore;
+  final double similarity;
+  final double? ssim;
+  final double? labScore;
   final List<double>? labLevel0;
   final List<double>? labLevel1;
   final List<double>? labLevel2;
   final List<double>? labLevel3;
-  final double?   shiftDL;        // глобальный сдвиг L*
-  final double?   shiftDA;        // глобальный сдвиг a*
-  final double?   shiftDB;        // глобальный сдвиг b*
-  final Uint8List? refCanonical;  // каноническое ref для наложения diff
-  final Uint8List? cmpCanonical;  // каноническое cmp, та же система координат
-  final int       diffPixels;
-  final int       totalPixels;
-  final String    refSize;
-  final String    cmpSize;
-  final Uint8List? diffL3;        // PNG карта L3 27×27 детали
+  final double? shiftDL; // глобальный сдвиг L*
+  final double? shiftDA; // глобальный сдвиг a*
+  final double? shiftDB; // глобальный сдвиг b*
+  final Uint8List? refCanonical; // каноническое ref для наложения diff
+  final Uint8List? cmpCanonical; // каноническое cmp, та же система координат
+  final int diffPixels;
+  final int totalPixels;
+  final String refSize;
+  final String cmpSize;
+  final Uint8List? diffL3; // PNG карта L3 27×27 детали
 
   const CompareResult({
     required this.similarity,
