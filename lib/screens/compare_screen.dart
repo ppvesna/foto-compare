@@ -1861,10 +1861,11 @@ class _CompareScreenState extends State<CompareScreen>
         final p = entry.value;
         final x = rect.left + p.dx / imageSize.width * rect.width;
         final y = rect.top + p.dy / imageSize.height * rect.height;
-        return Positioned(
-          left: x - 6,
-          top: y - 6,
-          child: _CalibrationDot(
+        return Positioned.fill(
+          child: _AnchorPointMarker(
+            ctrl: ctrl,
+            x: x,
+            y: y,
             index: entry.key + 1,
             color: color,
           ),
@@ -5101,65 +5102,6 @@ class _FlowStep {
   final bool active;
 
   const _FlowStep(this.num, this.label, this.done, this.active);
-}
-
-class _CalibrationDot extends StatelessWidget {
-  final int index;
-  final Color color;
-
-  const _CalibrationDot({
-    required this.index,
-    required this.color,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 34,
-      height: 28,
-      child: Stack(clipBehavior: Clip.none, children: [
-        Positioned(
-          left: 4,
-          top: 13,
-          child: Container(
-            width: 4,
-            height: 4,
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.88),
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.white, width: 0.7),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x77000000),
-                  blurRadius: 2,
-                  offset: Offset(1, 1),
-                ),
-              ],
-            ),
-          ),
-        ),
-        Positioned(
-          left: 16,
-          top: 2,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
-            decoration: BoxDecoration(
-              color: Colors.black87,
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Text(
-              '$index',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 8,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        ),
-      ]),
-    );
-  }
 }
 
 class _ImageBoundsPainter extends CustomPainter {
