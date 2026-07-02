@@ -954,6 +954,7 @@ class _CompareScreenState extends State<CompareScreen>
       'maxDeltaE': r.maxDeltaE,
       'defectZoneCount': r.defectZoneCount,
       'defectAreaPercent': r.defectAreaPercent,
+      'levelConclusions': _levelConclusionDetails(r),
       if (_textDiff != null) 'textSimilarity': _textDiff!.similarity,
       if (_textDiff != null) 'textMissing': _textDiff!.missing,
       if (_textDiff != null) 'textExtra': _textDiff!.extra,
@@ -2299,6 +2300,8 @@ class _CompareScreenState extends State<CompareScreen>
                   ),
               ]),
               const SizedBox(height: 8),
+              _levelConclusionsSection(r),
+              const SizedBox(height: 8),
               _technicalConclusionSection(r),
             ],
             const SizedBox(height: 8),
@@ -2489,6 +2492,176 @@ class _CompareScreenState extends State<CompareScreen>
       ),
       _metricLine('Цвет', _colorComment(r.shiftDL, r.shiftDA, r.shiftDB)),
     ]);
+  }
+
+  Widget _levelConclusionsSection(CompareResult r) {
+    final items = _levelConclusions(r);
+    return _inspectorSection(
+      'Заключение по уровням',
+      [
+        for (final item in items) ...[
+          _levelConclusionTile(item),
+          if (item != items.last) const SizedBox(height: 6),
+        ],
+      ],
+    );
+  }
+
+  List<_LevelConclusion> _levelConclusions(CompareResult r) {
+    return [
+      _backgroundConclusion(r),
+      _detailConclusion(r),
+      _precisionConclusion(r),
+    ];
+  }
+
+  Map<String, dynamic> _levelConclusionDetails(CompareResult r) {
+    return {
+      for (final item in _levelConclusions(r))
+        item.key: {
+          'title': item.title,
+          'status': item.status,
+          'message': item.message,
+          'metric': item.metric,
+        },
+    };
+  }
+
+  _LevelConclusion _backgroundConclusion(CompareResult r) {
+    final meanDe = _meanOf(r.labLevel1) ?? _meanOf(r.labLevel0) ?? r.meanDeltaE;
+    final maxDe =
+        _maxNullable(_maxOf(r.labLevel1), _maxOf(r.labLevel0)) ?? r.maxDeltaE;
+    final colorShift = (r.shiftDL?.abs() ?? 0) > 2 ||
+        (r.shiftDA?.abs() ?? 0) > 3 ||
+        (r.shiftDB?.abs() ?? 0) > 3;
+    final status = (meanDe ?? 0) >= 6 || (maxDe ?? 0) >= 12
+        ? 'FAIL'
+        : (meanDe ?? 0) >= 3 || (maxDe ?? 0) >= 6 || colorShift
+            ? 'WARNING'
+            : 'PASS';
+    final metric = _deMetric(meanDe, maxDe);
+    final message = status == 'PASS'
+        ? 'Фон и общий тон стабильны.'
+        : 'Есть общий сдвиг фона/тона: ${_colorComment(r.shiftDL, r.shiftDA, r.shiftDB)}.';
+    return _LevelConclusion(
+      key: 'background',
+      title: 'Фон и общий тон',
+      status: status,
+      message: message,
+      metric: metric,
+    );
+  }
+
+  _LevelConclusion _detailConclusion(CompareResult r) {
+    final meanDe = _meanOf(r.labLevel2) ?? _meanOf(r.labLevel3) ?? r.meanDeltaE;
+    final maxDe = _maxOf(r.labLevel2) ?? _maxOf(r.labLevel3) ?? r.maxDeltaE;
+    final zones = _countAbove(r.labLevel2, 6.0) ??
+        _countAbove(r.labLevel3, 6.0) ??
+        r.defectZoneCount ??
+        0;
+    final status = (meanDe ?? 0) >= 6 || (maxDe ?? 0) >= 12 || zones >= 9
+        ? 'FAIL'
+        : (meanDe ?? 0) >= 3 || (maxDe ?? 0) >= 6 || zones > 0
+            ? 'WARNING'
+            : 'PASS';
+    final message = status == 'PASS'
+        ? 'Детали изображения, предметы и тон объектов совпадают.'
+        : 'Есть отклонения в деталях: $zones зон выше ΔE 6.';
+    return _LevelConclusion(
+      key: 'details',
+      title: 'Детали изображения',
+      status: status,
+      message: message,
+      metric: _deMetric(meanDe, maxDe),
+    );
+  }
+
+  _LevelConclusion _precisionConclusion(CompareResult r) {
+    final maxDe = r.maxDeltaE;
+    final zones = r.defectZoneCount ?? 0;
+    final area = r.defectAreaPercent ?? 0;
+    final status = (maxDe ?? 0) >= 12 || zones >= 12 || area >= 3
+        ? 'FAIL'
+        : (maxDe ?? 0) >= 6 || zones > 0 || area >= 0.5
+            ? 'WARNING'
+            : 'PASS';
+    final message = status == 'PASS'
+        ? 'Точки, мусор и мелкие локальные дефекты не обнаружены.'
+        : 'Обнаружены мелкие локальные дефекты: $zones зон, ${area.toStringAsFixed(1)}% площади.';
+    return _LevelConclusion(
+      key: 'precision',
+      title: 'Точки и мусор',
+      status: status,
+      message: message,
+      metric: maxDe == null
+          ? 'нет ΔE'
+          : 'max ΔE ${maxDe.toStringAsFixed(1)} · ${area.toStringAsFixed(1)}%',
+    );
+  }
+
+  Widget _levelConclusionTile(_LevelConclusion item) {
+    final color = _statusColor(item.status);
+    return Container(
+      padding: const EdgeInsets.all(9),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.08),
+        border: Border.all(color: color.withOpacity(0.45)),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+            decoration: BoxDecoration(
+              color: color,
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(
+              item.status,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 9,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          const SizedBox(width: 7),
+          Expanded(
+            child: Text(
+              item.title,
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
+            ),
+          ),
+        ]),
+        const SizedBox(height: 5),
+        Text(item.message, style: const TextStyle(fontSize: 11, height: 1.35)),
+        const SizedBox(height: 3),
+        Text(
+          item.metric,
+          style: const TextStyle(fontSize: 10, color: Colors.black54),
+        ),
+      ]),
+    );
+  }
+
+  Color _statusColor(String status) {
+    return status == 'FAIL'
+        ? AppTheme.simLow
+        : status == 'WARNING'
+            ? AppTheme.simMid
+            : AppTheme.simHigh;
+  }
+
+  double? _maxNullable(double? a, double? b) {
+    if (a == null) return b;
+    if (b == null) return a;
+    return max(a, b);
+  }
+
+  String _deMetric(double? meanDe, double? maxDe) {
+    final mean = meanDe == null ? 'нет' : meanDe.toStringAsFixed(1);
+    final maxValue = maxDe == null ? 'нет' : maxDe.toStringAsFixed(1);
+    return 'среднее ΔE $mean · max ΔE $maxValue';
   }
 
   Widget _verdictBanner(String text) {
@@ -5275,6 +5448,22 @@ class _FlowStep {
   final bool active;
 
   const _FlowStep(this.num, this.label, this.done, this.active);
+}
+
+class _LevelConclusion {
+  final String key;
+  final String title;
+  final String status;
+  final String message;
+  final String metric;
+
+  const _LevelConclusion({
+    required this.key,
+    required this.title,
+    required this.status,
+    required this.message,
+    required this.metric,
+  });
 }
 
 class _ImageBoundsPainter extends CustomPainter {
