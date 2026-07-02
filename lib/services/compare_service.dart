@@ -1,32 +1,10 @@
 import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
-import '../config/app_config.dart';
 
 class CompareService {
   static Future<CompareResult> compare(Uint8List ref, Uint8List cmp) {
     return compute(_run, [ref, cmp]);
   }
-}
-
-// Ресайз с сохранением пропорций + центральный кроп до квадрата
-img.Image _fitCrop(img.Image source, int size) {
-  final w = source.width;
-  final h = source.height;
-  // Масштабируем по короткой стороне
-  final img.Image resized;
-  if (w < h) {
-    resized = img.copyResize(source,
-        width: size, interpolation: img.Interpolation.average);
-  } else {
-    resized = img.copyResize(source,
-        height: size, interpolation: img.Interpolation.average);
-  }
-  // Центральный кроп до size×size
-  final cx =
-      ((resized.width - size) / 2).floor().clamp(0, resized.width - size);
-  final cy =
-      ((resized.height - size) / 2).floor().clamp(0, resized.height - size);
-  return img.copyCrop(resized, x: cx, y: cy, width: size, height: size);
 }
 
 // Пиксель не покрыт исходником после warp, либо частично смешан с
@@ -109,70 +87,53 @@ CompareResult _run(List<Uint8List> args) {
     throw Exception('Не удалось декодировать изображение');
   }
 
-  const maxSize = kIsWeb ? 512 : 256;
-  const iters = kIsWeb ? 1 : AppConfig.comparisonIter;
-  final sizes = [64, 128, maxSize].take(iters).toList();
-
-  // Эталон и сравниваемое — уменьшенные копии (быстро, не зависит от исходного разрешения)
-  final refThumb = _fitCrop(imgRef, maxSize);
-  final cmpThumbRaw = _fitCrop(imgCmp, maxSize);
+  final refCanonical = imgRef;
+  final cmpCanonicalRaw =
+      imgCmp.width == imgRef.width && imgCmp.height == imgRef.height
+          ? imgCmp
+          : img.copyResize(
+              imgCmp,
+              width: imgRef.width,
+              height: imgRef.height,
+              interpolation: img.Interpolation.average,
+            );
 
   // Нормализация: приводим яркость сравниваемого к яркости эталона
-  final refMean = _meanLuminance(refThumb);
-  final cmpMean = _meanLuminance(cmpThumbRaw);
+  final refMean = _meanLuminance(refCanonical);
+  final cmpMean = _meanLuminance(cmpCanonicalRaw);
   final lumScale = cmpMean < 1 ? 1.0 : refMean / cmpMean;
+  final cmpCanonical = _applyLuminanceScale(cmpCanonicalRaw, lumScale);
 
-  double totalSim = 0;
-  for (final size in sizes) {
-    final r = size == maxSize ? refThumb : _fitCrop(imgRef, size);
-    final cRaw = size == maxSize ? cmpThumbRaw : _fitCrop(imgCmp, size);
-    final c = _applyLuminanceScale(cRaw, lumScale);
-    double diff = 0;
-    int valid = 0;
-    for (int y = 0; y < size; y++) {
-      for (int x = 0; x < size; x++) {
-        final pr = r.getPixel(x, y);
-        final pc = c.getPixel(x, y);
-        if (_noData(pc)) continue;
-        diff +=
-            ((pr.r - pc.r).abs() + (pr.g - pc.g).abs() + (pr.b - pc.b).abs()) /
-                (3 * 255);
-        valid++;
-      }
-    }
-    final avgDiff = valid == 0 ? 0.0 : diff / valid;
-    final scaled = (avgDiff * 3.5).clamp(0.0, 1.0);
-    totalSim += (1 - scaled) * 100;
-  }
-  final similarity = (totalSim / iters).clamp(0.0, 100.0);
-
-  // Диффпиксели + карта на рабочем масштабе (используем нормализованное)
-  final r2 = refThumb;
-  final c2 = _applyLuminanceScale(cmpThumbRaw, lumScale);
+  double diff = 0;
   int diffPx = 0;
   int validPx = 0;
-  for (int y = 0; y < maxSize; y++) {
-    for (int x = 0; x < maxSize; x++) {
-      final pr = r2.getPixel(x, y);
-      final pc = c2.getPixel(x, y);
+  for (int y = 0; y < refCanonical.height; y++) {
+    for (int x = 0; x < refCanonical.width; x++) {
+      final pr = refCanonical.getPixel(x, y);
+      final pc = cmpCanonical.getPixel(x, y);
       if (_noData(pc)) continue;
       validPx++;
       final d =
           ((pr.r - pc.r).abs() + (pr.g - pc.g).abs() + (pr.b - pc.b).abs()) /
               (3 * 255);
+      diff += d;
       if (d > 0.08) diffPx++;
     }
   }
+  final avgDiff = validPx == 0 ? 0.0 : diff / validPx;
+  final scaled = (avgDiff * 3.5).clamp(0.0, 1.0);
+  final similarity = ((1 - scaled) * 100).clamp(0.0, 100.0);
 
   return CompareResult(
     similarity: similarity,
     diffPixels: diffPx,
-    totalPixels: validPx == 0 ? maxSize * maxSize : validPx,
+    totalPixels:
+        validPx == 0 ? refCanonical.width * refCanonical.height : validPx,
     refSize: '${imgRef.width}×${imgRef.height}',
     cmpSize: '${imgCmp.width}×${imgCmp.height}',
-    refCanonical: Uint8List.fromList(img.encodePng(r2)),
-    cmpCanonical: Uint8List.fromList(img.encodePng(c2)),
-    diffL3: _buildDiffImage(r2, c2),
+    refCanonical: Uint8List.fromList(img.encodePng(refCanonical)),
+    cmpCanonical: Uint8List.fromList(img.encodePng(cmpCanonical)),
+    diffL3: _buildDiffImage(refCanonical, cmpCanonical),
   );
 }
 
