@@ -22,6 +22,8 @@ import '../widgets/anchor_point_screen.dart';
 import '../models/layout_profile.dart';
 import '../services/layout_profile_storage.dart';
 
+enum _ResultMapMode { deltaE, geometry, overlay }
+
 class CompareScreen extends StatefulWidget {
   const CompareScreen({super.key});
 
@@ -37,6 +39,7 @@ class _CompareScreenState extends State<CompareScreen>
   final _picker = ImagePicker();
   bool _comparing = false;
   String? _compareStatus;
+  final List<String> _compareSteps = [];
   bool _aiLoading = false;
   CompareResult? _result;
   AiAnalysis? _aiResult;
@@ -92,6 +95,7 @@ class _CompareScreenState extends State<CompareScreen>
   bool _imageBusy = false;
   String _imageBusyLabel = 'Обработка изображения...';
   double _diffSlider = 0.0;
+  _ResultMapMode _resultMapMode = _ResultMapMode.deltaE;
   final _resultCmpCtrl = TransformationController();
 
   final List<Map<String, dynamic>> _history = [
@@ -801,7 +805,12 @@ class _CompareScreenState extends State<CompareScreen>
   // ── Сравнение ─────────────────────────────────────
   void _setCompareStatus(String message) {
     if (!mounted) return;
-    setState(() => _compareStatus = message);
+    setState(() {
+      _compareStatus = message;
+      if (_compareSteps.isEmpty || _compareSteps.last != message) {
+        _compareSteps.add(message);
+      }
+    });
   }
 
   Future<void> _runCompare() async {
@@ -823,16 +832,25 @@ class _CompareScreenState extends State<CompareScreen>
       _cmpLabFingerprint = null;
       _labFingerprintMatch = null;
       _result = null;
+      _compareSteps
+        ..clear()
+        ..add('Готовлю изображения к проверке...');
       _compareStatus = 'Готовлю изображения к проверке...';
+      _resultMapMode = _ResultMapMode.deltaE;
     });
     _resultCmpCtrl.value = Matrix4.identity();
     try {
-      _setCompareStatus('Проверяю основные отличия по тайлам...');
+      _setCompareStatus('Проверяю цветовую карту и геометрию по тайлам...');
       final compareResult = await CompareService.compare(ref, cmp);
       if (!mounted) return;
       setState(() {
         _result = compareResult;
-        _compareStatus = 'Карта отличий готова. Проверяю цветовой сдвиг...';
+        _compareStatus =
+            'Цветовая карта и геометрия готовы. Проверяю цветовой сдвиг...';
+        _compareSteps.add(_geometryStatusLine(compareResult));
+        _compareSteps.add(
+          'Цветовая карта и геометрия готовы. Проверяю цветовой сдвиг...',
+        );
       });
       _tabs.animateTo(3);
 
@@ -863,6 +881,16 @@ class _CompareScreenState extends State<CompareScreen>
             refSize: r.refSize,
             cmpSize: r.cmpSize,
             diffL3: lab.diffL3,
+            geometryScore: r.geometryScore,
+            geometryShiftPx: r.geometryShiftPx,
+            geometryMissingPercent: r.geometryMissingPercent,
+            geometryExtraPercent: r.geometryExtraPercent,
+            geometryOverlapPixels: r.geometryOverlapPixels,
+            geometryMissingPixels: r.geometryMissingPixels,
+            geometryExtraPixels: r.geometryExtraPixels,
+            geometryDiff: r.geometryDiff,
+            geometryRefCanonical: r.geometryRefCanonical,
+            geometryCmpCanonical: r.geometryCmpCanonical,
           ),
         );
       }
@@ -995,6 +1023,13 @@ class _CompareScreenState extends State<CompareScreen>
       'maxDeltaE': r.maxDeltaE,
       'defectZoneCount': r.defectZoneCount,
       'defectAreaPercent': r.defectAreaPercent,
+      'geometryScore': r.geometryScore,
+      'geometryShiftPx': r.geometryShiftPx,
+      'geometryMissingPercent': r.geometryMissingPercent,
+      'geometryExtraPercent': r.geometryExtraPercent,
+      'geometryOverlapPixels': r.geometryOverlapPixels,
+      'geometryMissingPixels': r.geometryMissingPixels,
+      'geometryExtraPixels': r.geometryExtraPixels,
       'levelConclusions': _levelConclusionDetails(r),
       'labFingerprint': {
         'reference': _refLabFingerprint?.toJson(),
@@ -1685,26 +1720,15 @@ class _CompareScreenState extends State<CompareScreen>
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             if (_compareStatus != null) ...[
-              _compareStatusBanner(_compareStatus!, busy: _comparing),
+              _compareProgressPanel(compact: true),
               const SizedBox(height: 8),
             ],
-            if (r?.diffL3 != null) ...[
-              Row(
-                children: [
-                  _legendItem(const Color(0xFF1EC81E), 'ΔE < 3'),
-                  const SizedBox(width: 12),
-                  _legendItem(const Color(0xFFE8A000), 'ΔE 3–6'),
-                  const SizedBox(width: 12),
-                  _legendItem(const Color(0xFFDC1414), 'ΔE > 6'),
-                ],
-              ),
+            if (r?.diffL3 != null || r?.geometryDiff != null) ...[
+              _mapModeSelector(),
               const SizedBox(height: 8),
-              _diffOverlay(
-                r!.diffL3!,
-                r.refCanonical,
-                r.cmpCanonical,
-                _resultCmpCtrl,
-              ),
+              _mapLegend(),
+              const SizedBox(height: 8),
+              _resultMapOverlay(r!),
               Row(
                 children: [
                   const Text('Эталон', style: TextStyle(fontSize: 11)),
@@ -1715,7 +1739,12 @@ class _CompareScreenState extends State<CompareScreen>
                       activeColor: AppTheme.blue,
                     ),
                   ),
-                  const Text('Образец + diff', style: TextStyle(fontSize: 11)),
+                  Text(
+                    _resultMapMode == _ResultMapMode.overlay
+                        ? 'Образец'
+                        : 'Образец + карта',
+                    style: const TextStyle(fontSize: 11),
+                  ),
                 ],
               ),
             ] else if (_comparing)
@@ -1791,6 +1820,174 @@ class _CompareScreenState extends State<CompareScreen>
         ],
       ),
     );
+  }
+
+  Widget _compareProgressPanel({bool compact = false}) {
+    final visibleSteps = compact && _compareSteps.length > 4
+        ? _compareSteps.sublist(_compareSteps.length - 4)
+        : _compareSteps;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: _comparing ? const Color(0xFFEAF3FF) : const Color(0xFFEAF8EF),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: _comparing ? AppTheme.blueLight : AppTheme.simHigh,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              if (_comparing)
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              else
+                const Icon(Icons.check_circle, size: 15, color: Colors.green),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _compareStatus ?? '',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (visibleSteps.length > 1) ...[
+            const SizedBox(height: 7),
+            ...visibleSteps.map(
+              (s) => Padding(
+                padding: const EdgeInsets.only(bottom: 3),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      s == _compareStatus && _comparing
+                          ? Icons.radio_button_checked
+                          : Icons.done,
+                      size: 12,
+                      color: s == _compareStatus && _comparing
+                          ? AppTheme.blue
+                          : Colors.green.shade700,
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        s,
+                        style: const TextStyle(
+                          fontSize: 10,
+                          height: 1.25,
+                          color: Colors.black87,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _mapModeSelector() {
+    Widget item(_ResultMapMode mode, String label) {
+      final selected = _resultMapMode == mode;
+      return Expanded(
+        child: InkWell(
+          onTap: () => setState(() => _resultMapMode = mode),
+          borderRadius: BorderRadius.circular(10),
+          child: Container(
+            height: 34,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: selected ? AppTheme.blue : Colors.white,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: selected ? AppTheme.blueDark : const Color(0xFFD5DAE2),
+              ),
+              boxShadow: selected
+                  ? [
+                      BoxShadow(
+                        color: AppTheme.blue.withOpacity(0.18),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ]
+                  : null,
+            ),
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: selected ? Colors.white : Colors.black87,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Row(
+      children: [
+        item(_ResultMapMode.deltaE, 'ΔE цвет'),
+        const SizedBox(width: 6),
+        item(_ResultMapMode.geometry, 'Геометрия ЧБ'),
+        const SizedBox(width: 6),
+        item(_ResultMapMode.overlay, 'Наложение'),
+      ],
+    );
+  }
+
+  Widget _mapLegend() {
+    if (_resultMapMode == _ResultMapMode.geometry) {
+      return Row(
+        children: [
+          _legendItem(const Color(0xFF285AFF), 'нет в образце'),
+          const SizedBox(width: 12),
+          _legendItem(const Color(0xFFE61E78), 'лишнее в образце'),
+        ],
+      );
+    }
+    if (_resultMapMode == _ResultMapMode.overlay) {
+      return const Text(
+        'Ползунок показывает эталон ↔ образец без подсветки отличий.',
+        style: TextStyle(fontSize: 10, color: Colors.grey),
+      );
+    }
+    return Row(
+      children: [
+        _legendItem(const Color(0xFF1EC81E), 'ΔE < 3'),
+        const SizedBox(width: 12),
+        _legendItem(const Color(0xFFE8A000), 'ΔE 3–6'),
+        const SizedBox(width: 12),
+        _legendItem(const Color(0xFFDC1414), 'ΔE > 6'),
+      ],
+    );
+  }
+
+  Widget _resultMapOverlay(CompareResult r) {
+    final diff = switch (_resultMapMode) {
+      _ResultMapMode.deltaE => r.diffL3,
+      _ResultMapMode.geometry => r.geometryDiff,
+      _ResultMapMode.overlay => null,
+    };
+    final refBase = _resultMapMode == _ResultMapMode.geometry
+        ? r.geometryRefCanonical ?? r.refCanonical
+        : r.refCanonical;
+    final cmpBase = _resultMapMode == _ResultMapMode.geometry
+        ? r.geometryCmpCanonical ?? r.cmpCanonical
+        : r.cmpCanonical;
+    return _diffOverlay(diff, refBase, cmpBase, _resultCmpCtrl);
   }
 
   Widget _calibrationWorkbench() {
@@ -4193,6 +4390,10 @@ class _CompareScreenState extends State<CompareScreen>
             ),
           ),
           const SizedBox(height: 12),
+          if (_compareStatus != null) ...[
+            _compareProgressPanel(),
+            const SizedBox(height: 12),
+          ],
           XpGroup(
             label: 'Детали',
             child: Table(
@@ -4227,29 +4428,58 @@ class _CompareScreenState extends State<CompareScreen>
               ),
             ),
 
+          if (r.geometryScore != null)
+            XpGroup(
+              label: 'Геометрия текста и штрихов',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _geometryVerdict(r),
+                    style: const TextStyle(fontSize: 12, height: 1.5),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      _metricChip(
+                        'Контуры',
+                        '${r.geometryScore!.toStringAsFixed(1)}%',
+                      ),
+                      if (r.geometryShiftPx != null)
+                        _metricChip(
+                          'Смещение',
+                          '${r.geometryShiftPx!.toStringAsFixed(1)} px',
+                        ),
+                      if (r.geometryMissingPercent != null)
+                        _metricChip(
+                          'Потери',
+                          '${r.geometryMissingPercent!.toStringAsFixed(1)}%',
+                        ),
+                      if (r.geometryExtraPercent != null)
+                        _metricChip(
+                          'Лишнее',
+                          '${r.geometryExtraPercent!.toStringAsFixed(1)}%',
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+
           // ── Карта различий (уровень 3: 27×27 детали) ──
-          if (r.diffL3 != null)
+          if (r.diffL3 != null || r.geometryDiff != null)
             XpGroup(
               label: 'Карта различий',
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      _legendItem(const Color(0xFF1EC81E), 'ΔE < 3'),
-                      const SizedBox(width: 10),
-                      _legendItem(const Color(0xFFE8A000), 'ΔE 3–6'),
-                      const SizedBox(width: 10),
-                      _legendItem(const Color(0xFFDC1414), 'ΔE > 6'),
-                    ],
-                  ),
+                  _mapModeSelector(),
                   const SizedBox(height: 8),
-                  _diffOverlay(
-                    r.diffL3!,
-                    r.refCanonical,
-                    r.cmpCanonical,
-                    _resultCmpCtrl,
-                  ),
+                  _mapLegend(),
+                  const SizedBox(height: 8),
+                  _resultMapOverlay(r),
                   const SizedBox(height: 2),
                   const Text(
                     'Ctrl+скролл/драг — зум и перемещение',
@@ -5147,7 +5377,7 @@ class _CompareScreenState extends State<CompareScreen>
   // Ползунок кросс-фейдит эталон → образец, подсветка отличий проявляется
   // вместе с образцом.
   Widget _diffOverlay(
-    Uint8List diffPng,
+    Uint8List? diffPng,
     Uint8List? canonRef,
     Uint8List? canonCmp,
     TransformationController ctrl,
@@ -5174,10 +5404,11 @@ class _CompareScreenState extends State<CompareScreen>
                   opacity: _diffSlider,
                   child: _uiImage(cmpBase, fit: BoxFit.contain),
                 ),
-              Opacity(
-                opacity: _diffSlider,
-                child: _uiImage(diffPng, fit: BoxFit.contain),
-              ),
+              if (diffPng != null)
+                Opacity(
+                  opacity: _diffSlider,
+                  child: _uiImage(diffPng, fit: BoxFit.contain),
+                ),
             ],
           ),
         ),
@@ -5216,6 +5447,33 @@ class _CompareScreenState extends State<CompareScreen>
     }
     if (parts.isEmpty) return 'Общий тон в норме (глобальный сдвиг < порога)';
     return parts.join(' · ');
+  }
+
+  String _geometryVerdict(CompareResult r) {
+    final score = r.geometryScore ?? 0;
+    final shift = r.geometryShiftPx ?? 0;
+    final missing = r.geometryMissingPercent ?? 0;
+    final extra = r.geometryExtraPercent ?? 0;
+    if (score >= 96 && shift <= 1.2 && missing <= 2.5 && extra <= 2.5) {
+      return 'Геометрия в норме: контуры текста и штрихов совпадают, цветовые отличия не влияют на этот вывод.';
+    }
+    if (score >= 90 && shift <= 2.5) {
+      return 'Есть небольшие геометрические отклонения: стоит проверить зоны с потерянными или лишними штрихами.';
+    }
+    return 'Геометрия требует проверки: возможны смещение текста, непопадание белой краски/чёрных чернил или потеря элементов.';
+  }
+
+  String _geometryStatusLine(CompareResult r) {
+    final score = r.geometryScore;
+    if (score == null) return 'Геометрия текста и штрихов: нет данных.';
+    final shift = r.geometryShiftPx ?? 0;
+    if (score >= 96 && shift <= 1.2) {
+      return 'Геометрия текста и штрихов в норме.';
+    }
+    if (score >= 90) {
+      return 'Геометрия текста и штрихов: есть небольшие отклонения.';
+    }
+    return 'Геометрия текста и штрихов требует проверки.';
   }
 
   Widget _histCell(String text, {int flex = 1, bool bold = false}) => Expanded(

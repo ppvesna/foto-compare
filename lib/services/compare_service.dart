@@ -126,6 +126,102 @@ _TileCompareData _compareTiles(img.Image r, img.Image c) {
   );
 }
 
+GeometryCompareData _compareGeometry(img.Image r, img.Image c) {
+  final residualShift = _estimateResidualShift(r, c);
+  final refEdges = _edgeMask(r);
+  final cmpEdges = _edgeMask(c);
+  final out = img.Image(width: r.width, height: r.height, numChannels: 4);
+  int refEdgeCount = 0;
+  int cmpEdgeCount = 0;
+  int overlap = 0;
+  int missing = 0;
+  int extra = 0;
+
+  for (int y = 0; y < r.height; y++) {
+    for (int x = 0; x < r.width; x++) {
+      final i = y * r.width + x;
+      final refHas = refEdges[i] == 1;
+      if (refHas) refEdgeCount++;
+
+      final cx = x + residualShift.x;
+      final cy = y + residualShift.y;
+      final cmpHas = cx >= 0 &&
+          cy >= 0 &&
+          cx < c.width &&
+          cy < c.height &&
+          cmpEdges[cy * c.width + cx] == 1;
+      if (cmpHas) cmpEdgeCount++;
+
+      if (refHas && cmpHas) {
+        overlap++;
+        out.setPixelRgba(x, y, 0, 0, 0, 0);
+      } else if (refHas) {
+        missing++;
+        out.setPixelRgba(x, y, 40, 90, 255, 210);
+      } else if (cmpHas) {
+        extra++;
+        out.setPixelRgba(x, y, 230, 30, 120, 210);
+      } else {
+        out.setPixelRgba(x, y, 0, 0, 0, 0);
+      }
+    }
+  }
+
+  final union = refEdgeCount + cmpEdgeCount - overlap;
+  final score = union == 0 ? 100.0 : overlap / union * 100;
+  final missingPercent = refEdgeCount == 0 ? 0.0 : missing / refEdgeCount * 100;
+  final extraPercent = cmpEdgeCount == 0 ? 0.0 : extra / cmpEdgeCount * 100;
+  final shiftPx = math.sqrt(
+      residualShift.x * residualShift.x + residualShift.y * residualShift.y);
+
+  return GeometryCompareData(
+    score: score.clamp(0.0, 100.0),
+    shiftPx: shiftPx,
+    missingPercent: missingPercent,
+    extraPercent: extraPercent,
+    overlapPixels: overlap,
+    missingPixels: missing,
+    extraPixels: extra,
+    diffPng: Uint8List.fromList(img.encodePng(out)),
+  );
+}
+
+Uint8List _edgeMask(img.Image source) {
+  final w = source.width;
+  final h = source.height;
+  final gradients = Float32List(w * h);
+  double sum = 0;
+  double maxGradient = 0;
+  int count = 0;
+
+  for (int y = 1; y < h - 1; y++) {
+    for (int x = 1; x < w - 1; x++) {
+      final gx =
+          _luma(source.getPixel(x + 1, y)) - _luma(source.getPixel(x - 1, y));
+      final gy =
+          _luma(source.getPixel(x, y + 1)) - _luma(source.getPixel(x, y - 1));
+      final g = gx.abs() + gy.abs();
+      gradients[y * w + x] = g;
+      sum += g;
+      if (g > maxGradient) maxGradient = g;
+      count++;
+    }
+  }
+
+  final mean = count == 0 ? 0.0 : sum / count;
+  final threshold = math.max(18.0, math.max(mean * 2.4, maxGradient * 0.16));
+  final mask = Uint8List(w * h);
+
+  for (int y = 1; y < h - 1; y++) {
+    for (int x = 1; x < w - 1; x++) {
+      final p = source.getPixel(x, y);
+      if (_noData(p)) continue;
+      if (gradients[y * w + x] >= threshold) mask[y * w + x] = 1;
+    }
+  }
+  return mask;
+}
+
 ({int x, int y}) _estimateResidualShift(img.Image r, img.Image c) {
   if (r.width != c.width || r.height != c.height) return (x: 0, y: 0);
   final maxDim = math.max(r.width, r.height);
@@ -173,6 +269,30 @@ double _lumaAbs(img.Pixel a, img.Pixel b) {
   final la = a.r * 0.299 + a.g * 0.587 + a.b * 0.114;
   final lb = b.r * 0.299 + b.g * 0.587 + b.b * 0.114;
   return (la - lb).abs();
+}
+
+double _luma(img.Pixel p) => p.r * 0.299 + p.g * 0.587 + p.b * 0.114;
+
+class GeometryCompareData {
+  final double score;
+  final double shiftPx;
+  final double missingPercent;
+  final double extraPercent;
+  final int overlapPixels;
+  final int missingPixels;
+  final int extraPixels;
+  final Uint8List diffPng;
+
+  const GeometryCompareData({
+    required this.score,
+    required this.shiftPx,
+    required this.missingPercent,
+    required this.extraPercent,
+    required this.overlapPixels,
+    required this.missingPixels,
+    required this.extraPixels,
+    required this.diffPng,
+  });
 }
 
 class _TileCompareData {
@@ -254,6 +374,7 @@ CompareResult _run(List<Uint8List> args) {
   final cmpCanonical = _applyLuminanceScale(cmpCanonicalRaw, lumScale);
 
   final tileResult = _compareTiles(refCanonical, cmpCanonical);
+  final geometry = _compareGeometry(refCanonical, cmpCanonical);
   final avgDiff = tileResult.totalPixels == 0
       ? 0.0
       : tileResult.diff / tileResult.totalPixels;
@@ -273,6 +394,16 @@ CompareResult _run(List<Uint8List> args) {
     refCanonical: Uint8List.fromList(img.encodePng(refCanonical)),
     cmpCanonical: Uint8List.fromList(img.encodePng(cmpCanonical)),
     diffL3: tileResult.diffPng,
+    geometryScore: geometry.score,
+    geometryShiftPx: geometry.shiftPx,
+    geometryMissingPercent: geometry.missingPercent,
+    geometryExtraPercent: geometry.extraPercent,
+    geometryOverlapPixels: geometry.overlapPixels,
+    geometryMissingPixels: geometry.missingPixels,
+    geometryExtraPixels: geometry.extraPixels,
+    geometryDiff: geometry.diffPng,
+    geometryRefCanonical: Uint8List.fromList(img.encodePng(refCanonical)),
+    geometryCmpCanonical: Uint8List.fromList(img.encodePng(cmpCanonical)),
   );
 }
 
@@ -298,6 +429,16 @@ class CompareResult {
   final String refSize;
   final String cmpSize;
   final Uint8List? diffL3; // PNG карта L3 27×27 детали
+  final double? geometryScore;
+  final double? geometryShiftPx;
+  final double? geometryMissingPercent;
+  final double? geometryExtraPercent;
+  final int? geometryOverlapPixels;
+  final int? geometryMissingPixels;
+  final int? geometryExtraPixels;
+  final Uint8List? geometryDiff;
+  final Uint8List? geometryRefCanonical;
+  final Uint8List? geometryCmpCanonical;
 
   const CompareResult({
     required this.similarity,
@@ -321,6 +462,16 @@ class CompareResult {
     required this.refSize,
     required this.cmpSize,
     this.diffL3,
+    this.geometryScore,
+    this.geometryShiftPx,
+    this.geometryMissingPercent,
+    this.geometryExtraPercent,
+    this.geometryOverlapPixels,
+    this.geometryMissingPixels,
+    this.geometryExtraPixels,
+    this.geometryDiff,
+    this.geometryRefCanonical,
+    this.geometryCmpCanonical,
   });
 
   double get diffPercent => diffPixels / totalPixels * 100;
