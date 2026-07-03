@@ -56,6 +56,7 @@ double _deltaE76(img.Pixel ref, img.Pixel cmp) {
 }
 
 _TileCompareData _compareTiles(img.Image r, img.Image c) {
+  final residualShift = _estimateResidualShift(r, c);
   final w = r.width;
   final h = r.height;
   final zoneCols = (w + _defectZoneSize - 1) ~/ _defectZoneSize;
@@ -73,7 +74,13 @@ _TileCompareData _compareTiles(img.Image r, img.Image c) {
       for (int y = y0; y < y1; y++) {
         for (int x = x0; x < x1; x++) {
           final pr = r.getPixel(x, y);
-          final pc = c.getPixel(x, y);
+          final cx = x + residualShift.x;
+          final cy = y + residualShift.y;
+          if (cx < 0 || cy < 0 || cx >= w || cy >= h) {
+            out.setPixelRgba(x, y, 0, 0, 0, 0);
+            continue;
+          }
+          final pc = c.getPixel(cx, cy);
           if (_noData(pr) || _noData(pc)) {
             out.setPixelRgba(x, y, 0, 0, 0, 0);
             continue;
@@ -117,6 +124,55 @@ _TileCompareData _compareTiles(img.Image r, img.Image c) {
     defectZoneCount: defectZones.length,
     diffPng: Uint8List.fromList(img.encodePng(out)),
   );
+}
+
+({int x, int y}) _estimateResidualShift(img.Image r, img.Image c) {
+  if (r.width != c.width || r.height != c.height) return (x: 0, y: 0);
+  final maxDim = math.max(r.width, r.height);
+  final sampleStep = math.max(1, (maxDim / 420).round());
+  final radius = math.max(4, math.min(24, (maxDim / 220).round()));
+  final margin = radius + sampleStep * 2;
+  double bestScore = double.infinity;
+  var best = (x: 0, y: 0);
+
+  for (int dy = -radius; dy <= radius; dy++) {
+    for (int dx = -radius; dx <= radius; dx++) {
+      double score = 0;
+      int count = 0;
+      for (int y = margin; y < r.height - margin; y += sampleStep) {
+        final cy = y + dy;
+        if (cy < 0 || cy >= c.height) continue;
+        for (int x = margin; x < r.width - margin; x += sampleStep) {
+          final cx = x + dx;
+          if (cx < 0 || cx >= c.width) continue;
+          final pr = r.getPixel(x, y);
+          final pc = c.getPixel(cx, cy);
+          if (_noData(pr) || _noData(pc)) continue;
+          score += _lumaAbs(pr, pc);
+          count++;
+        }
+      }
+      if (count == 0) continue;
+      final avg = score / count;
+      if (avg < bestScore) {
+        bestScore = avg;
+        best = (x: dx, y: dy);
+      }
+    }
+  }
+
+  // A small translation residue is common after manual anchors and resampling.
+  // A large one usually means the points/order are wrong, so do not hide it.
+  final maxAccepted = math.max(4, (maxDim / 450).round());
+  return best.x.abs() <= maxAccepted && best.y.abs() <= maxAccepted
+      ? best
+      : (x: 0, y: 0);
+}
+
+double _lumaAbs(img.Pixel a, img.Pixel b) {
+  final la = a.r * 0.299 + a.g * 0.587 + a.b * 0.114;
+  final lb = b.r * 0.299 + b.g * 0.587 + b.b * 0.114;
+  return (la - lb).abs();
 }
 
 class _TileCompareData {
