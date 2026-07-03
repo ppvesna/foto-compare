@@ -13,6 +13,7 @@ import '../services/reference_storage.dart';
 import '../services/opencv_service.dart';
 import '../services/ai_compare_service.dart';
 import '../services/barcode_service.dart';
+import '../services/anchor_refinement_service.dart';
 import '../services/lab_fingerprint_service.dart';
 import '../services/ocr_service.dart';
 import '../config/app_config.dart';
@@ -80,6 +81,7 @@ class _CompareScreenState extends State<CompareScreen>
   int _calStep = 0;
   List<Offset> _tempRefPts = [];
   List<Offset> _tempCmpPts = [];
+  bool _anchorRefining = false;
   static const int _minAnchorPts = 4;
   static const int _maxAnchorPts = 8;
 
@@ -235,12 +237,28 @@ class _CompareScreenState extends State<CompareScreen>
     });
   }
 
-  void _addPanelPoint(Offset imgCoord) {
+  Future<void> _addPanelPoint(Offset imgCoord) async {
+    if (_anchorRefining) return;
+    final step = _calStep;
+    if (step == 1 && _tempRefPts.length >= _maxAnchorPts) return;
+    if (step == 2 && _tempCmpPts.length >= _maxAnchorPts) return;
+    final bytes = step == 1
+        ? _refImg
+        : step == 2
+            ? _cmpImg
+            : null;
+    if (bytes == null) return;
+
+    setState(() => _anchorRefining = true);
+    final refined = await AnchorRefinementService.refine(bytes, imgCoord);
+    if (!mounted) return;
     setState(() {
-      if (_calStep == 1 && _tempRefPts.length < _maxAnchorPts) {
-        _tempRefPts = [..._tempRefPts, imgCoord];
-      } else if (_calStep == 2 && _tempCmpPts.length < _maxAnchorPts) {
-        _tempCmpPts = [..._tempCmpPts, imgCoord];
+      _anchorRefining = false;
+      if (_calStep != step) return;
+      if (step == 1 && _tempRefPts.length < _maxAnchorPts) {
+        _tempRefPts = [..._tempRefPts, refined];
+      } else if (step == 2 && _tempCmpPts.length < _maxAnchorPts) {
+        _tempCmpPts = [..._tempCmpPts, refined];
       }
     });
   }
@@ -2117,7 +2135,9 @@ class _CompareScreenState extends State<CompareScreen>
           Expanded(
             child: Text(
               placing
-                  ? 'Клик - точка. Ctrl+скролл/драг - зум и сдвиг.'
+                  ? _anchorRefining
+                      ? 'Уточняю центр точки по крупному, среднему и мелкому окну...'
+                      : 'Клик - точка. Центр уточняется автоматически. Ctrl+скролл/драг - зум и сдвиг.'
                   : 'Ctrl+скролл/драг - зум и перемещение.',
               style: const TextStyle(fontSize: 10, color: Colors.black54),
             ),
