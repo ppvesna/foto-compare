@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/app_theme.dart';
 import '../widgets/xp_widgets.dart';
+import '../services/check_history_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -93,7 +94,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                          Supabase.instance.client.auth.currentUser?.email ?? '',
+                          Supabase.instance.client.auth.currentUser?.email ??
+                              '',
                           style: const TextStyle(
                               fontWeight: FontWeight.bold, fontSize: 11)),
                       const Text('Бесплатный план',
@@ -183,6 +185,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     (v) => setState(() => _notify = v)),
               ])),
 
+          _lastCheckHistoryGroup(),
+
           // Язык
           XpGroup(
               label: 'Язык',
@@ -220,5 +224,160 @@ class _SettingsScreenState extends State<SettingsScreen> {
           materialTapTargetSize: MaterialTapTargetSize.shrinkWrap),
       Text(label, style: const TextStyle(fontSize: 11)),
     ]);
+  }
+
+  Widget _lastCheckHistoryGroup() {
+    return ValueListenableBuilder<CheckProtocol?>(
+      valueListenable: CheckHistoryService.lastCheck,
+      builder: (context, protocol, _) {
+        return XpGroup(
+          label: 'История проверок',
+          child: protocol == null
+              ? const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Последней проверки пока нет. Выполните сравнение, и здесь появится таблица этапов.',
+                      style: TextStyle(fontSize: 11, color: Colors.grey),
+                    ),
+                  ),
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _protocolSummary(protocol),
+                    const SizedBox(height: 10),
+                    _protocolStageTable(protocol),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        const Spacer(),
+                        XpBtn(
+                          label: 'Очистить',
+                          danger: true,
+                          onPressed: () async {
+                            final ok = await xpConfirm(
+                              context,
+                              'Очистить историю?',
+                              'Удалить локальный протокол последней проверки?',
+                            );
+                            if (ok) await CheckHistoryService.clearLast();
+                          },
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+        );
+      },
+    );
+  }
+
+  Widget _protocolSummary(CheckProtocol p) {
+    final date =
+        '${p.createdAt.day.toString().padLeft(2, '0')}.${p.createdAt.month.toString().padLeft(2, '0')}.${p.createdAt.year} '
+        '${p.createdAt.hour.toString().padLeft(2, '0')}:${p.createdAt.minute.toString().padLeft(2, '0')}';
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7F8F5),
+        border: Border.all(color: AppTheme.border),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Wrap(
+        spacing: 12,
+        runSpacing: 8,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          SimBadge(value: p.score, fontSize: 12),
+          _summaryText('Вердикт', p.verdict),
+          _summaryText('Дата', date),
+          _summaryText('Размер', '${p.refSize} → ${p.cmpSize}'),
+          _summaryText('Lab ID', p.labId),
+          _summaryText(
+            'Lab match',
+            p.labMatch == null ? '-' : '${p.labMatch!.toStringAsFixed(1)}%',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _summaryText(String label, String value) {
+    return RichText(
+      text: TextSpan(
+        style: const TextStyle(fontSize: 11, color: Colors.black87),
+        children: [
+          TextSpan(
+            text: '$label: ',
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
+          TextSpan(text: value),
+        ],
+      ),
+    );
+  }
+
+  Widget _protocolStageTable(CheckProtocol p) {
+    return Container(
+      decoration: BoxDecoration(
+        border: Border.all(color: AppTheme.border),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          Container(
+            color: AppTheme.silver,
+            child: Row(
+              children: [
+                _tableCell('Этап', flex: 3, bold: true),
+                _tableCell('Статус', flex: 2, bold: true),
+                _tableCell('Метрика', flex: 3, bold: true),
+                _tableCell('Комментарий', flex: 5, bold: true),
+              ],
+            ),
+          ),
+          ...p.stages.asMap().entries.map((entry) {
+            final i = entry.key;
+            final stage = entry.value;
+            return Container(
+              color: i.isEven ? Colors.white : const Color(0xFFF5F3EE),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _tableCell(stage.name, flex: 3),
+                  _tableCell(stage.status, flex: 2),
+                  _tableCell(stage.metric, flex: 3),
+                  _tableCell(stage.comment, flex: 5),
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  Widget _tableCell(String text, {int flex = 1, bool bold = false}) {
+    return Expanded(
+      flex: flex,
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 34),
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 7),
+        decoration: const BoxDecoration(
+          border: Border(right: BorderSide(color: AppTheme.border)),
+        ),
+        child: Text(
+          text,
+          style: TextStyle(
+            fontSize: 10,
+            height: 1.25,
+            fontWeight: bold ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
+      ),
+    );
   }
 }

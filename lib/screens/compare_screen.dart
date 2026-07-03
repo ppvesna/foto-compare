@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show HardwareKeyboard, KeyEvent;
 import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/app_theme.dart';
 import '../widgets/xp_widgets.dart';
 import '../services/compare_service.dart';
@@ -16,6 +15,7 @@ import '../services/barcode_service.dart';
 import '../services/anchor_refinement_service.dart';
 import '../services/lab_fingerprint_service.dart';
 import '../services/ocr_service.dart';
+import '../services/check_history_service.dart';
 import '../config/app_config.dart';
 import '../widgets/crop_frame_screen.dart';
 import '../widgets/anchor_point_screen.dart';
@@ -98,13 +98,6 @@ class _CompareScreenState extends State<CompareScreen>
   _ResultMapMode _resultMapMode = _ResultMapMode.deltaE;
   final _resultCmpCtrl = TransformationController();
 
-  final List<Map<String, dynamic>> _history = [
-    {'file': 'photo_001.jpg', 'sim': 87.4, 'date': '16.04.2026'},
-    {'file': 'photo_002.jpg', 'sim': 71.2, 'date': '15.04.2026'},
-    {'file': 'photo_003.jpg', 'sim': 45.8, 'date': '14.04.2026'},
-    {'file': 'photo_004.jpg', 'sim': 93.1, 'date': '13.04.2026'},
-  ];
-
   String? _savedRefLabel;
 
   static const int _uiImageCacheWidth = 1600;
@@ -148,7 +141,7 @@ class _CompareScreenState extends State<CompareScreen>
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 5, vsync: this);
+    _tabs = TabController(length: 4, vsync: this);
     _loadSavedReference();
     _loadProfiles();
     HardwareKeyboard.instance.addHandler(_handleCtrlKey);
@@ -952,12 +945,11 @@ class _CompareScreenState extends State<CompareScreen>
 
       try {
         await _saveCheckResult();
-        _addCurrentCheckToHistory();
         _setCompareStatus('Проверка завершена.');
       } catch (_) {
-        // Результат уже показан пользователю — сохранение можно повторить
-        // вручную через Файл → Сохранить, не блокируем компаратор этим.
-        _setCompareStatus('Проверка завершена. Результат не сохранён.');
+        _setCompareStatus(
+          'Проверка завершена. Локальный протокол не сохранён.',
+        );
       }
     } catch (e) {
       if (mounted) xpDlg(context, 'Ошибка сравнения', e.toString());
@@ -993,6 +985,81 @@ class _CompareScreenState extends State<CompareScreen>
     return count / values.length * 100;
   }
 
+  String _overallStatus(double score) {
+    if (score >= 90) return 'В норме';
+    if (score >= 70) return 'Требует внимания';
+    return 'Брак / нужна проверка';
+  }
+
+  List<CheckProtocolStage> _checkProtocolStages(CompareResult r) {
+    final colorOk = (r.maxDeltaE ?? 0) < 6 && (r.meanDeltaE ?? 0) < 3;
+    final geometryOk =
+        (r.geometryScore ?? 0) >= 96 && (r.geometryShiftPx ?? 0) <= 1.2;
+    final barcodePct = _barcodeMatchPct();
+    final textOk = _textDiff == null || _textDiff!.allOk;
+    final labOk = (_labFingerprintMatch ?? 100) >= 92;
+
+    return [
+      CheckProtocolStage(
+        name: 'Подготовка',
+        status: 'OK',
+        metric: '${r.refSize} → ${r.cmpSize}',
+        comment: 'Изображения загружены, обрезка и калибровка применены.',
+      ),
+      CheckProtocolStage(
+        name: 'Цветовая карта ΔE',
+        status: colorOk ? 'OK' : 'Внимание',
+        metric:
+            'max ${_fmt(r.maxDeltaE)} · среднее ${_fmt(r.meanDeltaE)} · ${r.diffPercent.toStringAsFixed(1)}%',
+        comment: colorOk
+            ? 'Цветовые отклонения в пределах рабочего порога.'
+            : 'Есть зоны с заметным цветовым отличием.',
+      ),
+      CheckProtocolStage(
+        name: 'Геометрия ЧБ',
+        status: geometryOk ? 'OK' : 'Внимание',
+        metric:
+            '${_fmt(r.geometryScore)}% · сдвиг ${_fmt(r.geometryShiftPx)} px',
+        comment: _geometryStatusLine(r),
+      ),
+      CheckProtocolStage(
+        name: 'Штрихкоды / QR',
+        status: barcodePct == null || barcodePct >= 99 ? 'OK' : 'Внимание',
+        metric: barcodePct == null ? 'не обнаружены' : '${_fmt(barcodePct)}%',
+        comment: barcodePct == null
+            ? 'Коды не найдены на изображениях.'
+            : 'Совпадение найденных кодов.',
+      ),
+      CheckProtocolStage(
+        name: 'Текст / OCR',
+        status: textOk ? 'OK' : 'Внимание',
+        metric: _textDiff == null
+            ? 'нет текста'
+            : '${_fmt(_textDiff!.similarity)}%',
+        comment: _textDiff == null
+            ? 'Распознанного текста для вычитки нет.'
+            : (_textDiff!.allOk
+                ? 'Текст совпадает по распознанным словам.'
+                : 'Есть пропущенные или лишние слова.'),
+      ),
+      CheckProtocolStage(
+        name: 'Lab ID',
+        status: labOk ? 'OK' : 'Внимание',
+        metric:
+            '${_shortLabId(_refLabFingerprint?.labId)} · ${_fmt(_labFingerprintMatch)}%',
+        comment: 'Сохранён локальный Lab-паспорт последней проверки.',
+      ),
+      CheckProtocolStage(
+        name: 'Итог',
+        status: _overallStatus(r.score),
+        metric: '${r.score.toStringAsFixed(1)}%',
+        comment: 'Общий результат без отправки в базу.',
+      ),
+    ];
+  }
+
+  String _fmt(num? value) => value == null ? '-' : value.toStringAsFixed(1);
+
   // ── % совпадения штрихкодов эталон/образец ───────
   double? _barcodeMatchPct() {
     if (_refBarcodes.isEmpty && _cmpBarcodes.isEmpty) return null;
@@ -1002,82 +1069,24 @@ class _CompareScreenState extends State<CompareScreen>
     return refVals.intersection(cmpVals).length / refVals.length * 100;
   }
 
-  // ── Сохранить текстовые маркеры результата (без изображений) ──
+  // ── Сохранить локальный протокол последней проверки ──
   Future<void> _saveCheckResult() async {
     final r = _result;
     if (r == null) return;
-    final score = r.score;
-    final status = score >= 90 ? 'pass' : (score >= 70 ? 'warning' : 'fail');
-
-    final details = <String, dynamic>{
-      'similarity': r.similarity,
-      'labScore': r.labScore,
-      'labLevel0': r.labLevel0,
-      'labLevel1': r.labLevel1,
-      'labLevel2': r.labLevel2,
-      'labLevel3': r.labLevel3,
-      'refSize': r.refSize,
-      'cmpSize': r.cmpSize,
-      'diffPercent': r.diffPercent,
-      'meanDeltaE': r.meanDeltaE,
-      'maxDeltaE': r.maxDeltaE,
-      'defectZoneCount': r.defectZoneCount,
-      'defectAreaPercent': r.defectAreaPercent,
-      'geometryScore': r.geometryScore,
-      'geometryShiftPx': r.geometryShiftPx,
-      'geometryMissingPercent': r.geometryMissingPercent,
-      'geometryExtraPercent': r.geometryExtraPercent,
-      'geometryOverlapPixels': r.geometryOverlapPixels,
-      'geometryMissingPixels': r.geometryMissingPixels,
-      'geometryExtraPixels': r.geometryExtraPixels,
-      'levelConclusions': _levelConclusionDetails(r),
-      'labFingerprint': {
-        'reference': _refLabFingerprint?.toJson(),
-        'compare': _cmpLabFingerprint?.toJson(),
-        'matchScore': _labFingerprintMatch,
-      },
-      if (_textDiff != null) 'textSimilarity': _textDiff!.similarity,
-      if (_textDiff != null) 'textMissing': _textDiff!.missing,
-      if (_textDiff != null) 'textExtra': _textDiff!.extra,
-      if (_barcodeMatchPct() != null) 'barcodeMatch': _barcodeMatchPct(),
-    };
-
-    // Пишем напрямую в Supabase — sqflite (LocalDatabase) недоступен на вебе,
-    // а Supabase работает одинаково на всех платформах.
-    await Supabase.instance.client.from('check_results').insert({
-      'layout_id': null,
-      'layout_profile_id': null,
-      'device_id': null,
-      'operator_id': Supabase.instance.client.auth.currentUser?.id,
-      'score': score,
-      'status': status,
-      'alignment_confidence': _layoutProfile?.alignment?.confidence,
-      'reproj_error': _layoutProfile?.alignment?.reprojectionError,
-      'ecc_score': _layoutProfile?.alignment?.eccScore,
-      'color_deviation': r.meanDeltaE,
-      'shift_dl': r.shiftDL,
-      'shift_da': r.shiftDA,
-      'shift_db': r.shiftDB,
-      'heatmap_url': null,
-      'details': details,
-    });
-  }
-
-  void _addCurrentCheckToHistory() {
-    final r = _result;
-    if (r == null) return;
     final now = DateTime.now();
-    final date =
-        '${now.day.toString().padLeft(2, '0')}.${now.month.toString().padLeft(2, '0')}.${now.year}';
-    setState(() {
-      _history.insert(0, {
-        'file': 'Текущая проверка',
-        'sim': r.score,
-        'date': date,
-        'labId': _shortLabId(_refLabFingerprint?.labId),
-        'labMatch': _labFingerprintMatch,
-      });
-    });
+    await CheckHistoryService.saveLast(
+      CheckProtocol(
+        id: now.millisecondsSinceEpoch.toString(),
+        createdAt: now,
+        score: r.score,
+        verdict: _overallStatus(r.score),
+        refSize: r.refSize,
+        cmpSize: r.cmpSize,
+        labId: _shortLabId(_refLabFingerprint?.labId),
+        labMatch: _labFingerprintMatch,
+        stages: _checkProtocolStages(r),
+      ),
+    );
   }
 
   String _shortLabId(String? value) {
@@ -1296,11 +1305,6 @@ class _CompareScreenState extends State<CompareScreen>
                   icon: '%',
                   onTap: () => _tabs.animateTo(3),
                 ),
-                XpMenuItem(
-                  label: 'История',
-                  icon: 'H',
-                  onTap: () => _tabs.animateTo(4),
-                ),
               ],
             ),
             XpMenu(
@@ -1417,7 +1421,6 @@ class _CompareScreenState extends State<CompareScreen>
             _layoutProfile != null &&
             _result == null,
       ),
-      _FlowStep('5', 'История', false, false),
     ];
 
     final content = horizontal
@@ -1536,8 +1539,6 @@ class _CompareScreenState extends State<CompareScreen>
           _calibrationWorkbench(),
           const SizedBox(height: 10),
           _comparisonStage(),
-          const SizedBox(height: 10),
-          _historyStrip(),
         ],
       );
     }
@@ -1600,8 +1601,6 @@ class _CompareScreenState extends State<CompareScreen>
         ),
         const SizedBox(height: 10),
         _comparisonStage(),
-        const SizedBox(height: 10),
-        _historyStrip(),
       ],
     );
   }
@@ -1784,40 +1783,6 @@ class _CompareScreenState extends State<CompareScreen>
             if (r != null) ...[const SizedBox(height: 8), _resultSummaryBar(r)],
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _compareStatusBanner(String message, {required bool busy}) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: busy ? const Color(0xFFEAF3FF) : const Color(0xFFEAF8EF),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: busy ? const Color(0xFF9BC7F5) : const Color(0xFF9ED8AF),
-        ),
-      ),
-      child: Row(
-        children: [
-          if (busy) ...[
-            const SizedBox(
-              width: 14,
-              height: 14,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-            const SizedBox(width: 8),
-          ] else ...[
-            const Icon(Icons.check_circle, size: 16, color: Color(0xFF28894A)),
-            const SizedBox(width: 8),
-          ],
-          Expanded(
-            child: Text(
-              message,
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -2390,50 +2355,6 @@ class _CompareScreenState extends State<CompareScreen>
     );
   }
 
-  Widget _historyStrip() {
-    return _xpWindow(
-      title: 'Последние проверки',
-      child: Column(
-        children: [
-          Container(
-            color: AppTheme.silver,
-            child: Row(
-              children: [
-                _histCell('Файл', flex: 3, bold: true),
-                _histCell('Сходство', flex: 2, bold: true),
-                _histCell('Lab ID', flex: 2, bold: true),
-                _histCell('Дата', flex: 2, bold: true),
-              ],
-            ),
-          ),
-          ..._history.take(3).map((item) {
-            final sim = item['sim'] as double;
-            return Container(
-              color: Colors.white,
-              child: Row(
-                children: [
-                  _histCell(item['file'] as String, flex: 3),
-                  Expanded(
-                    flex: 2,
-                    child: Padding(
-                      padding: const EdgeInsets.all(4),
-                      child: SimBadge(value: sim, fontSize: 10),
-                    ),
-                  ),
-                  _histCell(
-                    item['labId'] as String? ?? '-',
-                    flex: 2,
-                  ),
-                  _histCell(item['date'] as String, flex: 2),
-                ],
-              ),
-            );
-          }),
-        ],
-      ),
-    );
-  }
-
   Widget _inspectorPanel({bool compact = false}) {
     final r = _result;
     return Container(
@@ -2785,18 +2706,6 @@ class _CompareScreenState extends State<CompareScreen>
       _detailConclusion(r),
       _precisionConclusion(r),
     ];
-  }
-
-  Map<String, dynamic> _levelConclusionDetails(CompareResult r) {
-    return {
-      for (final item in _levelConclusions(r))
-        item.key: {
-          'title': item.title,
-          'status': item.status,
-          'message': item.message,
-          'metric': item.metric,
-        },
-    };
   }
 
   _LevelConclusion _backgroundConclusion(CompareResult r) {
@@ -4682,101 +4591,6 @@ class _CompareScreenState extends State<CompareScreen>
     );
   }
 
-  // ── Таб: История ─────────────────────────────────
-  Widget _tabHistory() {
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: [
-              Expanded(child: XpInput(placeholder: '🔍 Поиск...')),
-              const SizedBox(width: 6),
-              XpBtn(label: 'Фильтр ▼', onPressed: () {}),
-            ],
-          ),
-        ),
-        Container(
-          margin: const EdgeInsets.symmetric(horizontal: 12),
-          decoration: BoxDecoration(border: Border.all(color: AppTheme.border)),
-          child: Column(
-            children: [
-              Container(
-                color: AppTheme.silver,
-                child: Row(
-                  children: [
-                    _histCell('Файл', flex: 3, bold: true),
-                    _histCell('Схожесть', flex: 2, bold: true),
-                    _histCell('Lab ID', flex: 2, bold: true),
-                    _histCell('Lab match', flex: 2, bold: true),
-                    _histCell('Дата', flex: 2, bold: true),
-                  ],
-                ),
-              ),
-              ...(_history.asMap().entries.map((e) {
-                final i = e.key;
-                final item = e.value;
-                final sim = item['sim'] as double;
-                return GestureDetector(
-                  onTap: () => _tabs.animateTo(3),
-                  child: Container(
-                    color: i.isEven ? Colors.white : const Color(0xFFF5F3EE),
-                    child: Row(
-                      children: [
-                        _histCell(item['file'] as String, flex: 3),
-                        Expanded(
-                          flex: 2,
-                          child: Padding(
-                            padding: const EdgeInsets.all(4),
-                            child: SimBadge(value: sim, fontSize: 10),
-                          ),
-                        ),
-                        _histCell(item['labId'] as String? ?? '-', flex: 2),
-                        _histCell(
-                          item['labMatch'] is num
-                              ? '${(item['labMatch'] as num).toStringAsFixed(0)}%'
-                              : '-',
-                          flex: 2,
-                        ),
-                        _histCell(item['date'] as String, flex: 2),
-                      ],
-                    ),
-                  ),
-                );
-              })),
-            ],
-          ),
-        ),
-        const SizedBox(height: 8),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Row(
-            children: [
-              XpBtn(
-                label: '🗑️ Удалить',
-                onPressed: () =>
-                    xpDlg(context, 'Удалить', 'Удалить выбранное?'),
-              ),
-              const SizedBox(width: 4),
-              XpBtn(
-                label: '📤 Экспорт',
-                onPressed: () => xpDlg(context, 'Экспорт', 'Экспорт в CSV'),
-              ),
-              const Spacer(),
-              XpBtn(
-                label: '+ Новое',
-                primary: true,
-                onPressed: () => _tabs.animateTo(0),
-              ),
-            ],
-          ),
-        ),
-        const Spacer(),
-        XpStatusBar(left: 'Записей: ${_history.length}', right: 'Выбрано: 0'),
-      ],
-    );
-  }
-
   // ── Helpers ───────────────────────────────────────
   TableRow _tableRow(String key, String val) => TableRow(
         children: [
@@ -5475,24 +5289,6 @@ class _CompareScreenState extends State<CompareScreen>
     }
     return 'Геометрия текста и штрихов требует проверки.';
   }
-
-  Widget _histCell(String text, {int flex = 1, bool bold = false}) => Expanded(
-        flex: flex,
-        child: Container(
-          padding: const EdgeInsets.all(4),
-          decoration: const BoxDecoration(
-            border: Border(right: BorderSide(color: AppTheme.border)),
-          ),
-          child: Text(
-            text,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: bold ? FontWeight.bold : FontWeight.normal,
-            ),
-          ),
-        ),
-      );
 }
 
 // Резкость по дисперсии Лапласиана (выше = резче)

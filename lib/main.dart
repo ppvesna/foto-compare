@@ -8,10 +8,12 @@ import 'screens/compare_screen.dart';
 import 'screens/chat_screen.dart';
 import 'screens/shop_screen.dart';
 import 'screens/settings_screen.dart';
+import 'services/check_history_service.dart';
 import 'services/sync_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await CheckHistoryService.load();
 
   await Supabase.initialize(
     url: AppConfig.supabaseUrl,
@@ -119,8 +121,10 @@ class _MainShellState extends State<MainShell> {
             child: Row(children: [
               const Icon(Icons.account_circle, size: 13, color: Colors.white54),
               const SizedBox(width: 5),
-              Expanded(child: Text(email,
-                  style: const TextStyle(fontSize: 10, color: Colors.white70))),
+              Expanded(
+                  child: Text(email,
+                      style: const TextStyle(
+                          fontSize: 10, color: Colors.white70))),
               GestureDetector(
                 onTap: _signOut,
                 child: const Text('Выйти',
@@ -140,10 +144,14 @@ class _MainShellState extends State<MainShell> {
             top: BorderSide(color: AppTheme.blue, width: 2),
           ),
           boxShadow: [
-            BoxShadow(color: Colors.black.withOpacity(0.25),
-                blurRadius: 8, offset: const Offset(0, -3)),
-            BoxShadow(color: Colors.white.withOpacity(0.6),
-                blurRadius: 2, offset: const Offset(0, -1)),
+            BoxShadow(
+                color: Colors.black.withOpacity(0.25),
+                blurRadius: 8,
+                offset: const Offset(0, -3)),
+            BoxShadow(
+                color: Colors.white.withOpacity(0.6),
+                blurRadius: 2,
+                offset: const Offset(0, -1)),
           ],
         ),
         child: SafeArea(
@@ -169,9 +177,11 @@ class _MainShellState extends State<MainShell> {
         title: const Text('Выйти?'),
         content: const Text('Вы будете отключены от аккаунта.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
               child: const Text('Отмена')),
-          TextButton(onPressed: () => Navigator.pop(context, true),
+          TextButton(
+              onPressed: () => Navigator.pop(context, true),
               child: const Text('Выйти')),
         ],
       ),
@@ -189,9 +199,10 @@ class _MainShellState extends State<MainShell> {
       child: Container(
         decoration: BoxDecoration(
           gradient: active
-              ? LinearGradient(
-                  colors: [AppTheme.blue.withOpacity(0.18), AppTheme.blue.withOpacity(0.04)],
-                  begin: Alignment.topCenter, end: Alignment.bottomCenter)
+              ? LinearGradient(colors: [
+                  AppTheme.blue.withOpacity(0.18),
+                  AppTheme.blue.withOpacity(0.04)
+                ], begin: Alignment.topCenter, end: Alignment.bottomCenter)
               : null,
           border: Border(
             top: BorderSide(
