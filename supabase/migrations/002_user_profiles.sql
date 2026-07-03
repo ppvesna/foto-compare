@@ -8,9 +8,13 @@ CREATE TABLE IF NOT EXISTS user_profiles (
   email        TEXT NOT NULL UNIQUE,
   nickname     TEXT NOT NULL UNIQUE,
   display_name TEXT,
+  organization_name TEXT,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE user_profiles
+ADD COLUMN IF NOT EXISTS organization_name TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_user_profiles_nickname ON user_profiles(nickname);
 

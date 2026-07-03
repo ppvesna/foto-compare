@@ -22,6 +22,7 @@ class _StartScreenState extends State<StartScreen>
   final _passCtrl = TextEditingController();
   final _nameCtrl = TextEditingController();
   final _nickCtrl = TextEditingController();
+  final _orgCtrl = TextEditingController();
   final _pass2Ctrl = TextEditingController();
 
   @override
@@ -40,6 +41,7 @@ class _StartScreenState extends State<StartScreen>
     _passCtrl.dispose();
     _nameCtrl.dispose();
     _nickCtrl.dispose();
+    _orgCtrl.dispose();
     _pass2Ctrl.dispose();
     super.dispose();
   }
@@ -370,6 +372,15 @@ class _StartScreenState extends State<StartScreen>
       const SizedBox(height: 8),
       const Align(
           alignment: Alignment.centerLeft,
+          child: Text('Организация:', style: TextStyle(fontSize: 11))),
+      const SizedBox(height: 3),
+      XpInput(
+          placeholder: 'Триматрикс / Типография / Цех',
+          controller: _orgCtrl,
+          autofillHints: const [AutofillHints.organizationName]),
+      const SizedBox(height: 8),
+      const Align(
+          alignment: Alignment.centerLeft,
           child: Text('Email:', style: TextStyle(fontSize: 11))),
       const SizedBox(height: 3),
       XpInput(
@@ -447,6 +458,7 @@ class _StartScreenState extends State<StartScreen>
     required String email,
     required String nickname,
     required String displayName,
+    String organizationName = '',
   }) async {
     try {
       await Supabase.instance.client.from('user_profiles').upsert({
@@ -454,6 +466,7 @@ class _StartScreenState extends State<StartScreen>
         'email': email,
         'nickname': _normalizeNick(nickname),
         'display_name': displayName,
+        'organization_name': organizationName,
       });
     } catch (_) {
       // Таблица профилей может быть ещё не применена в Supabase.
@@ -490,6 +503,7 @@ class _StartScreenState extends State<StartScreen>
             email: user.email ?? email,
             nickname: nickname,
             displayName: displayName ?? '',
+            organizationName: (metadata['organization_name'] as String?) ?? '',
           );
         }
       }
@@ -530,10 +544,15 @@ class _StartScreenState extends State<StartScreen>
     try {
       final email = _emailCtrl.text.trim();
       final name = _nameCtrl.text.trim();
+      final organization = _orgCtrl.text.trim();
       final response = await Supabase.instance.client.auth.signUp(
         email: email,
         password: _passCtrl.text,
-        data: {'display_name': name, 'nickname': nick},
+        data: {
+          'display_name': name,
+          'nickname': nick,
+          'organization_name': organization,
+        },
       );
       final user = response.user;
       if (user != null) {
@@ -542,6 +561,7 @@ class _StartScreenState extends State<StartScreen>
           email: email,
           nickname: nick,
           displayName: name,
+          organizationName: organization,
         );
       }
       if (mounted) {
