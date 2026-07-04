@@ -138,31 +138,30 @@ class _MainShellState extends State<MainShell> {
         ]),
       ),
       bottomNavigationBar: Container(
-        decoration: BoxDecoration(
-          gradient: AppTheme.silverGrad,
-          border: const Border(
+        padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+        decoration: const BoxDecoration(
+          color: Color(0xFFE7F4FB),
+          border: Border(
             top: BorderSide(color: AppTheme.blue, width: 2),
           ),
           boxShadow: [
             BoxShadow(
-                color: Colors.black.withOpacity(0.25),
-                blurRadius: 8,
-                offset: const Offset(0, -3)),
+                color: Color(0x33000000),
+                blurRadius: 10,
+                offset: Offset(0, -3)),
             BoxShadow(
-                color: Colors.white.withOpacity(0.6),
-                blurRadius: 2,
-                offset: const Offset(0, -1)),
+                color: Color(0x99FFFFFF), blurRadius: 2, offset: Offset(0, -1)),
           ],
         ),
         child: SafeArea(
           top: false,
           child: SizedBox(
-            height: 56,
+            height: 58,
             child: Row(children: [
-              Expanded(child: _navBtn(0, '🔍', 'Сравнение')),
-              _navBtnBadge(1, '💬', 'Чат', _chatBadge),
-              Expanded(child: _navBtn(2, '🛒', 'Магазин')),
-              Expanded(child: _navBtn(3, '⚙️', 'Настройки')),
+              Expanded(child: _navBtn(0, 'Сравнение')),
+              _navBtnBadge(1, 'Чат', _chatBadge),
+              Expanded(child: _navBtn(2, 'Магазин')),
+              Expanded(child: _navBtn(3, 'Настройки')),
             ]),
           ),
         ),
@@ -191,44 +190,73 @@ class _MainShellState extends State<MainShell> {
     }
   }
 
-  Widget _navBtn(int idx, String icon, String label) {
+  Widget _navBtn(int idx, String label) {
     final active = _tab == idx;
     return GestureDetector(
       onTap: () => _onTab(idx),
       behavior: HitTestBehavior.opaque,
-      child: Container(
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        margin: const EdgeInsets.symmetric(horizontal: 4),
         decoration: BoxDecoration(
-          gradient: active
-              ? LinearGradient(colors: [
-                  AppTheme.blue.withOpacity(0.18),
-                  AppTheme.blue.withOpacity(0.04)
-                ], begin: Alignment.topCenter, end: Alignment.bottomCenter)
-              : null,
-          border: Border(
-            top: BorderSide(
-                color: active ? AppTheme.blue : Colors.transparent, width: 3),
-            right: idx < 3
-                ? const BorderSide(color: AppTheme.silverDark)
-                : BorderSide.none,
+          gradient: LinearGradient(
+            colors: active
+                ? const [
+                    Color(0xFFC8F0FF),
+                    Color(0xFF5BC2F2),
+                    Color(0xFF258FCD)
+                  ]
+                : const [
+                    Color(0xFFFFFFFF),
+                    Color(0xFFBDE7FA),
+                    Color(0xFF6DBCE5)
+                  ],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+          ),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: active ? const Color(0xFF137FBC) : const Color(0xFF6CB9DE),
+            width: active ? 2 : 1,
+          ),
+          boxShadow: const [
+            BoxShadow(
+                color: Color(0x44000000), blurRadius: 7, offset: Offset(0, 3)),
+            BoxShadow(
+                color: Color(0xAAFFFFFF), blurRadius: 2, offset: Offset(0, -1)),
+          ],
+        ),
+        child: Center(
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: active ? 13 : 12,
+              fontWeight: FontWeight.w800,
+              color: active ? Colors.white : const Color(0xFF114765),
+              shadows: active
+                  ? const [
+                      Shadow(
+                          color: Color(0x66000000),
+                          offset: Offset(0, 1),
+                          blurRadius: 1)
+                    ]
+                  : const [
+                      Shadow(
+                          color: Color(0x99FFFFFF),
+                          offset: Offset(0, 1),
+                          blurRadius: 1)
+                    ],
+            ),
           ),
         ),
-        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Text(icon, style: const TextStyle(fontSize: 20)),
-          const SizedBox(height: 1),
-          Text(label,
-              style: TextStyle(
-                  fontSize: 9,
-                  fontWeight: FontWeight.bold,
-                  color: active ? AppTheme.blue : Colors.black54)),
-        ]),
       ),
     );
   }
 
-  Widget _navBtnBadge(int idx, String icon, String label, int badge) {
+  Widget _navBtnBadge(int idx, String label, int badge) {
     return Expanded(
       child: Stack(children: [
-        SizedBox.expand(child: _navBtn(idx, icon, label)),
+        SizedBox.expand(child: _navBtn(idx, label)),
         if (badge > 0)
           Positioned(
             top: 6,

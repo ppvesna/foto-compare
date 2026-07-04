@@ -226,7 +226,7 @@ Future<void> xpDlg(BuildContext context, String title, String msg) {
         children: [
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            color: const Color(0xFF003388),
+            color: AppTheme.blueDark,
             child: Row(children: [
               Expanded(
                   child: Text(title,
@@ -272,7 +272,7 @@ Future<bool> xpConfirm(BuildContext context, String title, String msg) async {
         children: [
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            color: const Color(0xFF003388),
+            color: AppTheme.blueDark,
             child: Row(children: [
               Expanded(
                   child: Text(title,
@@ -451,9 +451,8 @@ class _XpMenuBarState extends State<XpMenuBar> {
                     child: Container(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 10, vertical: 5),
-                      color: _open == i
-                          ? const Color(0xFF003388)
-                          : Colors.transparent,
+                      color:
+                          _open == i ? AppTheme.blueDark : Colors.transparent,
                       child: Text(menu.label,
                           style: TextStyle(
                               fontSize: 13,

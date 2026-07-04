@@ -1748,7 +1748,7 @@ class _CompareScreenState extends State<CompareScreen>
               ),
             ] else if (_comparing)
               const SizedBox(
-                height: 230,
+                height: 320,
                 child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
               )
             else
@@ -1781,6 +1781,10 @@ class _CompareScreenState extends State<CompareScreen>
                 ),
               ),
             if (r != null) ...[const SizedBox(height: 8), _resultSummaryBar(r)],
+            if (r != null) ...[
+              const SizedBox(height: 10),
+              _checkProtocolPanel(r),
+            ],
           ],
         ),
       ),
@@ -1953,6 +1957,83 @@ class _CompareScreenState extends State<CompareScreen>
         ? r.geometryCmpCanonical ?? r.cmpCanonical
         : r.cmpCanonical;
     return _diffOverlay(diff, refBase, cmpBase, _resultCmpCtrl);
+  }
+
+  Widget _checkProtocolPanel(CompareResult r) {
+    final stages = _checkProtocolStages(r);
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        border: Border.all(color: AppTheme.border),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            color: AppTheme.blueDark,
+            child: const Text(
+              'Протокол проверки',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+          Container(
+            color: AppTheme.silver,
+            child: Row(
+              children: [
+                _protocolCell('Этап', flex: 3, bold: true),
+                _protocolCell('Статус', flex: 2, bold: true),
+                _protocolCell('Метрика', flex: 3, bold: true),
+                _protocolCell('Комментарий', flex: 5, bold: true),
+              ],
+            ),
+          ),
+          ...stages.asMap().entries.map((entry) {
+            final i = entry.key;
+            final stage = entry.value;
+            return Container(
+              color: i.isEven ? Colors.white : const Color(0xFFF5F8FB),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _protocolCell(stage.name, flex: 3),
+                  _protocolCell(stage.status, flex: 2),
+                  _protocolCell(stage.metric, flex: 3),
+                  _protocolCell(stage.comment, flex: 5),
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  Widget _protocolCell(String text, {int flex = 1, bool bold = false}) {
+    return Expanded(
+      flex: flex,
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 34),
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 7),
+        decoration: const BoxDecoration(
+          border: Border(right: BorderSide(color: AppTheme.border)),
+        ),
+        child: Text(
+          text,
+          style: TextStyle(
+            fontSize: 10,
+            height: 1.25,
+            fontWeight: bold ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _calibrationWorkbench() {
@@ -2210,7 +2291,7 @@ class _CompareScreenState extends State<CompareScreen>
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-        color: placing ? const Color(0xFF0A3E8C) : AppTheme.blueDark,
+        color: placing ? AppTheme.blue : AppTheme.blueDark,
         child: Row(children: [
           Expanded(
             child: Text(
@@ -5199,31 +5280,33 @@ class _CompareScreenState extends State<CompareScreen>
     final Uint8List? refBase = canonRef ?? _refImg;
     final Uint8List? cmpBase = canonCmp ?? _cmpAligned ?? _cmpImg;
     return ClipRect(
-      child: Container(
-        height: 220,
-        color: Colors.black,
-        child: InteractiveViewer(
-          transformationController: ctrl,
-          boundaryMargin: const EdgeInsets.all(double.infinity),
-          minScale: 0.5,
-          maxScale: 8.0,
-          panEnabled: _ctrlHeld,
-          scaleEnabled: _ctrlHeld,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              if (refBase != null) _uiImage(refBase, fit: BoxFit.contain),
-              if (cmpBase != null)
-                Opacity(
-                  opacity: _diffSlider,
-                  child: _uiImage(cmpBase, fit: BoxFit.contain),
-                ),
-              if (diffPng != null)
-                Opacity(
-                  opacity: _diffSlider,
-                  child: _uiImage(diffPng, fit: BoxFit.contain),
-                ),
-            ],
+      child: AspectRatio(
+        aspectRatio: 16 / 9,
+        child: Container(
+          color: Colors.black,
+          child: InteractiveViewer(
+            transformationController: ctrl,
+            boundaryMargin: const EdgeInsets.all(double.infinity),
+            minScale: 0.5,
+            maxScale: 8.0,
+            panEnabled: _ctrlHeld,
+            scaleEnabled: _ctrlHeld,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                if (refBase != null) _uiImage(refBase, fit: BoxFit.contain),
+                if (cmpBase != null)
+                  Opacity(
+                    opacity: _diffSlider,
+                    child: _uiImage(cmpBase, fit: BoxFit.contain),
+                  ),
+                if (diffPng != null)
+                  Opacity(
+                    opacity: _diffSlider,
+                    child: _uiImage(diffPng, fit: BoxFit.contain),
+                  ),
+              ],
+            ),
           ),
         ),
       ),

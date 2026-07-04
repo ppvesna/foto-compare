@@ -1,31 +1,34 @@
 import 'package:flutter/material.dart';
 
 class AppTheme {
-  // XP цвета
-  static const Color blue      = Color(0xFF245EDC);
-  static const Color blueDark  = Color(0xFF0A246A);
-  static const Color blueLight = Color(0xFF6AADFF);
-  static const Color silver    = Color(0xFFECE9D8);
-  static const Color silverDark= Color(0xFFACA899);
+  // Основная палитра: тёплый светло-синий вместо тяжёлого тёмно-фиолетового.
+  static const Color blue = Color(0xFF2FA7E6);
+  static const Color blueDark = Color(0xFF238FC8);
+  static const Color blueLight = Color(0xFF9EDBFF);
+  static const Color silver = Color(0xFFECE9D8);
+  static const Color silverDark = Color(0xFFACA899);
   static const Color silverLight = Color(0xFFFFFFFE);
-  static const Color border    = Color(0xFF808080);
-  static const Color green     = Color(0xFF3A6E37);
-  static const Color simHigh   = Color(0xFF3A8C2F);
-  static const Color simMid    = Color(0xFFC8A020);
-  static const Color simLow    = Color(0xFFC82020);
+  static const Color border = Color(0xFF808080);
+  static const Color green = Color(0xFF3A6E37);
+  static const Color simHigh = Color(0xFF3A8C2F);
+  static const Color simMid = Color(0xFFC8A020);
+  static const Color simLow = Color(0xFFC82020);
 
   // Градиенты
   static const LinearGradient blueGrad = LinearGradient(
-    colors: [Color(0xFF3A7FD5), Color(0xFF245EDC), Color(0xFF1A4DB8)],
-    begin: Alignment.topCenter, end: Alignment.bottomCenter,
+    colors: [Color(0xFFBFEAFF), Color(0xFF4FB8F0), Color(0xFF2F9DD8)],
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
   );
   static const LinearGradient btnGrad = LinearGradient(
     colors: [Color(0xFFFFFFFF), Color(0xFFECE9D8), Color(0xFFC8C4BC)],
-    begin: Alignment.topCenter, end: Alignment.bottomCenter,
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
   );
   static const LinearGradient silverGrad = LinearGradient(
     colors: [Color(0xFFF5F3EC), Color(0xFFECE9D8), Color(0xFFD8D4C8)],
-    begin: Alignment.topLeft, end: Alignment.bottomRight,
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
   );
 
   // Тени
@@ -44,8 +47,8 @@ class AppTheme {
   }
 
   static ThemeData get theme => ThemeData(
-    colorScheme: ColorScheme.fromSeed(seedColor: blue),
-    scaffoldBackgroundColor: silver,
-    useMaterial3: true,
-  );
+        colorScheme: ColorScheme.fromSeed(seedColor: blue),
+        scaffoldBackgroundColor: silver,
+        useMaterial3: true,
+      );
 }
