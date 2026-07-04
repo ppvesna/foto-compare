@@ -97,6 +97,7 @@ class _CompareScreenState extends State<CompareScreen>
   double _diffSlider = 0.0;
   _ResultMapMode _resultMapMode = _ResultMapMode.deltaE;
   final _resultCmpCtrl = TransformationController();
+  _PointProbe? _pointProbe;
 
   String? _savedRefLabel;
 
@@ -825,6 +826,7 @@ class _CompareScreenState extends State<CompareScreen>
       _cmpLabFingerprint = null;
       _labFingerprintMatch = null;
       _result = null;
+      _pointProbe = null;
       _compareSteps
         ..clear()
         ..add('Готовлю изображения к проверке...');
@@ -1782,6 +1784,10 @@ class _CompareScreenState extends State<CompareScreen>
               ),
             if (r != null) ...[const SizedBox(height: 8), _resultSummaryBar(r)],
             if (r != null) ...[
+              const SizedBox(height: 8),
+              _pointProbePanel(r),
+            ],
+            if (r != null) ...[
               const SizedBox(height: 10),
               _checkProtocolPanel(r),
             ],
@@ -1957,6 +1963,103 @@ class _CompareScreenState extends State<CompareScreen>
         ? r.geometryCmpCanonical ?? r.cmpCanonical
         : r.cmpCanonical;
     return _diffOverlay(diff, refBase, cmpBase, _resultCmpCtrl);
+  }
+
+  Widget _pointProbePanel(CompareResult r) {
+    final probe = _pointProbe;
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: const Color(0xFFC9E2F0)),
+        borderRadius: BorderRadius.circular(8),
+        boxShadow: AppTheme.shadowSubtle,
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          decoration: const BoxDecoration(
+            color: Color(0xFFEAF6FC),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(8)),
+          ),
+          child: Row(children: [
+            const Expanded(
+              child: Text(
+                'Контроль точки',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900),
+              ),
+            ),
+            Text(
+              probe == null
+                  ? 'кликните по карте'
+                  : 'x ${probe.x}, y ${probe.y}',
+              style: const TextStyle(fontSize: 10, color: Colors.black54),
+            ),
+          ]),
+        ),
+        if (probe == null)
+          const Padding(
+            padding: EdgeInsets.all(10),
+            child: Text(
+              'Наведите курсор на интересное место в окне сравнения и кликните мышью. Здесь появятся CMYK эталона, CMYK образца и ΔE в выбранной точке.',
+              style:
+                  TextStyle(fontSize: 11, height: 1.35, color: Colors.black54),
+            ),
+          )
+        else
+          Container(
+            color: const Color(0xFFF8FAFC),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _probeCell(
+                  'Сходство',
+                  '${r.score.toStringAsFixed(1)}%\nточка ΔE ${probe.deltaE.toStringAsFixed(2)}',
+                  flex: 2,
+                ),
+                _probeCell('CMYK эталона', probe.refCmyk.label, flex: 3),
+                _probeCell('CMYK образца', probe.cmpCmyk.label, flex: 3),
+                _probeCell(
+                  'RGB',
+                  'эталон ${probe.refRgb}\nобразец ${probe.cmpRgb}',
+                  flex: 3,
+                ),
+              ],
+            ),
+          ),
+      ]),
+    );
+  }
+
+  Widget _probeCell(String title, String value, {int flex = 1}) {
+    return Expanded(
+      flex: flex,
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 58),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+        decoration: const BoxDecoration(
+          border: Border(right: BorderSide(color: Color(0xFFC9E2F0))),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 9,
+              color: Colors.black54,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            value,
+            style: const TextStyle(
+              fontSize: 10,
+              height: 1.25,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ]),
+      ),
+    );
   }
 
   Widget _checkProtocolPanel(CompareResult r) {
@@ -5284,33 +5387,144 @@ class _CompareScreenState extends State<CompareScreen>
         aspectRatio: 16 / 9,
         child: Container(
           color: Colors.black,
-          child: InteractiveViewer(
-            transformationController: ctrl,
-            boundaryMargin: const EdgeInsets.all(double.infinity),
-            minScale: 0.5,
-            maxScale: 8.0,
-            panEnabled: _ctrlHeld,
-            scaleEnabled: _ctrlHeld,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                if (refBase != null) _uiImage(refBase, fit: BoxFit.contain),
-                if (cmpBase != null)
-                  Opacity(
-                    opacity: _diffSlider,
-                    child: _uiImage(cmpBase, fit: BoxFit.contain),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final boxSize = Size(constraints.maxWidth, constraints.maxHeight);
+              return GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTapDown: refBase != null && cmpBase != null
+                    ? (details) => _sampleResultPoint(
+                          local: details.localPosition,
+                          viewportSize: boxSize,
+                          refBytes: refBase,
+                          cmpBytes: cmpBase,
+                          ctrl: ctrl,
+                        )
+                    : null,
+                child: InteractiveViewer(
+                  transformationController: ctrl,
+                  boundaryMargin: const EdgeInsets.all(double.infinity),
+                  minScale: 0.5,
+                  maxScale: 8.0,
+                  panEnabled: _ctrlHeld,
+                  scaleEnabled: _ctrlHeld,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      if (refBase != null)
+                        _uiImage(refBase, fit: BoxFit.contain),
+                      if (cmpBase != null)
+                        Opacity(
+                          opacity: _diffSlider,
+                          child: _uiImage(cmpBase, fit: BoxFit.contain),
+                        ),
+                      if (diffPng != null)
+                        Opacity(
+                          opacity: _diffSlider,
+                          child: _uiImage(diffPng, fit: BoxFit.contain),
+                        ),
+                      if (_pointProbe != null)
+                        CustomPaint(
+                          painter: _ProbePointPainter(
+                            normalized: _pointProbe!.normalized,
+                            imageSize: _pointProbe!.imageSize,
+                          ),
+                        ),
+                    ],
                   ),
-                if (diffPng != null)
-                  Opacity(
-                    opacity: _diffSlider,
-                    child: _uiImage(diffPng, fit: BoxFit.contain),
-                  ),
-              ],
-            ),
+                ),
+              );
+            },
           ),
         ),
       ),
     );
+  }
+
+  void _sampleResultPoint({
+    required Offset local,
+    required Size viewportSize,
+    required Uint8List refBytes,
+    required Uint8List cmpBytes,
+    required TransformationController ctrl,
+  }) {
+    final ref = img.decodeImage(refBytes);
+    final cmp = img.decodeImage(cmpBytes);
+    if (ref == null || cmp == null) return;
+
+    final scenePoint = ctrl.toScene(local);
+    final rect = _containedImageRect(
+      viewportSize,
+      Size(ref.width.toDouble(), ref.height.toDouble()),
+    );
+    if (!rect.contains(scenePoint)) return;
+
+    final nx = ((scenePoint.dx - rect.left) / rect.width).clamp(0.0, 1.0);
+    final ny = ((scenePoint.dy - rect.top) / rect.height).clamp(0.0, 1.0);
+    final rx = (nx * (ref.width - 1)).round().clamp(0, ref.width - 1);
+    final ry = (ny * (ref.height - 1)).round().clamp(0, ref.height - 1);
+    final cx = (nx * (cmp.width - 1)).round().clamp(0, cmp.width - 1);
+    final cy = (ny * (cmp.height - 1)).round().clamp(0, cmp.height - 1);
+
+    final refPixel = ref.getPixel(rx, ry);
+    final cmpPixel = cmp.getPixel(cx, cy);
+    setState(() {
+      _pointProbe = _PointProbe(
+        x: rx,
+        y: ry,
+        normalized: Offset(nx, ny),
+        imageSize: Size(ref.width.toDouble(), ref.height.toDouble()),
+        refRgb: _RgbColor.fromPixel(refPixel),
+        cmpRgb: _RgbColor.fromPixel(cmpPixel),
+        refCmyk: _CmykColor.fromPixel(refPixel),
+        cmpCmyk: _CmykColor.fromPixel(cmpPixel),
+        deltaE: _deltaE76(refPixel, cmpPixel),
+      );
+    });
+  }
+
+  Rect _containedImageRect(Size box, Size image) {
+    if (box.width <= 0 ||
+        box.height <= 0 ||
+        image.width <= 0 ||
+        image.height <= 0) {
+      return Offset.zero & box;
+    }
+    final scale = min(box.width / image.width, box.height / image.height);
+    final w = image.width * scale;
+    final h = image.height * scale;
+    return Rect.fromLTWH((box.width - w) / 2, (box.height - h) / 2, w, h);
+  }
+
+  double _deltaE76(img.Pixel ref, img.Pixel cmp) {
+    final a = _rgbToLab(ref);
+    final b = _rgbToLab(cmp);
+    final dl = a.l - b.l;
+    final da = a.a - b.a;
+    final db = a.b - b.b;
+    return sqrt(dl * dl + da * da + db * db);
+  }
+
+  ({double l, double a, double b}) _rgbToLab(img.Pixel p) {
+    final r = _pivotRgb(p.r);
+    final g = _pivotRgb(p.g);
+    final b = _pivotRgb(p.b);
+    final x = (r * 0.4124564 + g * 0.3575761 + b * 0.1804375) / 0.95047;
+    final y = (r * 0.2126729 + g * 0.7151522 + b * 0.0721750);
+    final z = (r * 0.0193339 + g * 0.1191920 + b * 0.9503041) / 1.08883;
+    final fx = _pivotXyz(x);
+    final fy = _pivotXyz(y);
+    final fz = _pivotXyz(z);
+    return (l: 116 * fy - 16, a: 500 * (fx - fy), b: 200 * (fy - fz));
+  }
+
+  double _pivotRgb(num v) {
+    final c = v / 255.0;
+    return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4) as double;
+  }
+
+  double _pivotXyz(double v) {
+    return v > 0.008856 ? pow(v, 1 / 3) as double : (7.787 * v) + 16 / 116;
   }
 
   // Текстовый комментарий о цветовом сдвиге образца относительно эталона.
@@ -5687,6 +5901,69 @@ class _LevelConclusion {
   });
 }
 
+class _PointProbe {
+  final int x;
+  final int y;
+  final Offset normalized;
+  final Size imageSize;
+  final _RgbColor refRgb;
+  final _RgbColor cmpRgb;
+  final _CmykColor refCmyk;
+  final _CmykColor cmpCmyk;
+  final double deltaE;
+
+  const _PointProbe({
+    required this.x,
+    required this.y,
+    required this.normalized,
+    required this.imageSize,
+    required this.refRgb,
+    required this.cmpRgb,
+    required this.refCmyk,
+    required this.cmpCmyk,
+    required this.deltaE,
+  });
+}
+
+class _RgbColor {
+  final int r;
+  final int g;
+  final int b;
+
+  const _RgbColor(this.r, this.g, this.b);
+
+  factory _RgbColor.fromPixel(img.Pixel p) {
+    return _RgbColor(p.r.round(), p.g.round(), p.b.round());
+  }
+
+  @override
+  String toString() => '$r/$g/$b';
+}
+
+class _CmykColor {
+  final double c;
+  final double m;
+  final double y;
+  final double k;
+
+  const _CmykColor(this.c, this.m, this.y, this.k);
+
+  factory _CmykColor.fromPixel(img.Pixel p) {
+    final r = (p.r / 255.0).clamp(0.0, 1.0);
+    final g = (p.g / 255.0).clamp(0.0, 1.0);
+    final b = (p.b / 255.0).clamp(0.0, 1.0);
+    final k = 1.0 - max(r, max(g, b));
+    if (k >= 0.999) return const _CmykColor(0, 0, 0, 100);
+    final c = (1.0 - r - k) / (1.0 - k);
+    final m = (1.0 - g - k) / (1.0 - k);
+    final y = (1.0 - b - k) / (1.0 - k);
+    return _CmykColor(c * 100, m * 100, y * 100, k * 100);
+  }
+
+  String get label => 'C ${c.toStringAsFixed(1)}  M ${m.toStringAsFixed(1)}\n'
+      'Y ${y.toStringAsFixed(1)}  K ${k.toStringAsFixed(1)}';
+}
+
 class _ImageBoundsPainter extends CustomPainter {
   final Rect rect;
 
@@ -5704,6 +5981,56 @@ class _ImageBoundsPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _ImageBoundsPainter oldDelegate) {
     return oldDelegate.rect != rect;
+  }
+}
+
+class _ProbePointPainter extends CustomPainter {
+  final Offset normalized;
+  final Size imageSize;
+
+  const _ProbePointPainter({required this.normalized, required this.imageSize});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = _containedRect(size, imageSize);
+    final center = Offset(
+      rect.left + normalized.dx * rect.width,
+      rect.top + normalized.dy * rect.height,
+    );
+    final outer = Paint()
+      ..color = Colors.black
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3;
+    final inner = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.4;
+    for (final paint in [outer, inner]) {
+      canvas.drawCircle(center, 8, paint);
+      canvas.drawLine(center.translate(-14, 0), center.translate(-5, 0), paint);
+      canvas.drawLine(center.translate(5, 0), center.translate(14, 0), paint);
+      canvas.drawLine(center.translate(0, -14), center.translate(0, -5), paint);
+      canvas.drawLine(center.translate(0, 5), center.translate(0, 14), paint);
+    }
+  }
+
+  Rect _containedRect(Size box, Size image) {
+    if (box.width <= 0 ||
+        box.height <= 0 ||
+        image.width <= 0 ||
+        image.height <= 0) {
+      return Offset.zero & box;
+    }
+    final scale = min(box.width / image.width, box.height / image.height);
+    final w = image.width * scale;
+    final h = image.height * scale;
+    return Rect.fromLTWH((box.width - w) / 2, (box.height - h) / 2, w, h);
+  }
+
+  @override
+  bool shouldRepaint(covariant _ProbePointPainter oldDelegate) {
+    return oldDelegate.normalized != normalized ||
+        oldDelegate.imageSize != imageSize;
   }
 }
 
