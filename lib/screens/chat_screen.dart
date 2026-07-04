@@ -10,39 +10,38 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
-  int _activeRoom = 0;
-  int _activeAsset = 0;
+  int _activeChat = 0;
   final _msgCtrl = TextEditingController();
   final _scrollCtrl = ScrollController();
 
-  final _rooms = const [
-    _ChatRoom(
-      icon: Icons.factory_outlined,
-      name: 'TriMatrix / Печатный цех',
-      subtitle: 'Организация · 8 участников',
-      badge: 2,
-      kind: 'org',
+  final _chats = const [
+    _ChatItem(
+      title: 'Проверки макетов',
+      subtitle: 'карты отличий, протоколы, замечания',
+      time: '10:36',
+      unread: 3,
+      color: Color(0xFF2FA7E6),
     ),
-    _ChatRoom(
-      icon: Icons.rule_folder_outlined,
-      name: 'Проверки макетов',
-      subtitle: 'Группа организации · результаты и замечания',
-      badge: 4,
-      kind: 'group',
+    _ChatItem(
+      title: 'Цвет и геометрия',
+      subtitle: 'Delta E, ЧБ-контуры, смещения',
+      time: '09:54',
+      unread: 0,
+      color: Color(0xFF16A34A),
     ),
-    _ChatRoom(
-      icon: Icons.color_lens_outlined,
-      name: 'Цвет и геометрия',
-      subtitle: 'Технологи · Delta E / ЧБ геометрия',
-      badge: 0,
-      kind: 'group',
+    _ChatItem(
+      title: 'Цех / смена',
+      subtitle: 'мастер, печатник, технолог',
+      time: 'Вчера',
+      unread: 1,
+      color: Color(0xFFF59E0B),
     ),
-    _ChatRoom(
-      icon: Icons.person_outline,
-      name: 'Олег',
-      subtitle: 'личные сообщения',
-      badge: 0,
-      kind: 'direct',
+    _ChatItem(
+      title: 'Олег',
+      subtitle: 'личный чат',
+      time: 'Пт',
+      unread: 0,
+      color: Color(0xFF64748B),
     ),
   ];
 
@@ -52,41 +51,24 @@ class _ChatScreenState extends State<ChatScreen> {
       role: 'технолог',
       time: '10:18',
       text:
-          'Добавила замечание по белой краске. Нужен удалённый просмотр геометрии.',
+          'Посмотрела белую краску. Цвет можно принять, но геометрию текста надо проверить отдельно.',
       isMine: false,
     ),
     _ChatMessage(
       author: 'Олег',
       role: 'оператор',
       time: '10:24',
-      text:
-          'Отправил проверку в группу. Оригиналы пока локально, в облако уйдут только превью и карты.',
+      text: 'Отправил последнюю проверку в группу.',
       isMine: true,
-      checkCard: _SharedCheckCard(
+      card: _SharedCheckCard(
         id: 'TRX-2026-0703-014',
-        title: 'Проверка упаковки CMYK + белая краска',
+        title: 'Упаковка CMYK + белая краска',
         verdict: 'Геометрия требует проверки',
         score: 82.6,
-        deltaE: 'max 7.4 · среднее 2.1',
-        geometry: '91.8% · сдвиг 2.4 px',
-        text: 'OCR 98.0%',
-        storageMode: 'Гибрид: протокол + превью в облаке',
-        assets: [
-          _ChatAsset(
-              'Образец', Icons.photo_outlined, 'remote_preview', 'доступно'),
-          _ChatAsset(
-              'ΔE карта', Icons.gradient_outlined, 'delta_map', 'доступно'),
-          _ChatAsset('Геометрия ЧБ', Icons.line_axis_outlined, 'geometry_map',
-              'доступно'),
-          _ChatAsset('Оригинал эталона', Icons.lock_outline, 'reference',
-              'запрос доступа'),
-        ],
-        comments: [
-          _CheckComment(
-              'Мария', 'Похоже, белый слой ушёл вниз на 2-3 px.', '10:27'),
-          _CheckComment(
-              'Иван', 'Цвет вторичен, смотрим контуры текста.', '10:31'),
-        ],
+        deltaE: 'max 7.4 / avg 2.1',
+        geometry: '91.8%, сдвиг 2.4 px',
+        text: 'OCR 98%',
+        storage: 'Гибрид: протокол и превью в облаке, оригиналы локально',
       ),
     ),
     _ChatMessage(
@@ -94,7 +76,7 @@ class _ChatScreenState extends State<ChatScreen> {
       role: 'мастер смены',
       time: '10:36',
       text:
-          'Открыл геометрию удалённо. Дайте доступ к оригиналу образца на 24 часа.',
+          'Открыл карту удаленно. Нужен доступ к оригиналу образца на 24 часа.',
       isMine: false,
     ),
   ];
@@ -112,195 +94,230 @@ class _ChatScreenState extends State<ChatScreen> {
       XpMenuBar(icon: 'CH', menus: [
         XpMenu(label: 'Файл', items: [
           XpMenuItem(
-            label: 'Создать группу',
+            label: 'Новая группа',
             icon: '+G',
-            onTap: () => xpDlg(context, 'Новая группа',
-                'Группа создаётся внутри организации.'),
+            onTap: () => xpDlg(
+              context,
+              'Новая группа',
+              'Группа будет привязана к организации и проверкам.',
+            ),
           ),
           XpMenuItem(
             label: 'Поделиться проверкой',
             icon: 'SH',
-            onTap: () => xpDlg(context, 'Поделиться проверкой',
-                'Будет создана карточка результата и загружены выбранные превью.'),
-          ),
-          XpMenuItem.sep,
-          XpMenuItem(
-            label: 'Экспорт переписки',
-            icon: 'EX',
-            onTap: () => xpDlg(context, 'Экспорт', 'CSV / TXT / PDF позже'),
+            onTap: () => xpDlg(
+              context,
+              'Поделиться проверкой',
+              'В чат попадет карточка результата, протокол и выбранные превью.',
+            ),
           ),
         ]),
-        XpMenu(label: 'Управление', items: [
+        XpMenu(label: 'Доступ', items: [
           XpMenuItem(
-            label: 'Участники организации',
+            label: 'Участники',
             icon: 'US',
-            onTap: () => xpDlg(context, 'Участники',
-                'Админ, технолог, оператор, наблюдатель.'),
+            onTap: () => xpDlg(
+              context,
+              'Участники',
+              'Олег, Мария, Иван. Роли и права позже будут браться из Supabase.',
+            ),
           ),
           XpMenuItem(
-            label: 'Доступ к картинкам',
-            icon: 'LK',
-            onTap: () => xpDlg(context, 'Доступ',
-                'Локально / Гибрид / Облако. Оригиналы загружаются только по команде.'),
+            label: 'Картинки',
+            icon: 'IM',
+            onTap: () => xpDlg(
+              context,
+              'Доступ к картинкам',
+              'Оригиналы остаются на устройстве, а в чат можно отправлять превью, карты и временные ссылки.',
+            ),
           ),
         ]),
       ]),
       Expanded(
         child: LayoutBuilder(builder: (_, constraints) {
-          final compact = constraints.maxWidth < 980;
+          final compact = constraints.maxWidth < 920;
           if (compact) {
             return Column(children: [
-              SizedBox(height: 154, child: _roomStrip()),
-              Expanded(child: _messageColumn()),
-              SizedBox(height: 260, child: _inspectorPanel()),
+              SizedBox(height: 122, child: _chatStrip()),
+              Expanded(child: _chatPane()),
+              SizedBox(height: 232, child: _techPanel()),
             ]);
           }
           return Row(children: [
-            SizedBox(width: 250, child: _roomSidebar()),
-            Expanded(child: _messageColumn()),
-            SizedBox(width: 330, child: _inspectorPanel()),
+            SizedBox(width: 276, child: _chatList()),
+            Expanded(child: _chatPane()),
+            SizedBox(width: 330, child: _techPanel()),
           ]);
         }),
       ),
       XpStatusBar(
-        left: _rooms[_activeRoom].name,
-        right: 'Организация · удалённый просмотр по разрешению',
+        left: _chats[_activeChat].title,
+        right: 'Чат организации · картинки по разрешению',
       ),
     ]);
   }
 
-  Widget _roomSidebar() {
+  Widget _chatList() {
     return Container(
       decoration: const BoxDecoration(
-        color: Color(0xFFE7E8E4),
-        border: Border(right: BorderSide(color: AppTheme.silverDark)),
+        color: Color(0xFFEAF6FC),
+        border: Border(right: BorderSide(color: AppTheme.border)),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        _orgHeader(),
+        _listHeader(),
         Padding(
-          padding: const EdgeInsets.all(8),
-          child: XpInput(placeholder: 'Поиск по чатам и проверкам...'),
+          padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
+          child: XpInput(placeholder: 'Поиск'),
         ),
-        _sectionHeader('ОРГАНИЗАЦИЯ'),
         Expanded(
           child: ListView.builder(
-            itemCount: _rooms.length,
-            itemBuilder: (_, i) => _roomTile(i, _rooms[i]),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.all(8),
-          child: XpBtn(
-            label: '+ Группа',
-            onPressed: () => xpDlg(context, 'Группа',
-                'Название, участники, права доступа к проверкам.'),
+            padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+            itemCount: _chats.length,
+            itemBuilder: (_, i) => _chatTile(i),
           ),
         ),
       ]),
     );
   }
 
-  Widget _roomStrip() {
+  Widget _chatStrip() {
     return Container(
-      color: const Color(0xFFE7E8E4),
+      color: const Color(0xFFEAF6FC),
       child: Column(children: [
-        _orgHeader(),
+        _listHeader(compact: true),
         Expanded(
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.all(8),
-            itemCount: _rooms.length,
-            itemBuilder: (_, i) =>
-                SizedBox(width: 210, child: _roomTile(i, _rooms[i])),
+            padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+            itemCount: _chats.length,
+            itemBuilder: (_, i) => SizedBox(width: 218, child: _chatTile(i)),
           ),
         ),
       ]),
     );
   }
 
-  Widget _orgHeader() {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      color: AppTheme.blueDark,
-      child:
-          const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(
-          'TriMatrix',
-          style: TextStyle(
-              color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800),
+  Widget _listHeader({bool compact = false}) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(12, compact ? 8 : 12, 12, 8),
+      child: Row(children: [
+        Container(
+          width: 34,
+          height: 34,
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFFBDEBFF), AppTheme.blue],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(17),
+            boxShadow: AppTheme.shadowSubtle,
+          ),
+          child: const Center(
+            child: Text(
+              'TM',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
         ),
-        SizedBox(height: 2),
-        Text(
-          'Печатная организация · группы и проверки',
-          style: TextStyle(color: Colors.white70, fontSize: 10),
+        const SizedBox(width: 9),
+        const Expanded(
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(
+              'TriMatrix',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900),
+            ),
+            Text(
+              'организация и группы',
+              style: TextStyle(fontSize: 10, color: Colors.black54),
+            ),
+          ]),
+        ),
+        XpBtn(
+          label: '+',
+          width: 46,
+          onPressed: () => xpDlg(
+            context,
+            'Новый чат',
+            'Здесь появится создание группы, личного чата или обсуждения проверки.',
+          ),
         ),
       ]),
     );
   }
 
-  Widget _sectionHeader(String text) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        color: const Color(0xFFD7DAD2),
-        child: Text(text,
-            style: const TextStyle(fontSize: 9, color: Colors.black54)),
-      );
-
-  Widget _roomTile(int index, _ChatRoom room) {
-    final active = _activeRoom == index;
+  Widget _chatTile(int index) {
+    final chat = _chats[index];
+    final active = index == _activeChat;
     return InkWell(
-      onTap: () => setState(() => _activeRoom = index),
+      onTap: () => setState(() => _activeChat = index),
+      borderRadius: BorderRadius.circular(16),
       child: Container(
-        margin: const EdgeInsets.fromLTRB(8, 4, 8, 4),
+        margin: const EdgeInsets.only(bottom: 7),
         padding: const EdgeInsets.all(9),
         decoration: BoxDecoration(
-          color: active ? Colors.white : const Color(0xFFF4F5F1),
-          border: Border.all(color: active ? AppTheme.blue : AppTheme.border),
-          borderRadius: BorderRadius.circular(8),
+          color: active ? Colors.white : const Color(0xFFF7FCFF),
+          border: Border.all(
+            color: active ? AppTheme.blue : const Color(0xFFD6EAF5),
+          ),
+          borderRadius: BorderRadius.circular(16),
           boxShadow: active ? AppTheme.shadowSubtle : null,
         ),
         child: Row(children: [
-          Icon(room.icon,
-              size: 19, color: active ? AppTheme.blue : Colors.black54),
-          const SizedBox(width: 8),
+          _avatar(chat.title, chat.color, size: 40),
+          const SizedBox(width: 9),
           Expanded(
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(room.name,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                      fontSize: 11, fontWeight: FontWeight.w700)),
-              const SizedBox(height: 2),
-              Text(room.subtitle,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 9, color: Colors.grey)),
+              Row(children: [
+                Expanded(
+                  child: Text(
+                    chat.title,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                Text(
+                  chat.time,
+                  style: const TextStyle(fontSize: 9, color: Colors.black45),
+                ),
+              ]),
+              const SizedBox(height: 3),
+              Row(children: [
+                Expanded(
+                  child: Text(
+                    chat.subtitle,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 10, color: Colors.black54),
+                  ),
+                ),
+                if (chat.unread > 0) _unread(chat.unread),
+              ]),
             ]),
           ),
-          if (room.badge > 0)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: AppTheme.blue,
-                borderRadius: BorderRadius.circular(9),
-              ),
-              child: Text('${room.badge}',
-                  style: const TextStyle(color: Colors.white, fontSize: 9)),
-            ),
         ]),
       ),
     );
   }
 
-  Widget _messageColumn() {
-    final room = _rooms[_activeRoom];
+  Widget _chatPane() {
+    final chat = _chats[_activeChat];
     return Container(
-      color: const Color(0xFFF3F4F6),
+      color: const Color(0xFFF4FAFD),
       child: Column(children: [
-        _chatHeader(room),
-        _sharePolicyBar(),
+        _chatHeader(chat),
         Expanded(
           child: ListView.builder(
             controller: _scrollCtrl,
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
             itemCount: _messages.length,
             itemBuilder: (_, i) => _messageBubble(_messages[i]),
           ),
@@ -310,53 +327,37 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Widget _chatHeader(_ChatRoom room) {
+  Widget _chatHeader(_ChatItem chat) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: const BoxDecoration(
         color: Colors.white,
         border: Border(bottom: BorderSide(color: AppTheme.border)),
       ),
       child: Row(children: [
-        Icon(room.icon, size: 22, color: AppTheme.blue),
-        const SizedBox(width: 9),
+        _avatar(chat.title, chat.color, size: 38),
+        const SizedBox(width: 10),
         Expanded(
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(room.name,
-                style:
-                    const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
-            Text(room.subtitle,
-                style: const TextStyle(fontSize: 10, color: Colors.grey)),
+            Text(
+              chat.title,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w900),
+            ),
+            const Text(
+              '3 участника · удаленный просмотр включен',
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 10, color: Colors.black54),
+            ),
           ]),
         ),
         XpBtn(
-          label: 'Участники',
-          onPressed: () => xpDlg(context, 'Участники группы',
-              'Админ: Олег\nТехнолог: Мария\nОператор: Иван\nНаблюдатель: Алексей'),
-        ),
-        const SizedBox(width: 6),
-        XpBtn(
-          label: 'Поделиться',
-          primary: true,
-          onPressed: () => xpDlg(context, 'Поделиться проверкой',
-              'Выберите: протокол, превью, ΔE, геометрию, оригиналы.'),
-        ),
-      ]),
-    );
-  }
-
-  Widget _sharePolicyBar() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-      color: const Color(0xFFEAF3FF),
-      child: Row(children: const [
-        Icon(Icons.privacy_tip_outlined, size: 15, color: AppTheme.blue),
-        SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            'Картинки остаются локально. В чат загружаются только выбранные превью или карты; оригиналы требуют отдельного доступа.',
-            style: TextStyle(fontSize: 10, color: Colors.black87),
+          label: 'Доступ',
+          onPressed: () => xpDlg(
+            context,
+            'Доступ',
+            'Участники видят протокол, превью и карты. Оригиналы открываются отдельным разрешением.',
           ),
         ),
       ]),
@@ -365,50 +366,51 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _messageBubble(_ChatMessage message) {
     final align = message.isMine ? Alignment.centerRight : Alignment.centerLeft;
+    final color = message.isMine ? const Color(0xFFDFF7D9) : Colors.white;
+    final border = message.isMine ? const Color(0xFFA7D79D) : AppTheme.border;
     return Align(
       alignment: align,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 620),
+        constraints: const BoxConstraints(maxWidth: 640),
         child: Container(
           margin: const EdgeInsets.only(bottom: 10),
-          padding: const EdgeInsets.all(10),
+          padding: const EdgeInsets.fromLTRB(11, 9, 11, 8),
           decoration: BoxDecoration(
-            color: message.isMine ? const Color(0xFFE8FFE8) : Colors.white,
-            border: Border.all(
-              color: message.isMine ? const Color(0xFFB8DDB8) : AppTheme.border,
-            ),
-            borderRadius: BorderRadius.circular(10),
+            color: color,
+            border: Border.all(color: border),
+            borderRadius: BorderRadius.circular(18),
             boxShadow: AppTheme.shadowSubtle,
           ),
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
-              CircleAvatar(
-                radius: 13,
-                backgroundColor:
-                    message.isMine ? AppTheme.simHigh : AppTheme.blue,
-                child: Text(
-                  message.author.characters.first,
-                  style: const TextStyle(color: Colors.white, fontSize: 11),
-                ),
-              ),
+              _avatar(message.author,
+                  message.isMine ? AppTheme.simHigh : AppTheme.blue,
+                  size: 26),
               const SizedBox(width: 7),
               Expanded(
                 child: Text(
                   '${message.author} · ${message.role}',
                   style: const TextStyle(
-                      fontSize: 10, fontWeight: FontWeight.bold),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.black87,
+                  ),
                 ),
               ),
-              Text(message.time,
-                  style: const TextStyle(fontSize: 9, color: Colors.grey)),
+              Text(
+                message.time,
+                style: const TextStyle(fontSize: 9, color: Colors.black45),
+              ),
             ]),
             const SizedBox(height: 7),
-            Text(message.text,
-                style: const TextStyle(fontSize: 11, height: 1.4)),
-            if (message.checkCard != null) ...[
-              const SizedBox(height: 10),
-              _checkCard(message.checkCard!),
+            Text(
+              message.text,
+              style: const TextStyle(fontSize: 12, height: 1.35),
+            ),
+            if (message.card != null) ...[
+              const SizedBox(height: 9),
+              _checkCard(message.card!),
             ],
           ]),
         ),
@@ -419,9 +421,9 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _checkCard(_SharedCheckCard card) {
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        border: Border.all(color: const Color(0xFFD8E1EA)),
-        borderRadius: BorderRadius.circular(8),
+        color: const Color(0xFFF8FCFF),
+        border: Border.all(color: const Color(0xFFC9E2F0)),
+        borderRadius: BorderRadius.circular(14),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Padding(
@@ -429,62 +431,290 @@ class _ChatScreenState extends State<ChatScreen> {
           child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Container(
               width: 86,
-              height: 58,
+              height: 62,
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(6),
                 gradient: const LinearGradient(
-                  colors: [Color(0xFFECEFF4), Color(0xFFC9D7E8)],
+                  colors: [Color(0xFFEAF7FD), Color(0xFFB8DFF3)],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
-                border: Border.all(color: Color(0xFFB8C5D6)),
+                border: Border.all(color: const Color(0xFF9ECDE4)),
+                borderRadius: BorderRadius.circular(10),
               ),
-              child:
-                  const Icon(Icons.image_search_outlined, color: AppTheme.blue),
+              child: const Icon(Icons.image_search_outlined,
+                  color: AppTheme.blue, size: 30),
             ),
             const SizedBox(width: 10),
             Expanded(
               child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(card.id,
-                        style:
-                            const TextStyle(fontSize: 9, color: Colors.grey)),
-                    Text(card.title,
-                        style: const TextStyle(
-                            fontSize: 12, fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 5),
-                    Wrap(spacing: 5, runSpacing: 5, children: [
-                      _metric('Итог', '${card.score.toStringAsFixed(1)}%'),
-                      _metric('ΔE', card.deltaE),
-                      _metric('Геометрия', card.geometry),
-                      _metric('Текст', card.text),
-                    ]),
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    card.id,
+                    style: const TextStyle(fontSize: 9, color: Colors.black45),
+                  ),
+                  Text(
+                    card.title,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Wrap(spacing: 5, runSpacing: 5, children: [
+                    _metric('Итог', '${card.score.toStringAsFixed(1)}%'),
+                    _metric('Delta E', card.deltaE),
+                    _metric('Геометрия', card.geometry),
+                    _metric('Текст', card.text),
                   ]),
-            ),
-            const SizedBox(width: 8),
-            Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-              _statusPill(card.verdict),
-              const SizedBox(height: 8),
-              XpBtn(
-                label: 'Открыть',
-                primary: true,
-                onPressed: () => setState(() => _activeAsset = 0),
+                ],
               ),
-            ]),
+            ),
           ]),
         ),
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
           decoration: const BoxDecoration(
-            border: Border(top: BorderSide(color: Color(0xFFD8E1EA))),
+            border: Border(top: BorderSide(color: Color(0xFFC9E2F0))),
           ),
-          child: Text(
-            card.storageMode,
-            style: const TextStyle(fontSize: 10, color: Colors.black54),
+          child: Row(children: [
+            Expanded(
+              child: Text(
+                card.verdict,
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF8A4B00),
+                ),
+              ),
+            ),
+            XpBtn(
+              label: 'Открыть',
+              primary: true,
+              onPressed: () => xpDlg(
+                context,
+                card.id,
+                'Открываем протокол, карту Delta E и ЧБ-геометрию.',
+              ),
+            ),
+          ]),
+        ),
+      ]),
+    );
+  }
+
+  Widget _composer() {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(top: BorderSide(color: AppTheme.border)),
+      ),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+        XpBtn(
+          label: '+',
+          width: 48,
+          onPressed: () => xpDlg(
+            context,
+            'Прикрепить',
+            'Можно будет прикрепить последнюю проверку, превью, карту отличий или оригинал по разрешению.',
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: TextField(
+            controller: _msgCtrl,
+            minLines: 1,
+            maxLines: 4,
+            style: const TextStyle(fontSize: 13),
+            decoration: InputDecoration(
+              hintText: 'Сообщение',
+              filled: true,
+              fillColor: const Color(0xFFF4FAFD),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(18),
+                borderSide: const BorderSide(color: AppTheme.border),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(18),
+                borderSide: const BorderSide(color: AppTheme.border),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(18),
+                borderSide: const BorderSide(color: AppTheme.blue),
+              ),
+            ),
+            onSubmitted: (_) => _send(),
+          ),
+        ),
+        const SizedBox(width: 8),
+        XpBtn(label: 'Отправить', primary: true, onPressed: _send),
+      ]),
+    );
+  }
+
+  Widget _techPanel() {
+    final card = _messages.firstWhere((m) => m.card != null).card!;
+    return Container(
+      decoration: const BoxDecoration(
+        color: Color(0xFFEAF6FC),
+        border: Border(left: BorderSide(color: AppTheme.border)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Container(
+          padding: const EdgeInsets.all(12),
+          color: AppTheme.blueDark,
+          child: const Text(
+            'Технические данные',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 13,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ),
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _previewBox(),
+                  const SizedBox(height: 10),
+                  _techRows(card),
+                  const SizedBox(height: 10),
+                  _commentsBox(),
+                  const SizedBox(height: 10),
+                  Row(children: [
+                    Expanded(
+                      child: XpBtn(
+                        label: 'Карта',
+                        primary: true,
+                        onPressed: () => xpDlg(
+                          context,
+                          'Карта отличий',
+                          'Откроется удаленный просмотр Delta E и ЧБ-геометрии.',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: XpBtn(
+                        label: 'Оригинал',
+                        onPressed: () => xpDlg(
+                          context,
+                          'Оригинал',
+                          'Запрос доступа к локальному оригиналу у владельца проверки.',
+                        ),
+                      ),
+                    ),
+                  ]),
+                ]),
           ),
         ),
       ]),
+    );
+  }
+
+  Widget _previewBox() {
+    return Container(
+      height: 172,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: const Color(0xFFC9E2F0)),
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: AppTheme.shadowSubtle,
+      ),
+      child: Stack(children: [
+        Positioned.fill(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFFE9F8FF), Color(0xFFFFF7D6)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+          ),
+        ),
+        const Center(
+          child:
+              Icon(Icons.difference_outlined, size: 48, color: AppTheme.blue),
+        ),
+        Positioned(
+          left: 18,
+          right: 18,
+          bottom: 18,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+            decoration: BoxDecoration(
+              color: const Color(0xDDFFFFFF),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Text(
+              'Превью проверки · карта и протокол доступны',
+              style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700),
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ),
+      ]),
+    );
+  }
+
+  Widget _techRows(_SharedCheckCard card) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: const Color(0xFFC9E2F0)),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(children: [
+        _techRow('ID', card.id),
+        _techRow('Статус', card.verdict),
+        _techRow('Итог', '${card.score.toStringAsFixed(1)}%'),
+        _techRow('Delta E', card.deltaE),
+        _techRow('Геометрия', card.geometry),
+        _techRow('Текст', card.text),
+        _techRow('Хранение', card.storage),
+      ]),
+    );
+  }
+
+  Widget _commentsBox() {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: const Color(0xFFC9E2F0)),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: const Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Комментарии',
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900),
+          ),
+          SizedBox(height: 7),
+          Text(
+            'Мария: белый слой ушел вниз на 2-3 px.',
+            style: TextStyle(fontSize: 10, height: 1.35),
+          ),
+          SizedBox(height: 5),
+          Text(
+            'Иван: цвет вторичен, смотрим контуры текста.',
+            style: TextStyle(fontSize: 10, height: 1.35),
+          ),
+        ],
+      ),
     );
   }
 
@@ -493,229 +723,76 @@ class _ChatScreenState extends State<ChatScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
       decoration: BoxDecoration(
         color: Colors.white,
-        border: Border.all(color: AppTheme.border),
-        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFC9E2F0)),
+        borderRadius: BorderRadius.circular(9),
       ),
       child: Text('$label: $value', style: const TextStyle(fontSize: 9)),
     );
   }
 
-  Widget _statusPill(String text) {
+  Widget _techRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        SizedBox(
+          width: 82,
+          child: Text(
+            label,
+            style: const TextStyle(fontSize: 10, color: Colors.black54),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700),
+          ),
+        ),
+      ]),
+    );
+  }
+
+  Widget _avatar(String name, Color color, {required double size}) {
+    final letter = name.trim().isEmpty ? '?' : name.trim().substring(0, 1);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      width: size,
+      height: size,
       decoration: BoxDecoration(
-        color: const Color(0xFFFFF3CD),
-        border: Border.all(color: const Color(0xFFE8A000)),
+        color: color,
+        borderRadius: BorderRadius.circular(size / 2),
+        boxShadow: AppTheme.shadowSubtle,
+      ),
+      child: Center(
+        child: Text(
+          letter,
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: size * 0.36,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _unread(int count) {
+    return Container(
+      height: 19,
+      constraints: const BoxConstraints(minWidth: 19),
+      padding: const EdgeInsets.symmetric(horizontal: 5),
+      decoration: BoxDecoration(
+        color: AppTheme.blue,
         borderRadius: BorderRadius.circular(10),
       ),
-      child: Text(
-        text,
-        style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
+      child: Center(
+        child: Text(
+          '$count',
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 10,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
       ),
-    );
-  }
-
-  Widget _composer() {
-    return Container(
-      padding: const EdgeInsets.all(8),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(top: BorderSide(color: AppTheme.border)),
-      ),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-        XpBtn(
-          label: 'Проверка',
-          onPressed: () => xpDlg(context, 'Прикрепить проверку',
-              'Берём последний локальный протокол, создаём карточку и выбираем изображения для облака.'),
-        ),
-        const SizedBox(width: 6),
-        Expanded(
-          child: TextField(
-            controller: _msgCtrl,
-            minLines: 1,
-            maxLines: 4,
-            style: const TextStyle(fontSize: 12),
-            decoration: InputDecoration(
-              hintText: 'Комментарий для группы организации...',
-              filled: true,
-              fillColor: const Color(0xFFF8FAFC),
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: AppTheme.border),
-              ),
-            ),
-            onSubmitted: (_) => _send(),
-          ),
-        ),
-        const SizedBox(width: 6),
-        XpBtn(label: 'Отправить', primary: true, onPressed: _send),
-      ]),
-    );
-  }
-
-  Widget _inspectorPanel() {
-    final card = _messages.firstWhere((m) => m.checkCard != null).checkCard!;
-    final asset = card.assets[_activeAsset.clamp(0, card.assets.length - 1)];
-    return Container(
-      color: const Color(0xFFE7E8E4),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Container(
-          padding: const EdgeInsets.all(10),
-          color: AppTheme.blueDark,
-          child: const Text(
-            'Просмотр проверки',
-            style: TextStyle(
-                color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
-          ),
-        ),
-        Expanded(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(10),
-            child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _remotePreview(asset),
-                  const SizedBox(height: 10),
-                  _assetTabs(card),
-                  const SizedBox(height: 10),
-                  XpGroup(
-                    label: 'Комментарии к проверке',
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        ...card.comments.map(_commentTile),
-                        const SizedBox(height: 8),
-                        XpBtn(
-                          label: '+ Комментарий',
-                          onPressed: () => xpDlg(context, 'Комментарий',
-                              'Комментарий будет привязан к check_result_id и asset kind.'),
-                        ),
-                      ],
-                    ),
-                  ),
-                  XpGroup(
-                    label: 'Архитектура',
-                    child: const Text(
-                      'chat_messages.type = check_result\n'
-                      'chat_messages.check_result_id -> check_results.id\n'
-                      'check_assets.kind = reference/sample/delta_map/geometry_map/preview\n'
-                      'check_assets.storage_path -> Supabase Storage signed URL\n'
-                      'comments привязаны к организации, группе и проверке.',
-                      style: TextStyle(fontSize: 10, height: 1.45),
-                    ),
-                  ),
-                ]),
-          ),
-        ),
-      ]),
-    );
-  }
-
-  Widget _remotePreview(_ChatAsset asset) {
-    final locked = asset.status.contains('запрос');
-    return Container(
-      height: 210,
-      decoration: BoxDecoration(
-        color: Colors.black,
-        border: Border.all(color: AppTheme.silverDark),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Stack(children: [
-        Positioned.fill(
-          child: Container(
-            margin: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(6),
-              gradient: LinearGradient(
-                colors: locked
-                    ? const [Color(0xFF2C3440), Color(0xFF111827)]
-                    : const [Color(0xFFEBF1F7), Color(0xFFB8CADF)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-            ),
-            child: Icon(
-              locked ? Icons.lock_outline : asset.icon,
-              size: 54,
-              color: locked ? Colors.white38 : AppTheme.blue,
-            ),
-          ),
-        ),
-        Positioned(
-          left: 14,
-          right: 14,
-          bottom: 14,
-          child: Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: const Color(0xDD000000),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Text(
-              '${asset.name} · ${asset.status}',
-              style: const TextStyle(color: Colors.white, fontSize: 11),
-            ),
-          ),
-        ),
-      ]),
-    );
-  }
-
-  Widget _assetTabs(_SharedCheckCard card) {
-    return Wrap(
-      spacing: 6,
-      runSpacing: 6,
-      children: card.assets.asMap().entries.map((entry) {
-        final i = entry.key;
-        final asset = entry.value;
-        final selected = i == _activeAsset;
-        return InkWell(
-          onTap: () => setState(() => _activeAsset = i),
-          borderRadius: BorderRadius.circular(8),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
-            decoration: BoxDecoration(
-              color: selected ? AppTheme.blue : Colors.white,
-              border: Border.all(
-                  color: selected ? AppTheme.blueDark : AppTheme.border),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              Icon(asset.icon,
-                  size: 14, color: selected ? Colors.white : AppTheme.blue),
-              const SizedBox(width: 5),
-              Text(
-                asset.name,
-                style: TextStyle(
-                  fontSize: 10,
-                  color: selected ? Colors.white : Colors.black87,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ]),
-          ),
-        );
-      }).toList(),
-    );
-  }
-
-  Widget _commentTile(_CheckComment c) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 6),
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: AppTheme.border),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('${c.author} · ${c.time}',
-            style: const TextStyle(fontSize: 9, color: Colors.grey)),
-        const SizedBox(height: 3),
-        Text(c.text, style: const TextStyle(fontSize: 10, height: 1.35)),
-      ]),
     );
   }
 
@@ -747,19 +824,19 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 }
 
-class _ChatRoom {
-  final IconData icon;
-  final String name;
+class _ChatItem {
+  final String title;
   final String subtitle;
-  final int badge;
-  final String kind;
+  final String time;
+  final int unread;
+  final Color color;
 
-  const _ChatRoom({
-    required this.icon,
-    required this.name,
+  const _ChatItem({
+    required this.title,
     required this.subtitle,
-    required this.badge,
-    required this.kind,
+    required this.time,
+    required this.unread,
+    required this.color,
   });
 }
 
@@ -769,7 +846,7 @@ class _ChatMessage {
   final String time;
   final String text;
   final bool isMine;
-  final _SharedCheckCard? checkCard;
+  final _SharedCheckCard? card;
 
   const _ChatMessage({
     required this.author,
@@ -777,7 +854,7 @@ class _ChatMessage {
     required this.time,
     required this.text,
     required this.isMine,
-    this.checkCard,
+    this.card,
   });
 }
 
@@ -789,9 +866,7 @@ class _SharedCheckCard {
   final String deltaE;
   final String geometry;
   final String text;
-  final String storageMode;
-  final List<_ChatAsset> assets;
-  final List<_CheckComment> comments;
+  final String storage;
 
   const _SharedCheckCard({
     required this.id,
@@ -801,25 +876,6 @@ class _SharedCheckCard {
     required this.deltaE,
     required this.geometry,
     required this.text,
-    required this.storageMode,
-    required this.assets,
-    required this.comments,
+    required this.storage,
   });
-}
-
-class _ChatAsset {
-  final String name;
-  final IconData icon;
-  final String kind;
-  final String status;
-
-  const _ChatAsset(this.name, this.icon, this.kind, this.status);
-}
-
-class _CheckComment {
-  final String author;
-  final String text;
-  final String time;
-
-  const _CheckComment(this.author, this.text, this.time);
 }

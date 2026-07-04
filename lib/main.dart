@@ -6,7 +6,6 @@ import 'config/app_theme.dart';
 import 'screens/start_screen.dart';
 import 'screens/compare_screen.dart';
 import 'screens/chat_screen.dart';
-import 'screens/shop_screen.dart';
 import 'screens/settings_screen.dart';
 import 'services/check_history_service.dart';
 import 'services/sync_service.dart';
@@ -95,7 +94,6 @@ class _MainShellState extends State<MainShell> {
   final List<Widget> _screens = const [
     CompareScreen(),
     ChatScreen(),
-    ShopScreen(),
     SettingsScreen(),
   ];
 
@@ -160,8 +158,7 @@ class _MainShellState extends State<MainShell> {
             child: Row(children: [
               Expanded(child: _navBtn(0, 'Сравнение')),
               _navBtnBadge(1, 'Чат', _chatBadge),
-              Expanded(child: _navBtn(2, 'Магазин')),
-              Expanded(child: _navBtn(3, 'Настройки')),
+              Expanded(child: _navBtn(2, 'Настройки')),
             ]),
           ),
         ),
