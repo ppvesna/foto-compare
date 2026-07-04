@@ -6,6 +6,7 @@ import 'config/app_theme.dart';
 import 'screens/start_screen.dart';
 import 'screens/compare_screen.dart';
 import 'screens/chat_screen.dart';
+import 'screens/home_screen.dart';
 import 'screens/settings_screen.dart';
 import 'services/check_history_service.dart';
 import 'services/sync_service.dart';
@@ -91,12 +92,6 @@ class _MainShellState extends State<MainShell> {
   int _tab = 0;
   int _chatBadge = 4;
 
-  final List<Widget> _screens = const [
-    CompareScreen(),
-    ChatScreen(),
-    SettingsScreen(),
-  ];
-
   void _onTab(int i) {
     setState(() {
       _tab = i;
@@ -108,6 +103,18 @@ class _MainShellState extends State<MainShell> {
   Widget build(BuildContext context) {
     final user = Supabase.instance.client.auth.currentUser;
     final email = user?.email ?? '';
+    final screens = [
+      const CompareScreen(),
+      const ChatScreen(),
+      const SettingsScreen(),
+      HomeScreen(
+        email: email,
+        onOpenCompare: () => _onTab(0),
+        onOpenChat: () => _onTab(1),
+        onOpenSettings: () => _onTab(2),
+        onSignOut: _signOut,
+      ),
+    ];
 
     return Scaffold(
       body: SafeArea(
@@ -131,7 +138,7 @@ class _MainShellState extends State<MainShell> {
             ]),
           ),
           Expanded(
-            child: IndexedStack(index: _tab, children: _screens),
+            child: IndexedStack(index: _tab, children: screens),
           ),
         ]),
       ),
@@ -159,6 +166,7 @@ class _MainShellState extends State<MainShell> {
               Expanded(child: _navBtn(0, 'Сравнение')),
               _navBtnBadge(1, 'Чат', _chatBadge),
               Expanded(child: _navBtn(2, 'Настройки')),
+              Expanded(child: _navBtn(3, 'Главная')),
             ]),
           ),
         ),

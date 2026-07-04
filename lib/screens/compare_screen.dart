@@ -1601,76 +1601,7 @@ class _CompareScreenState extends State<CompareScreen>
         ),
         const SizedBox(height: 10),
         _comparisonStage(),
-        const SizedBox(height: 10),
-        _compactShopPanel(),
       ],
-    );
-  }
-
-  Widget _compactShopPanel() {
-    final offers = const [
-      ('Бесплатный', '10 проверок/день', 'Активен'),
-      ('Pro', 'AI, облако, отчёты', '€9.99/мес'),
-      ('Пакет 100', 'разовые проверки', '€2.99'),
-    ];
-    return _xpWindow(
-      title: 'Магазин и лимиты',
-      trailing: XpBtn(
-        label: 'Подробнее',
-        onPressed: () => xpDlg(
-          context,
-          'Магазин',
-          'Подписки, AI-анализ, облачное хранение и API будут открываться здесь компактным окном, без отдельного большого экрана.',
-        ),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(8),
-        child: Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: offers.map((offer) {
-            final active = offer.$1 == 'Бесплатный';
-            return Container(
-              width: 210,
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: active ? const Color(0xFFE8FFE8) : Colors.white,
-                border: Border.all(
-                  color: active ? AppTheme.simHigh : AppTheme.silverDark,
-                ),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    offer.$1,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    offer.$2,
-                    style: const TextStyle(fontSize: 10, color: Colors.grey),
-                  ),
-                  const SizedBox(height: 7),
-                  Text(
-                    offer.$3,
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                      color: active ? AppTheme.simHigh : AppTheme.blue,
-                    ),
-                  ),
-                ],
-              ),
-            );
-          }).toList(),
-        ),
-      ),
     );
   }
 
