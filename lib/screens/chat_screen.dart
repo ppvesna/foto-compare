@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import '../config/app_theme.dart';
 import '../widgets/xp_widgets.dart';
 
+enum _ChatKind { internal, approval }
+
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
 
@@ -11,10 +13,19 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   int _activeChat = 0;
+  String _approvalStatus = 'Ожидает согласования';
   final _msgCtrl = TextEditingController();
   final _scrollCtrl = ScrollController();
 
   final _chats = const [
+    _ChatItem(
+      title: 'Согласование макета #154',
+      subtitle: 'ООО Ромашка · упаковка 120x80 · v3',
+      time: '11:08',
+      unread: 2,
+      color: Color(0xFF0EA5A4),
+      kind: _ChatKind.approval,
+    ),
     _ChatItem(
       title: 'Проверки макетов',
       subtitle: 'карты отличий, протоколы, замечания',
@@ -45,8 +56,45 @@ class _ChatScreenState extends State<ChatScreen> {
     ),
   ];
 
+  final _approvalMessages = <_ChatMessage>[
+    const _ChatMessage(
+      author: 'Анна',
+      role: 'заказчик',
+      time: '10:52',
+      text:
+          'Посмотрели версию v3. По цвету упаковка подходит, надо только подтвердить читаемость мелкого текста.',
+      isMine: false,
+    ),
+    const _ChatMessage(
+      author: 'Олег',
+      role: 'менеджер',
+      time: '10:57',
+      text:
+          'Прикрепил макет, протокол проверки и превью. Оригиналы производства заказчику не показываем, только согласовательные файлы.',
+      isMine: true,
+      approvalCard: _ApprovalCard(
+        orderId: 'ORD-154',
+        customer: 'ООО Ромашка',
+        layoutName: 'Упаковка 120x80',
+        version: 'v3',
+        fileName: 'romashka_pack_v3.pdf',
+        status: 'Ожидает согласования',
+        deadline: '05.07.2026 18:00',
+        protocol: 'Проверка OK · Delta E max 3.2 · OCR 99%',
+      ),
+    ),
+    const _ChatMessage(
+      author: 'Анна',
+      role: 'заказчик',
+      time: '11:08',
+      text:
+          'Хорошо. Оставляю комментарий: проверьте, пожалуйста, срок годности в нижнем правом углу.',
+      isMine: false,
+    ),
+  ];
+
   final _messages = <_ChatMessage>[
-    _ChatMessage(
+    const _ChatMessage(
       author: 'Мария',
       role: 'технолог',
       time: '10:18',
@@ -54,7 +102,7 @@ class _ChatScreenState extends State<ChatScreen> {
           'Посмотрела белую краску. Цвет можно принять, но геометрию текста надо проверить отдельно.',
       isMine: false,
     ),
-    _ChatMessage(
+    const _ChatMessage(
       author: 'Олег',
       role: 'оператор',
       time: '10:24',
@@ -71,7 +119,7 @@ class _ChatScreenState extends State<ChatScreen> {
         storage: 'Гибрид: протокол и превью в облаке, оригиналы локально',
       ),
     ),
-    _ChatMessage(
+    const _ChatMessage(
       author: 'Иван',
       role: 'мастер смены',
       time: '10:36',
@@ -310,6 +358,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _chatPane() {
     final chat = _chats[_activeChat];
+    final messages = _visibleMessages;
     return Container(
       color: const Color(0xFFF4FAFD),
       child: Column(children: [
@@ -318,8 +367,8 @@ class _ChatScreenState extends State<ChatScreen> {
           child: ListView.builder(
             controller: _scrollCtrl,
             padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
-            itemCount: _messages.length,
-            itemBuilder: (_, i) => _messageBubble(_messages[i]),
+            itemCount: messages.length,
+            itemBuilder: (_, i) => _messageBubble(messages[i]),
           ),
         ),
         _composer(),
@@ -345,10 +394,12 @@ class _ChatScreenState extends State<ChatScreen> {
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w900),
             ),
-            const Text(
-              '3 участника · удаленный просмотр включен',
+            Text(
+              chat.kind == _ChatKind.approval
+                  ? 'заказчик · согласование версии · доступ ограничен'
+                  : '3 участника · удаленный просмотр включен',
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 10, color: Colors.black54),
+              style: const TextStyle(fontSize: 10, color: Colors.black54),
             ),
           ]),
         ),
@@ -357,7 +408,9 @@ class _ChatScreenState extends State<ChatScreen> {
           onPressed: () => xpDlg(
             context,
             'Доступ',
-            'Участники видят протокол, превью и карты. Оригиналы открываются отдельным разрешением.',
+            chat.kind == _ChatKind.approval
+                ? 'Заказчик видит только свой заказ, макет, превью, комментарии и решение по согласованию.'
+                : 'Участники видят протокол, превью и карты. Оригиналы открываются отдельным разрешением.',
           ),
         ),
       ]),
@@ -411,6 +464,10 @@ class _ChatScreenState extends State<ChatScreen> {
             if (message.card != null) ...[
               const SizedBox(height: 9),
               _checkCard(message.card!),
+            ],
+            if (message.approvalCard != null) ...[
+              const SizedBox(height: 9),
+              _approvalCard(message.approvalCard!),
             ],
           ]),
         ),
@@ -503,7 +560,86 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  Widget _approvalCard(_ApprovalCard card) {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FCFF),
+        border: Border.all(color: const Color(0xFFC9E2F0)),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Padding(
+          padding: const EdgeInsets.all(10),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Container(
+              width: 86,
+              height: 62,
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFFEAF7FD), Color(0xFFD8F4EA)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                border: Border.all(color: const Color(0xFF9ECDE4)),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.fact_check_outlined,
+                  color: AppTheme.blue, size: 30),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${card.orderId} · ${card.customer}',
+                    style: const TextStyle(fontSize: 9, color: Colors.black45),
+                  ),
+                  Text(
+                    '${card.layoutName} · ${card.version}',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Wrap(spacing: 5, runSpacing: 5, children: [
+                    _metric('Файл', card.fileName),
+                    _metric('Статус', _approvalStatus),
+                    _metric('Протокол', card.protocol),
+                  ]),
+                ],
+              ),
+            ),
+          ]),
+        ),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: const BoxDecoration(
+            border: Border(top: BorderSide(color: Color(0xFFC9E2F0))),
+          ),
+          child: Wrap(spacing: 8, runSpacing: 8, children: [
+            XpBtn(
+              label: 'Принять',
+              primary: true,
+              onPressed: () => _setApprovalStatus('Согласовано заказчиком'),
+            ),
+            XpBtn(
+              label: 'На доработку',
+              onPressed: () => _setApprovalStatus('Нужна доработка'),
+            ),
+            XpBtn(
+              label: 'Новая версия',
+              onPressed: () => _setApprovalStatus('Ожидается новая версия'),
+            ),
+          ]),
+        ),
+      ]),
+    );
+  }
+
   Widget _composer() {
+    final isApproval = _chats[_activeChat].kind == _ChatKind.approval;
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: const BoxDecoration(
@@ -517,7 +653,9 @@ class _ChatScreenState extends State<ChatScreen> {
           onPressed: () => xpDlg(
             context,
             'Прикрепить',
-            'Можно будет прикрепить последнюю проверку, превью, карту отличий или оригинал по разрешению.',
+            isApproval
+                ? 'К согласованию можно прикрепить PDF/JPG макета, новую версию, протокол проверки или превью.'
+                : 'Можно будет прикрепить последнюю проверку, превью, карту отличий или оригинал по разрешению.',
           ),
         ),
         const SizedBox(width: 8),
@@ -528,7 +666,9 @@ class _ChatScreenState extends State<ChatScreen> {
             maxLines: 4,
             style: const TextStyle(fontSize: 13),
             decoration: InputDecoration(
-              hintText: 'Сообщение',
+              hintText: isApproval
+                  ? 'Комментарий по согласованию макета'
+                  : 'Сообщение',
               filled: true,
               fillColor: const Color(0xFFF4FAFD),
               contentPadding:
@@ -556,6 +696,9 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _techPanel() {
+    if (_chats[_activeChat].kind == _ChatKind.approval) {
+      return _approvalPanel();
+    }
     final card = _messages.firstWhere((m) => m.card != null).card!;
     return Container(
       decoration: const BoxDecoration(
@@ -615,6 +758,202 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ),
       ]),
+    );
+  }
+
+  Widget _approvalPanel() {
+    const card = _ApprovalCard(
+      orderId: 'ORD-154',
+      customer: 'ООО Ромашка',
+      layoutName: 'Упаковка 120x80',
+      version: 'v3',
+      fileName: 'romashka_pack_v3.pdf',
+      status: 'Ожидает согласования',
+      deadline: '05.07.2026 18:00',
+      protocol: 'Проверка OK · Delta E max 3.2 · OCR 99%',
+    );
+    return Container(
+      decoration: const BoxDecoration(
+        color: Color(0xFFEAF6FC),
+        border: Border(left: BorderSide(color: AppTheme.border)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Container(
+          padding: const EdgeInsets.all(12),
+          color: AppTheme.blueDark,
+          child: const Text(
+            'Согласование макета',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 13,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ),
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _layoutPreviewBox(),
+                  const SizedBox(height: 10),
+                  _approvalRows(card),
+                  const SizedBox(height: 10),
+                  _approvalActions(),
+                  const SizedBox(height: 10),
+                  _versionBox(),
+                  const SizedBox(height: 10),
+                  _customerAccessBox(),
+                ]),
+          ),
+        ),
+      ]),
+    );
+  }
+
+  Widget _layoutPreviewBox() {
+    return Container(
+      height: 172,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: const Color(0xFFC9E2F0)),
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: AppTheme.shadowSubtle,
+      ),
+      child: Stack(children: [
+        Positioned.fill(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFFFFFBEB), Color(0xFFDDF7FF)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+          ),
+        ),
+        const Center(
+          child: Icon(Icons.picture_as_pdf_outlined,
+              size: 50, color: AppTheme.blue),
+        ),
+        Positioned(
+          left: 18,
+          right: 18,
+          bottom: 18,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+            decoration: BoxDecoration(
+              color: const Color(0xDDFFFFFF),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Text(
+              'Макет v3 · заказчик видит только согласовательный файл',
+              style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700),
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ),
+      ]),
+    );
+  }
+
+  Widget _approvalRows(_ApprovalCard card) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: const Color(0xFFC9E2F0)),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(children: [
+        _techRow('Заказ', card.orderId),
+        _techRow('Заказчик', card.customer),
+        _techRow('Макет', '${card.layoutName} · ${card.version}'),
+        _techRow('Файл', card.fileName),
+        _techRow('Статус', _approvalStatus),
+        _techRow('Дедлайн', card.deadline),
+        _techRow('Проверка', card.protocol),
+      ]),
+    );
+  }
+
+  Widget _approvalActions() {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: const Color(0xFFC9E2F0)),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        const Text(
+          'Решение заказчика',
+          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900),
+        ),
+        const SizedBox(height: 8),
+        XpBtn(
+          label: 'Принять макет',
+          primary: true,
+          onPressed: () => _setApprovalStatus('Согласовано заказчиком'),
+        ),
+        const SizedBox(height: 7),
+        XpBtn(
+          label: 'Вернуть на доработку',
+          onPressed: () => _setApprovalStatus('Нужна доработка'),
+        ),
+        const SizedBox(height: 7),
+        XpBtn(
+          label: 'Запросить новую версию',
+          onPressed: () => _setApprovalStatus('Ожидается новая версия'),
+        ),
+      ]),
+    );
+  }
+
+  Widget _versionBox() {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: const Color(0xFFC9E2F0)),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: const Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('История версий',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900)),
+          SizedBox(height: 7),
+          Text('v1 · первичный макет · замечания по тексту',
+              style: TextStyle(fontSize: 10, height: 1.35)),
+          SizedBox(height: 4),
+          Text('v2 · исправлены тексты · замечания по цвету',
+              style: TextStyle(fontSize: 10, height: 1.35)),
+          SizedBox(height: 4),
+          Text('v3 · текущая версия · ожидает решения',
+              style: TextStyle(fontSize: 10, height: 1.35)),
+        ],
+      ),
+    );
+  }
+
+  Widget _customerAccessBox() {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFAE6),
+        border: Border.all(color: const Color(0xFFE8C65C)),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: const Text(
+        'Доступ заказчика: только свой заказ, макет, комментарии, статус и согласовательный протокол. Производственные настройки, оригиналы и внутренние карты не показываются.',
+        style: TextStyle(fontSize: 10, height: 1.35),
+      ),
     );
   }
 
@@ -796,16 +1135,41 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  List<_ChatMessage> get _visibleMessages {
+    return _chats[_activeChat].kind == _ChatKind.approval
+        ? _approvalMessages
+        : _messages;
+  }
+
+  void _setApprovalStatus(String status) {
+    final now = DateTime.now();
+    final time = '${now.hour}:${now.minute.toString().padLeft(2, '0')} ✓';
+    setState(() {
+      _approvalStatus = status;
+      _approvalMessages.add(
+        _ChatMessage(
+          author: 'Олег',
+          role: 'менеджер',
+          time: time,
+          text: 'Статус согласования изменен: $status.',
+          isMine: true,
+        ),
+      );
+    });
+  }
+
   void _send() {
     final text = _msgCtrl.text.trim();
     if (text.isEmpty) return;
     final now = DateTime.now();
     final time = '${now.hour}:${now.minute.toString().padLeft(2, '0')}';
     setState(() {
-      _messages.add(
+      _visibleMessages.add(
         _ChatMessage(
           author: 'Олег',
-          role: 'оператор',
+          role: _chats[_activeChat].kind == _ChatKind.approval
+              ? 'менеджер'
+              : 'оператор',
           time: '$time ✓',
           text: text,
           isMine: true,
@@ -830,6 +1194,7 @@ class _ChatItem {
   final String time;
   final int unread;
   final Color color;
+  final _ChatKind kind;
 
   const _ChatItem({
     required this.title,
@@ -837,6 +1202,7 @@ class _ChatItem {
     required this.time,
     required this.unread,
     required this.color,
+    this.kind = _ChatKind.internal,
   });
 }
 
@@ -847,6 +1213,7 @@ class _ChatMessage {
   final String text;
   final bool isMine;
   final _SharedCheckCard? card;
+  final _ApprovalCard? approvalCard;
 
   const _ChatMessage({
     required this.author,
@@ -855,6 +1222,7 @@ class _ChatMessage {
     required this.text,
     required this.isMine,
     this.card,
+    this.approvalCard,
   });
 }
 
@@ -877,5 +1245,27 @@ class _SharedCheckCard {
     required this.geometry,
     required this.text,
     required this.storage,
+  });
+}
+
+class _ApprovalCard {
+  final String orderId;
+  final String customer;
+  final String layoutName;
+  final String version;
+  final String fileName;
+  final String status;
+  final String deadline;
+  final String protocol;
+
+  const _ApprovalCard({
+    required this.orderId,
+    required this.customer,
+    required this.layoutName,
+    required this.version,
+    required this.fileName,
+    required this.status,
+    required this.deadline,
+    required this.protocol,
   });
 }
