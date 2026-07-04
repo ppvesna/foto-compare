@@ -95,7 +95,7 @@ class _MainShellState extends State<MainShell> {
   void _onTab(int i) {
     setState(() {
       _tab = i;
-      if (i == 1) _chatBadge = 0;
+      if (i == 2) _chatBadge = 0;
     });
   }
 
@@ -104,16 +104,16 @@ class _MainShellState extends State<MainShell> {
     final user = Supabase.instance.client.auth.currentUser;
     final email = user?.email ?? '';
     final screens = [
+      HomeScreen(
+        email: email,
+        onOpenCompare: () => _onTab(1),
+        onOpenChat: () => _onTab(2),
+        onOpenSettings: () => _onTab(3),
+        onSignOut: _signOut,
+      ),
       const CompareScreen(),
       const ChatScreen(),
       const SettingsScreen(),
-      HomeScreen(
-        email: email,
-        onOpenCompare: () => _onTab(0),
-        onOpenChat: () => _onTab(1),
-        onOpenSettings: () => _onTab(2),
-        onSignOut: _signOut,
-      ),
     ];
 
     return Scaffold(
@@ -163,10 +163,10 @@ class _MainShellState extends State<MainShell> {
           child: SizedBox(
             height: 58,
             child: Row(children: [
-              Expanded(child: _navBtn(0, 'Сравнение')),
-              _navBtnBadge(1, 'Чат', _chatBadge),
-              Expanded(child: _navBtn(2, 'Настройки')),
-              Expanded(child: _navBtn(3, 'Главная')),
+              Expanded(child: _navBtn(0, 'Главная')),
+              Expanded(child: _navBtn(1, 'Сравнение')),
+              _navBtnBadge(2, 'Чат', _chatBadge),
+              Expanded(child: _navBtn(3, 'Настройки')),
             ]),
           ),
         ),
