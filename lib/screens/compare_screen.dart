@@ -27,6 +27,28 @@ enum _ResultMapMode { deltaE, geometry, overlay }
 
 enum _InspectionTool { point, loupe }
 
+({double l, double a, double b}) _rgbPixelToLab(img.Pixel p) {
+  final r = _pivotRgbValue(p.r);
+  final g = _pivotRgbValue(p.g);
+  final b = _pivotRgbValue(p.b);
+  final x = (r * 0.4124564 + g * 0.3575761 + b * 0.1804375) / 0.95047;
+  final y = r * 0.2126729 + g * 0.7151522 + b * 0.0721750;
+  final z = (r * 0.0193339 + g * 0.1191920 + b * 0.9503041) / 1.08883;
+  final fx = _pivotXyzValue(x);
+  final fy = _pivotXyzValue(y);
+  final fz = _pivotXyzValue(z);
+  return (l: 116 * fy - 16, a: 500 * (fx - fy), b: 200 * (fy - fz));
+}
+
+double _pivotRgbValue(num v) {
+  final c = v / 255.0;
+  return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4) as double;
+}
+
+double _pivotXyzValue(double v) {
+  return v > 0.008856 ? pow(v, 1 / 3) as double : (7.787 * v) + 16 / 116;
+}
+
 class CompareScreen extends StatefulWidget {
   const CompareScreen({super.key});
 
@@ -2427,8 +2449,8 @@ class _CompareScreenState extends State<CompareScreen>
                       _probeCell('CMYK эталона', probe.refCmyk.label, flex: 3),
                       _probeCell('CMYK образца', probe.cmpCmyk.label, flex: 3),
                       _probeCell(
-                        'RGB',
-                        'эталон ${probe.refRgb}\nобразец ${probe.cmpRgb}',
+                        'Lab',
+                        'эталон ${probe.refLab.label}\nобразец ${probe.cmpLab.label}',
                         flex: 3,
                       ),
                     ],
@@ -6273,8 +6295,8 @@ class _CompareScreenState extends State<CompareScreen>
         y: ry,
         normalized: Offset(nx, ny),
         imageSize: Size(ref.width.toDouble(), ref.height.toDouble()),
-        refRgb: _RgbColor.fromPixel(refPixel),
-        cmpRgb: _RgbColor.fromPixel(cmpPixel),
+        refLab: _LabColor.fromPixel(refPixel),
+        cmpLab: _LabColor.fromPixel(cmpPixel),
         refCmyk: _CmykColor.fromPixel(refPixel),
         cmpCmyk: _CmykColor.fromPixel(cmpPixel),
         deltaE: _deltaE76(refPixel, cmpPixel),
@@ -6889,8 +6911,8 @@ class _PointProbe {
   final int y;
   final Offset normalized;
   final Size imageSize;
-  final _RgbColor refRgb;
-  final _RgbColor cmpRgb;
+  final _LabColor refLab;
+  final _LabColor cmpLab;
   final _CmykColor refCmyk;
   final _CmykColor cmpCmyk;
   final double deltaE;
@@ -6902,8 +6924,8 @@ class _PointProbe {
     required this.y,
     required this.normalized,
     required this.imageSize,
-    required this.refRgb,
-    required this.cmpRgb,
+    required this.refLab,
+    required this.cmpLab,
     required this.refCmyk,
     required this.cmpCmyk,
     required this.deltaE,
@@ -6934,19 +6956,20 @@ class _AreaLoupe {
   });
 }
 
-class _RgbColor {
-  final int r;
-  final int g;
-  final int b;
+class _LabColor {
+  final double l;
+  final double a;
+  final double b;
 
-  const _RgbColor(this.r, this.g, this.b);
+  const _LabColor(this.l, this.a, this.b);
 
-  factory _RgbColor.fromPixel(img.Pixel p) {
-    return _RgbColor(p.r.round(), p.g.round(), p.b.round());
+  factory _LabColor.fromPixel(img.Pixel p) {
+    final lab = _rgbPixelToLab(p);
+    return _LabColor(lab.l, lab.a, lab.b);
   }
 
-  @override
-  String toString() => '$r/$g/$b';
+  String get label =>
+      'L ${l.toStringAsFixed(1)}  a ${a.toStringAsFixed(1)}  b ${b.toStringAsFixed(1)}';
 }
 
 class _CmykColor {
