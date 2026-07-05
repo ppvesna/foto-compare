@@ -13,6 +13,7 @@ import '../services/opencv_service.dart';
 import '../services/ai_compare_service.dart';
 import '../services/barcode_service.dart';
 import '../services/anchor_refinement_service.dart';
+import '../services/calibration_settings_service.dart';
 import '../services/lab_fingerprint_service.dart';
 import '../services/ocr_service.dart';
 import '../services/check_history_service.dart';
@@ -138,6 +139,8 @@ class _CompareScreenState extends State<CompareScreen>
   LayoutProfile? _layoutProfile;
   bool _calibrating = false;
   List<LayoutProfile> _savedProfiles = [];
+  CalibrationPointSettings _calibrationSettings =
+      CalibrationPointSettings.defaults;
 
   @override
   void initState() {
@@ -145,7 +148,21 @@ class _CompareScreenState extends State<CompareScreen>
     _tabs = TabController(length: 4, vsync: this);
     _loadSavedReference();
     _loadProfiles();
+    _loadCalibrationSettings();
+    CalibrationSettingsService.notifier.addListener(_onCalibrationSettings);
     HardwareKeyboard.instance.addHandler(_handleCtrlKey);
+  }
+
+  Future<void> _loadCalibrationSettings() async {
+    final settings = await CalibrationSettingsService.load();
+    if (mounted) setState(() => _calibrationSettings = settings);
+  }
+
+  void _onCalibrationSettings() {
+    if (!mounted) return;
+    setState(() {
+      _calibrationSettings = CalibrationSettingsService.notifier.value;
+    });
   }
 
   Future<void> _loadProfiles() async {
@@ -250,20 +267,24 @@ class _CompareScreenState extends State<CompareScreen>
     final imageSize = step == 1 ? _refImgSize : _cmpImgSize;
     final resolvedSize = imageSize ?? await _readImageSize(bytes);
     if (!mounted || _calStep != step) return;
-    final precise = await _showAnchorLoupe(
-      bytes: bytes,
-      imageSize: resolvedSize,
-      roughPoint: imgCoord,
-      pointIndex: step == 1 ? _tempRefPts.length + 1 : _tempCmpPts.length + 1,
-      title: step == 1 ? 'Точка на эталоне' : 'Точка на образце',
-    );
+    final precise = _calibrationSettings.loupeEnabled
+        ? await _showAnchorLoupe(
+            bytes: bytes,
+            imageSize: resolvedSize,
+            roughPoint: imgCoord,
+            pointIndex:
+                step == 1 ? _tempRefPts.length + 1 : _tempCmpPts.length + 1,
+            title: step == 1 ? 'Точка на эталоне' : 'Точка на образце',
+            defaultZoom: _calibrationSettings.loupeZoom,
+          )
+        : imgCoord;
     if (precise == null || !mounted || _calStep != step) return;
 
     setState(() => _anchorRefining = true);
     final refined = await AnchorRefinementService.refine(
       bytes,
       precise,
-      maxShift: 2.0,
+      maxShift: _calibrationSettings.magnetMaxShiftPx,
     );
     if (!mounted) return;
     setState(() {
@@ -283,6 +304,7 @@ class _CompareScreenState extends State<CompareScreen>
     required Offset roughPoint,
     required int pointIndex,
     required String title,
+    required double defaultZoom,
   }) {
     return showDialog<Offset>(
       context: context,
@@ -293,6 +315,7 @@ class _CompareScreenState extends State<CompareScreen>
         roughPoint: roughPoint,
         pointIndex: pointIndex,
         title: title,
+        defaultZoom: defaultZoom,
       ),
     );
   }
@@ -664,6 +687,7 @@ class _CompareScreenState extends State<CompareScreen>
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_handleCtrlKey);
+    CalibrationSettingsService.notifier.removeListener(_onCalibrationSettings);
     _tabs.dispose();
     _overlayCtrl.dispose();
     _cmp2Ctrl.dispose();
@@ -2583,7 +2607,9 @@ class _CompareScreenState extends State<CompareScreen>
               placing
                   ? _anchorRefining
                       ? 'Ищу ближайший ч/б контраст рядом с кликом...'
-                      : 'Клик - открыть лупу. В лупе поставьте точную точку. Ctrl+скролл/драг - зум и сдвиг.'
+                      : _calibrationSettings.loupeEnabled
+                          ? 'Клик - открыть лупу. В лупе поставьте точную точку. Ctrl+скролл/драг - зум и сдвиг.'
+                          : 'Клик - точка без лупы. Ctrl+скролл/драг - зум и сдвиг.'
                   : 'Ctrl+скролл/драг - зум и перемещение.',
               style: const TextStyle(fontSize: 10, color: Colors.black54),
             ),
@@ -6090,6 +6116,7 @@ class _AnchorLoupeDialog extends StatefulWidget {
   final Offset roughPoint;
   final int pointIndex;
   final String title;
+  final double defaultZoom;
 
   const _AnchorLoupeDialog({
     required this.bytes,
@@ -6097,6 +6124,7 @@ class _AnchorLoupeDialog extends StatefulWidget {
     required this.roughPoint,
     required this.pointIndex,
     required this.title,
+    required this.defaultZoom,
   });
 
   @override
@@ -6106,12 +6134,13 @@ class _AnchorLoupeDialog extends StatefulWidget {
 class _AnchorLoupeDialogState extends State<_AnchorLoupeDialog> {
   ui.Image? _image;
   late Offset _center;
-  double _zoom = 8.0;
+  late double _zoom;
 
   @override
   void initState() {
     super.initState();
     _center = _clampPoint(widget.roughPoint);
+    _zoom = widget.defaultZoom;
     _decode();
   }
 

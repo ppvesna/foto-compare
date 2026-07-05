@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/app_theme.dart';
+import '../services/calibration_settings_service.dart';
 import '../services/check_history_service.dart';
 import '../widgets/xp_widgets.dart';
 
@@ -27,16 +28,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String _cameraMode = 'Встроенная камера ноутбука';
   String _captureResolution = '3840 x 2160';
   String _colorProfile = 'ISO Coated v2 / FOGRA39';
+  CalibrationPointSettings _calibrationSettings =
+      CalibrationPointSettings.defaults;
 
   static const _sections = [
     _SettingsSection('Аккаунт', 'профиль и синхронизация'),
     _SettingsSection('Камера', 'захват с ноутбука или USB'),
+    _SettingsSection('Калибровка', 'точки, лупа и магнит'),
     _SettingsSection('Цвет', 'CMYK точки и Delta E'),
     _SettingsSection('Плотности', 'оптические плотности CMYK'),
     _SettingsSection('Штрихкоды', 'EAN, QR, DataMatrix'),
     _SettingsSection('Проверка', 'уровни анализа'),
     _SettingsSection('Хранение', 'история и облако'),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCalibrationSettings();
+  }
+
+  Future<void> _loadCalibrationSettings() async {
+    final settings = await CalibrationSettingsService.load();
+    if (mounted) setState(() => _calibrationSettings = settings);
+  }
 
   final _dotRows = const [
     _DotGainRow('Cyan', 'C', 25, 1.5, 3.0, 4.5, 5.5),
@@ -69,7 +84,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             label: 'Сохранить',
             icon: 'SV',
             shortcut: 'Ctrl+S',
-            onTap: _saveSettings,
+            onTap: () => _saveSettings(),
           ),
           XpMenuItem.sep,
           XpMenuItem(
@@ -110,9 +125,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ]);
         }),
       ),
-      XpStatusBar(
+      const XpStatusBar(
         left: 'Настройки производства',
-        right: 'камера · CMYK · плотности · штрихкоды',
+        right: 'камера · калибровка · CMYK · штрихкоды',
       ),
     ]);
   }
@@ -191,16 +206,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         if (_section == 0) _accountSection(),
         if (_section == 1) _cameraSection(),
-        if (_section == 2) _colorSection(),
-        if (_section == 3) _densitySection(),
-        if (_section == 4) _barcodeSection(),
-        if (_section == 5) _inspectionSection(),
-        if (_section == 6) _storageSection(),
+        if (_section == 2) _calibrationSection(),
+        if (_section == 3) _colorSection(),
+        if (_section == 4) _densitySection(),
+        if (_section == 5) _barcodeSection(),
+        if (_section == 6) _inspectionSection(),
+        if (_section == 7) _storageSection(),
         const SizedBox(height: 12),
         Row(mainAxisAlignment: MainAxisAlignment.end, children: [
           XpBtn(label: 'Сбросить', onPressed: _resetSettings),
           const SizedBox(width: 8),
-          XpBtn(label: 'Сохранить', primary: true, onPressed: _saveSettings),
+          XpBtn(
+            label: 'Сохранить',
+            primary: true,
+            onPressed: () => _saveSettings(),
+          ),
         ]),
       ]),
     );
@@ -281,6 +301,63 @@ class _SettingsScreenState extends State<SettingsScreen> {
       const SizedBox(height: 10),
       _notePanel(
         'Для Chrome надо будет отдельно подключить выбор устройств через getUserMedia: список камер, проверка доступа, live-preview и контроль света.',
+      ),
+    ]);
+  }
+
+  Widget _calibrationSection() {
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      _settingsPanel(
+        title: 'Калибровочные точки и лупа',
+        child:
+            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          _toggleRow(
+            'Лупа при постановке точки',
+            'первый клик открывает увеличенный фрагмент, второй ставит точку',
+            _calibrationSettings.loupeEnabled,
+            (v) => setState(() {
+              _calibrationSettings =
+                  _calibrationSettings.copyWith(loupeEnabled: v);
+            }),
+          ),
+          _optionChips(
+            label: 'Увеличение лупы по умолчанию',
+            value: '${_calibrationSettings.loupeZoom.toStringAsFixed(0)}x',
+            values: const ['4x', '8x', '12x'],
+            onSelect: (v) {
+              final zoom = double.parse(v.replaceAll('x', ''));
+              setState(() {
+                _calibrationSettings =
+                    _calibrationSettings.copyWith(loupeZoom: zoom);
+              });
+            },
+          ),
+          _sliderRow(
+            title: 'Сила ч/б магнита',
+            subtitle:
+                'после точного клика программа может чуть подтянуть точку к резкой границе',
+            value: _calibrationSettings.magnetMaxShiftPx,
+            min: 0,
+            max: 8,
+            divisions: 8,
+            suffix: 'px',
+            onChanged: (v) => setState(() {
+              _calibrationSettings =
+                  _calibrationSettings.copyWith(magnetMaxShiftPx: v);
+            }),
+          ),
+          const SizedBox(height: 6),
+          _infoRow(
+            'Рекомендация',
+            _calibrationSettings.magnetMaxShiftPx <= 0.1
+                ? 'ручная точка без автоподтяжки'
+                : 'для печатника удобно 1-2 px; больше 4 px может уводить точку',
+          ),
+        ]),
+      ),
+      const SizedBox(height: 10),
+      _notePanel(
+        'Для контрольного теста одним и тем же файлом используйте одинаковые пары точек и порядок: точка 1 на эталоне должна быть той же точкой 1 на образце.',
       ),
     ]);
   }
@@ -666,7 +743,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         Switch(
           value: value,
           onChanged: locked ? null : onChanged,
-          activeColor: AppTheme.blue,
+          activeThumbColor: AppTheme.blue,
           materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
         ),
         const SizedBox(width: 6),
@@ -682,6 +759,55 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   fontSize: 10, height: 1.3, color: Colors.black54),
             ),
           ]),
+        ),
+      ]),
+    );
+  }
+
+  Widget _sliderRow({
+    required String title,
+    required String subtitle,
+    required double value,
+    required double min,
+    required double max,
+    required int divisions,
+    required String suffix,
+    required ValueChanged<double> onChanged,
+  }) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 7),
+      padding: const EdgeInsets.all(9),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FCFF),
+        border: Border.all(color: const Color(0xFFC9E2F0)),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Expanded(
+            child: Text(
+              title,
+              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w900),
+            ),
+          ),
+          Text(
+            '${value.toStringAsFixed(0)} $suffix',
+            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w900),
+          ),
+        ]),
+        const SizedBox(height: 2),
+        Text(
+          subtitle,
+          style:
+              const TextStyle(fontSize: 10, height: 1.3, color: Colors.black54),
+        ),
+        Slider(
+          value: value,
+          min: min,
+          max: max,
+          divisions: divisions,
+          activeColor: AppTheme.blue,
+          onChanged: onChanged,
         ),
       ]),
     );
@@ -725,11 +851,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  void _saveSettings() {
+  Future<void> _saveSettings() async {
+    await CalibrationSettingsService.save(_calibrationSettings);
+    if (!mounted) return;
     xpDlg(
       context,
       'Сохранено',
-      'Каркас настроек применен локально. Следующим этапом подключим модель UserInspectionSettings и запись в базу.',
+      'Настройки применены локально. Параметры калибровочных точек уже используются на экране сравнения.',
     );
   }
 
@@ -752,7 +880,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _cameraMode = 'Встроенная камера ноутбука';
       _captureResolution = '3840 x 2160';
       _colorProfile = 'ISO Coated v2 / FOGRA39';
+      _calibrationSettings = CalibrationPointSettings.defaults;
     });
+    await CalibrationSettingsService.reset();
   }
 
   Widget _lastCheckHistoryGroup() {
