@@ -71,6 +71,7 @@ class CheckProtocol {
   final String refSize;
   final String cmpSize;
   final String labId;
+  final String referenceId;
   final String referenceLabel;
   final String sampleLabel;
   final double? labMatch;
@@ -84,6 +85,7 @@ class CheckProtocol {
     required this.refSize,
     required this.cmpSize,
     required this.labId,
+    this.referenceId = '',
     this.referenceLabel = 'Эталон',
     this.sampleLabel = 'Образец',
     required this.labMatch,
@@ -98,6 +100,7 @@ class CheckProtocol {
         refSize: json['refSize'] as String,
         cmpSize: json['cmpSize'] as String,
         labId: json['labId'] as String? ?? '-',
+        referenceId: json['referenceId'] as String? ?? '',
         referenceLabel: json['referenceLabel'] as String? ?? 'Эталон',
         sampleLabel: json['sampleLabel'] as String? ?? 'Образец',
         labMatch: (json['labMatch'] as num?)?.toDouble(),
@@ -116,6 +119,7 @@ class CheckProtocol {
         'refSize': refSize,
         'cmpSize': cmpSize,
         'labId': labId,
+        'referenceId': referenceId,
         'referenceLabel': referenceLabel,
         'sampleLabel': sampleLabel,
         'labMatch': labMatch,

@@ -249,6 +249,25 @@ class _CompareScreenState extends State<CompareScreen>
     }
   }
 
+  void _newSample() {
+    setState(() {
+      _cmpImg = null;
+      _cmpImgSize = null;
+      _cmpAligned = null;
+      _cmpAnchorPts = null;
+      _cmp2Img = null;
+      _cmp1Sharpness = null;
+      _cmp2Sharpness = null;
+      _result = null;
+      _aiResult = null;
+      _pointProbe = null;
+      _compareStatus = null;
+      _compareSteps.clear();
+      _calStep = 0;
+      _tempCmpPts = [];
+    });
+  }
+
   Future<void> _clearReference() async {
     final ok = await xpConfirm(
       context,
@@ -1233,7 +1252,15 @@ class _CompareScreenState extends State<CompareScreen>
     final r = _result;
     if (r == null) return;
     final now = DateTime.now();
-    final sampleNumber = CheckHistoryService.checks.value.length + 1;
+    final referenceId = _activeReferenceId ?? '';
+    final sampleNumber = CheckHistoryService.checks.value
+            .where(
+              (p) =>
+                  p.referenceId == referenceId ||
+                  (referenceId.isEmpty && p.referenceLabel == _savedRefLabel),
+            )
+            .length +
+        1;
     await CheckHistoryService.saveLast(
       CheckProtocol(
         id: now.millisecondsSinceEpoch.toString(),
@@ -1243,6 +1270,7 @@ class _CompareScreenState extends State<CompareScreen>
         refSize: r.refSize,
         cmpSize: r.cmpSize,
         labId: _shortLabId(_refLabFingerprint?.labId),
+        referenceId: referenceId,
         referenceLabel: _savedRefLabel ?? _layoutProfile?.name ?? 'Эталон',
         sampleLabel: 'Образец $sampleNumber',
         labMatch: _labFingerprintMatch,
@@ -1977,7 +2005,13 @@ class _CompareScreenState extends State<CompareScreen>
               const SizedBox(height: 8),
               _pointProbePanel(r),
             ],
-            if (r != null) ...[
+            if (r != null ||
+                CheckHistoryService.checks.value.any(
+                  (p) =>
+                      _activeReferenceId == null ||
+                      p.referenceId == _activeReferenceId ||
+                      p.referenceLabel == _savedRefLabel,
+                )) ...[
               const SizedBox(height: 10),
               _checkProtocolListPanel(),
             ],
@@ -2256,7 +2290,14 @@ class _CompareScreenState extends State<CompareScreen>
     return ValueListenableBuilder<List<CheckProtocol>>(
       valueListenable: CheckHistoryService.checks,
       builder: (context, protocols, _) {
-        final list = protocols;
+        final list = protocols
+            .where(
+              (p) =>
+                  _activeReferenceId == null ||
+                  p.referenceId == _activeReferenceId ||
+                  p.referenceLabel == _savedRefLabel,
+            )
+            .toList();
         if (list.isEmpty && _result != null) {
           return _checkProtocolTable(
             title: 'Протокол проверки',
@@ -2887,6 +2928,17 @@ class _CompareScreenState extends State<CompareScreen>
                   onPressed: _imageBusy ? null : () => _pickImage(false),
                 ),
               ),
+              if (_cmpImg != null) ...[
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: XpBtn(
+                    label: 'Новый образец',
+                    icon: Icons.note_add,
+                    onPressed: _imageBusy ? null : _newSample,
+                  ),
+                ),
+              ],
               const SizedBox(height: 8),
               SizedBox(
                 width: double.infinity,
