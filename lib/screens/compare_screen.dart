@@ -12,6 +12,7 @@ import '../services/reference_storage.dart';
 import '../services/opencv_service.dart';
 import '../services/ai_compare_service.dart';
 import '../services/barcode_service.dart';
+import '../services/anchor_refinement_service.dart';
 import '../services/lab_fingerprint_service.dart';
 import '../services/ocr_service.dart';
 import '../services/check_history_service.dart';
@@ -83,6 +84,7 @@ class _CompareScreenState extends State<CompareScreen>
   int _calStep = 0;
   List<Offset> _tempRefPts = [];
   List<Offset> _tempCmpPts = [];
+  bool _anchorRefining = false;
   static const int _minAnchorPts = 4;
   static const int _maxAnchorPts = 8;
 
@@ -233,16 +235,28 @@ class _CompareScreenState extends State<CompareScreen>
     });
   }
 
-  void _addPanelPoint(Offset imgCoord) {
+  Future<void> _addPanelPoint(Offset imgCoord) async {
+    if (_anchorRefining) return;
     final step = _calStep;
     if (step == 1 && _tempRefPts.length >= _maxAnchorPts) return;
     if (step == 2 && _tempCmpPts.length >= _maxAnchorPts) return;
+    final bytes = step == 1
+        ? _refImg
+        : step == 2
+            ? _cmpImg
+            : null;
+    if (bytes == null) return;
+
+    setState(() => _anchorRefining = true);
+    final refined = await AnchorRefinementService.refine(bytes, imgCoord);
+    if (!mounted) return;
     setState(() {
+      _anchorRefining = false;
       if (_calStep != step) return;
       if (step == 1 && _tempRefPts.length < _maxAnchorPts) {
-        _tempRefPts = [..._tempRefPts, imgCoord];
+        _tempRefPts = [..._tempRefPts, refined];
       } else if (step == 2 && _tempCmpPts.length < _maxAnchorPts) {
-        _tempCmpPts = [..._tempCmpPts, imgCoord];
+        _tempCmpPts = [..._tempCmpPts, refined];
       }
     });
   }
@@ -498,6 +512,13 @@ class _CompareScreenState extends State<CompareScreen>
                   '${(r.confidence * 100).toStringAsFixed(0)}%',
                   r.confidence > 0.85 ? Colors.green : Colors.orange,
                 ),
+                if (r.reprojError >= 3.0) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    'Ошибка выше нормы. Лучше переставить точки: проверьте порядок и выбирайте одинаковые углы, метки или резкие чёрно-белые границы.',
+                    style: TextStyle(fontSize: 12, height: 1.35, color: color),
+                  ),
+                ],
               ],
             ),
             actions: confirmOnly
@@ -2135,9 +2156,9 @@ class _CompareScreenState extends State<CompareScreen>
             ? 'Калибровка: точки на образце'
             : 'Калибровка: расчёт совмещения';
     final message = _calStep == 1
-        ? 'Поставьте $_minAnchorPts-$_maxAnchorPts одинаковых контрольных точек на эталоне. Точка фиксируется точно в месте клика.'
+        ? 'Поставьте $_minAnchorPts-$_maxAnchorPts одинаковых контрольных точек на эталоне. Точка мягко притягивается к ближайшему ч/б контрасту.'
         : _calStep == 2
-            ? 'Поставьте те же ${_tempRefPts.length} точек на образце в том же порядке. Автосмещение отключено, работает точный ручной клик.'
+            ? 'Поставьте те же ${_tempRefPts.length} точек на образце в том же порядке. Магнит работает только рядом с кликом, без дальнего прыжка.'
             : 'OpenCV рассчитывает гомографию и проверяет качество совмещения.';
 
     return _xpWindow(
@@ -2467,7 +2488,9 @@ class _CompareScreenState extends State<CompareScreen>
           Expanded(
             child: Text(
               placing
-                  ? 'Клик - точка строго в месте курсора. Ctrl+скролл/драг - зум и сдвиг.'
+                  ? _anchorRefining
+                      ? 'Ищу ближайший ч/б контраст рядом с кликом...'
+                      : 'Клик - точка с мягким магнитом к ч/б контрасту. Ctrl+скролл/драг - зум и сдвиг.'
                   : 'Ctrl+скролл/драг - зум и перемещение.',
               style: const TextStyle(fontSize: 10, color: Colors.black54),
             ),
