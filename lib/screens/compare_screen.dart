@@ -2399,7 +2399,26 @@ class _CompareScreenState extends State<CompareScreen>
     final cmpBase = _resultMapMode == _ResultMapMode.geometry
         ? r.geometryCmpCanonical ?? r.cmpCanonical
         : r.cmpCanonical;
-    return _diffOverlay(diff, refBase, cmpBase, _resultCmpCtrl);
+    return _diffOverlay(
+      diff,
+      refBase,
+      cmpBase,
+      _resultCmpCtrl,
+      imageSize: _parseImageSize(r.refSize),
+    );
+  }
+
+  Size _parseImageSize(String label) {
+    final normalized = label.toLowerCase().replaceAll('x', '×');
+    final parts = normalized.split('×');
+    if (parts.length == 2) {
+      final w = double.tryParse(parts[0].trim());
+      final h = double.tryParse(parts[1].trim());
+      if (w != null && h != null && w > 0 && h > 0) {
+        return Size(w, h);
+      }
+    }
+    return const Size(1600, 900);
   }
 
   Widget _pointProbePanel(CompareResult r) {
@@ -6143,8 +6162,9 @@ class _CompareScreenState extends State<CompareScreen>
     Uint8List? diffPng,
     Uint8List? canonRef,
     Uint8List? canonCmp,
-    TransformationController ctrl,
-  ) {
+    TransformationController ctrl, {
+    required Size imageSize,
+  }) {
     final Uint8List? refBase = canonRef ?? _refImg;
     final Uint8List? cmpBase = canonCmp ?? _cmpAligned ?? _cmpImg;
     return ClipRect(
@@ -6168,79 +6188,76 @@ class _CompareScreenState extends State<CompareScreen>
                           ctrl: ctrl,
                         )
                     : null,
-                onPanStart: refBase != null &&
-                        cmpBase != null &&
-                        _inspectionTool == _InspectionTool.loupe
-                    ? (details) => _startAreaLoupeSelection(
-                          local: details.localPosition,
-                          viewportSize: boxSize,
-                          refBytes: refBase,
-                          ctrl: ctrl,
-                        )
-                    : null,
-                onPanUpdate: refBase != null &&
-                        cmpBase != null &&
-                        _inspectionTool == _InspectionTool.loupe
-                    ? (details) => _updateAreaLoupeSelection(
-                          local: details.localPosition,
-                          viewportSize: boxSize,
-                          refBytes: refBase,
-                          ctrl: ctrl,
-                        )
-                    : null,
-                onPanEnd: refBase != null &&
-                        cmpBase != null &&
-                        _inspectionTool == _InspectionTool.loupe
-                    ? (_) => _finishAreaLoupeSelection(
-                          viewportSize: boxSize,
-                          refBytes: refBase,
-                          cmpBytes: cmpBase,
-                          ctrl: ctrl,
-                        )
-                    : null,
-                child: InteractiveViewer(
-                  transformationController: ctrl,
-                  boundaryMargin: const EdgeInsets.all(double.infinity),
-                  minScale: 0.5,
-                  maxScale: 8.0,
-                  panEnabled: _ctrlHeld,
-                  scaleEnabled: _ctrlHeld,
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      if (refBase != null)
-                        _uiImage(refBase, fit: BoxFit.contain),
-                      if (cmpBase != null)
-                        Opacity(
-                          opacity: _diffSlider,
-                          child: _uiImage(cmpBase, fit: BoxFit.contain),
-                        ),
-                      if (diffPng != null)
-                        Opacity(
-                          opacity: _diffSlider,
-                          child: _uiImage(diffPng, fit: BoxFit.contain),
-                        ),
-                      if (_pointProbe != null)
-                        CustomPaint(
-                          painter: _ProbePointPainter(
-                            normalized: _pointProbe!.normalized,
-                            imageSize: _pointProbe!.imageSize,
+                child: Stack(children: [
+                  InteractiveViewer(
+                    transformationController: ctrl,
+                    boundaryMargin: const EdgeInsets.all(double.infinity),
+                    minScale: 0.5,
+                    maxScale: 8.0,
+                    panEnabled: _ctrlHeld,
+                    scaleEnabled: _ctrlHeld,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        if (refBase != null)
+                          _uiImage(refBase, fit: BoxFit.contain),
+                        if (cmpBase != null)
+                          Opacity(
+                            opacity: _diffSlider,
+                            child: _uiImage(cmpBase, fit: BoxFit.contain),
                           ),
-                        ),
-                      if (_loupeDraftRect != null || _areaLoupe != null)
-                        CustomPaint(
-                          painter: _LoupeSelectionPainter(
-                            normalized:
-                                _loupeDraftRect ?? _areaLoupe!.normalizedRect,
-                            imageSize: _loupeImageSize ??
-                                _areaLoupe?.imageSize ??
-                                Size.zero,
-                            active: _loupeDraftRect != null,
+                        if (diffPng != null)
+                          Opacity(
+                            opacity: _diffSlider,
+                            child: _uiImage(diffPng, fit: BoxFit.contain),
                           ),
-                        ),
-                    ],
+                        if (_pointProbe != null)
+                          CustomPaint(
+                            painter: _ProbePointPainter(
+                              normalized: _pointProbe!.normalized,
+                              imageSize: _pointProbe!.imageSize,
+                            ),
+                          ),
+                        if (_loupeDraftRect != null || _areaLoupe != null)
+                          CustomPaint(
+                            painter: _LoupeSelectionPainter(
+                              normalized:
+                                  _loupeDraftRect ?? _areaLoupe!.normalizedRect,
+                              imageSize: _loupeImageSize ??
+                                  _areaLoupe?.imageSize ??
+                                  Size.zero,
+                              active: _loupeDraftRect != null,
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
-                ),
+                  if (refBase != null &&
+                      cmpBase != null &&
+                      _inspectionTool == _InspectionTool.loupe)
+                    Positioned.fill(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onPanStart: (details) => _startAreaLoupeSelection(
+                          local: details.localPosition,
+                          viewportSize: boxSize,
+                          imageSize: imageSize,
+                          ctrl: ctrl,
+                        ),
+                        onPanUpdate: (details) => _updateAreaLoupeSelection(
+                          local: details.localPosition,
+                          viewportSize: boxSize,
+                          imageSize: imageSize,
+                          ctrl: ctrl,
+                        ),
+                        onPanEnd: (_) => _finishAreaLoupeSelection(
+                          viewportSize: boxSize,
+                          imageSize: imageSize,
+                          ctrl: ctrl,
+                        ),
+                      ),
+                    ),
+                ]),
               );
             },
           ),
@@ -6296,79 +6313,70 @@ class _CompareScreenState extends State<CompareScreen>
   void _startAreaLoupeSelection({
     required Offset local,
     required Size viewportSize,
-    required Uint8List refBytes,
+    required Size imageSize,
     required TransformationController ctrl,
   }) {
-    final ref = img.decodeImage(refBytes);
-    if (ref == null) return;
     final p = _normalizedOverlayPoint(
       local: local,
       viewportSize: viewportSize,
-      imageSize: Size(ref.width.toDouble(), ref.height.toDouble()),
+      imageSize: imageSize,
       ctrl: ctrl,
     );
     if (p == null) return;
     setState(() {
       _loupeDragStart = p;
       _loupeDraftRect = Rect.fromPoints(p, p);
-      _loupeImageSize = Size(ref.width.toDouble(), ref.height.toDouble());
+      _loupeImageSize = imageSize;
     });
   }
 
   void _updateAreaLoupeSelection({
     required Offset local,
     required Size viewportSize,
-    required Uint8List refBytes,
+    required Size imageSize,
     required TransformationController ctrl,
   }) {
     final start = _loupeDragStart;
     if (start == null) return;
-    final ref = img.decodeImage(refBytes);
-    if (ref == null) return;
     final p = _normalizedOverlayPoint(
       local: local,
       viewportSize: viewportSize,
-      imageSize: Size(ref.width.toDouble(), ref.height.toDouble()),
+      imageSize: imageSize,
       ctrl: ctrl,
     );
     if (p == null) return;
     setState(() {
       _loupeDraftRect = _normalizedRectFromPoints(start, p);
-      _loupeImageSize = Size(ref.width.toDouble(), ref.height.toDouble());
+      _loupeImageSize = imageSize;
     });
   }
 
   void _finishAreaLoupeSelection({
     required Size viewportSize,
-    required Uint8List refBytes,
-    required Uint8List cmpBytes,
+    required Size imageSize,
     required TransformationController ctrl,
   }) {
     final draft = _loupeDraftRect;
     if (draft == null) return;
-    final ref = img.decodeImage(refBytes);
-    final cmp = img.decodeImage(cmpBytes);
-    if (ref == null || cmp == null) return;
     final normalized = _expandLoupeRect(draft);
-    final refCrop = _cropRectForImage(ref, normalized);
-    final cmpCrop = _cropRectForImage(cmp, normalized);
+    final refCrop = _cropSizeForImage(imageSize, normalized);
     setState(() {
       _areaLoupe = _AreaLoupe(
         normalizedRect: normalized,
-        imageSize: Size(ref.width.toDouble(), ref.height.toDouble()),
+        imageSize: imageSize,
         refWidth: refCrop.width,
         refHeight: refCrop.height,
-        cmpWidth: cmpCrop.width,
-        cmpHeight: cmpCrop.height,
+        cmpWidth: refCrop.width,
+        cmpHeight: refCrop.height,
       );
       _loupeDraftRect = null;
       _loupeDragStart = null;
-      _loupeImageSize = Size(ref.width.toDouble(), ref.height.toDouble());
+      _loupeImageSize = imageSize;
     });
     _zoomComparisonToRect(
       normalized,
       viewportSize: viewportSize,
-      imageSize: Size(ref.width.toDouble(), ref.height.toDouble()),
+      imageSize: imageSize,
       ctrl: ctrl,
     );
   }
@@ -6442,25 +6450,10 @@ class _CompareScreenState extends State<CompareScreen>
     return Rect.fromLTRB(left, top, right, bottom);
   }
 
-  ({int x, int y, int width, int height}) _cropRectForImage(
-      img.Image source, Rect normalized) {
-    final x = (normalized.left * source.width)
-        .floor()
-        .clamp(0, source.width - 1)
-        .toInt();
-    final y = (normalized.top * source.height)
-        .floor()
-        .clamp(0, source.height - 1)
-        .toInt();
-    final right = (normalized.right * source.width)
-        .ceil()
-        .clamp(x + 1, source.width)
-        .toInt();
-    final bottom = (normalized.bottom * source.height)
-        .ceil()
-        .clamp(y + 1, source.height)
-        .toInt();
-    return (x: x, y: y, width: right - x, height: bottom - y);
+  ({int width, int height}) _cropSizeForImage(Size imageSize, Rect normalized) {
+    final width = max(1, (normalized.width * imageSize.width).round());
+    final height = max(1, (normalized.height * imageSize.height).round());
+    return (width: width, height: height);
   }
 
   Uint8List _makeProbeLoupe(img.Image source, int cx, int cy) {
