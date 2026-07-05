@@ -12,7 +12,6 @@ import '../services/reference_storage.dart';
 import '../services/opencv_service.dart';
 import '../services/ai_compare_service.dart';
 import '../services/barcode_service.dart';
-import '../services/anchor_refinement_service.dart';
 import '../services/lab_fingerprint_service.dart';
 import '../services/ocr_service.dart';
 import '../services/check_history_service.dart';
@@ -84,7 +83,6 @@ class _CompareScreenState extends State<CompareScreen>
   int _calStep = 0;
   List<Offset> _tempRefPts = [];
   List<Offset> _tempCmpPts = [];
-  bool _anchorRefining = false;
   static const int _minAnchorPts = 4;
   static const int _maxAnchorPts = 8;
 
@@ -235,28 +233,16 @@ class _CompareScreenState extends State<CompareScreen>
     });
   }
 
-  Future<void> _addPanelPoint(Offset imgCoord) async {
-    if (_anchorRefining) return;
+  void _addPanelPoint(Offset imgCoord) {
     final step = _calStep;
     if (step == 1 && _tempRefPts.length >= _maxAnchorPts) return;
     if (step == 2 && _tempCmpPts.length >= _maxAnchorPts) return;
-    final bytes = step == 1
-        ? _refImg
-        : step == 2
-            ? _cmpImg
-            : null;
-    if (bytes == null) return;
-
-    setState(() => _anchorRefining = true);
-    final refined = await AnchorRefinementService.refine(bytes, imgCoord);
-    if (!mounted) return;
     setState(() {
-      _anchorRefining = false;
       if (_calStep != step) return;
       if (step == 1 && _tempRefPts.length < _maxAnchorPts) {
-        _tempRefPts = [..._tempRefPts, refined];
+        _tempRefPts = [..._tempRefPts, imgCoord];
       } else if (step == 2 && _tempCmpPts.length < _maxAnchorPts) {
-        _tempCmpPts = [..._tempCmpPts, refined];
+        _tempCmpPts = [..._tempCmpPts, imgCoord];
       }
     });
   }
@@ -2149,9 +2135,9 @@ class _CompareScreenState extends State<CompareScreen>
             ? 'Калибровка: точки на образце'
             : 'Калибровка: расчёт совмещения';
     final message = _calStep == 1
-        ? 'Поставьте $_minAnchorPts-$_maxAnchorPts одинаковых контрольных точек на эталоне. Лучше выбирать углы, метки и контрастные детали.'
+        ? 'Поставьте $_minAnchorPts-$_maxAnchorPts одинаковых контрольных точек на эталоне. Точка фиксируется точно в месте клика.'
         : _calStep == 2
-            ? 'Поставьте те же ${_tempRefPts.length} точек на образце в том же порядке. От порядка зависит масштаб и геометрия совмещения.'
+            ? 'Поставьте те же ${_tempRefPts.length} точек на образце в том же порядке. Автосмещение отключено, работает точный ручной клик.'
             : 'OpenCV рассчитывает гомографию и проверяет качество совмещения.';
 
     return _xpWindow(
@@ -2481,9 +2467,7 @@ class _CompareScreenState extends State<CompareScreen>
           Expanded(
             child: Text(
               placing
-                  ? _anchorRefining
-                      ? 'Уточняю центр точки по крупному, среднему и мелкому окну...'
-                      : 'Клик - точка. Центр уточняется автоматически. Ctrl+скролл/драг - зум и сдвиг.'
+                  ? 'Клик - точка строго в месте курсора. Ctrl+скролл/драг - зум и сдвиг.'
                   : 'Ctrl+скролл/драг - зум и перемещение.',
               style: const TextStyle(fontSize: 10, color: Colors.black54),
             ),

@@ -1,6 +1,5 @@
 import 'dart:typed_data';
 import 'package:flutter/services.dart';
-import 'package:flutter/painting.dart' show Offset;
 import '../config/app_config.dart';
 import 'homography_dart.dart';
 
@@ -16,8 +15,8 @@ class OpenCvService {
   static Future<Uint8List> perspectiveCorrect(Uint8List bytes) async {
     if (!_available) return bytes;
     try {
-      final result = await _channel.invokeMethod<Uint8List>(
-          'perspectiveCorrect', {'bytes': bytes});
+      final result = await _channel
+          .invokeMethod<Uint8List>('perspectiveCorrect', {'bytes': bytes});
       return result ?? bytes;
     } on MissingPluginException {
       _available = false;
@@ -66,8 +65,8 @@ class OpenCvService {
   static Future<double?> ssim(Uint8List ref, Uint8List cmp) async {
     if (!_available) return null;
     try {
-      final result = await _channel.invokeMethod<double>(
-          'ssim', {'reference': ref, 'compare': cmp});
+      final result = await _channel
+          .invokeMethod<double>('ssim', {'reference': ref, 'compare': cmp});
       return result;
     } on MissingPluginException {
       _available = false;
@@ -83,12 +82,10 @@ class OpenCvService {
       Uint8List bytes) async {
     if (!_available) return null;
     try {
-      final result = await _channel.invokeMethod<List>(
-          'detectCorners', {'bytes': bytes});
+      final result =
+          await _channel.invokeMethod<List>('detectCorners', {'bytes': bytes});
       if (result == null) return null;
-      return result
-          .map((e) => Map<String, double>.from(e as Map))
-          .toList();
+      return result.map((e) => Map<String, double>.from(e as Map)).toList();
     } on MissingPluginException {
       _available = false;
       return null;
@@ -122,8 +119,8 @@ class OpenCvService {
     if (!_available) return [bytes];
     try {
       final result = await _channel.invokeMethod<List>('splitModules', {
-        'bytes':    bytes,
-        'widthMm':  widthMm,
+        'bytes': bytes,
+        'widthMm': widthMm,
         'heightMm': heightMm,
       });
       if (result == null) return [bytes];
@@ -146,7 +143,7 @@ class OpenCvService {
       final result = await _channel.invokeMethod<Uint8List>('stitchImages', {
         'imageA': imageA,
         'imageB': imageB,
-        'wL':     AppConfig.compareWL,
+        'wL': AppConfig.compareWL,
       });
       return result;
     } on MissingPluginException {
@@ -162,39 +159,40 @@ class OpenCvService {
   // Оба изображения приводятся к каноническому разрешению (70 л/см × 2 / формат).
   // Зоны letterbox исключаются из итогового счёта.
   static Future<LabCompareResult?> compareImages(
-      Uint8List ref, Uint8List cmp, {
-      double widthMm  = AppConfig.printWidthMm,
-      double heightMm = AppConfig.printHeightMm,
+    Uint8List ref,
+    Uint8List cmp, {
+    double widthMm = AppConfig.printWidthMm,
+    double heightMm = AppConfig.printHeightMm,
   }) async {
     if (!_available) return null;
     try {
       final raw = await _channel.invokeMethod<Map>('compareImages', {
         'reference': ref,
-        'compare':   cmp,
-        'wL':        AppConfig.compareWL,
-        'wLayer0':   AppConfig.compareWLayer0,
-        'wLayer1':   AppConfig.compareWLayer1,
-        'wLayer2':   AppConfig.compareWLayer2,
-        'wLayer3':   AppConfig.compareWLayer3,
-        'deScale':   AppConfig.compareDeScale,
-        'widthMm':   widthMm,
-        'heightMm':  heightMm,
+        'compare': cmp,
+        'wL': AppConfig.compareWL,
+        'wLayer0': AppConfig.compareWLayer0,
+        'wLayer1': AppConfig.compareWLayer1,
+        'wLayer2': AppConfig.compareWLayer2,
+        'wLayer3': AppConfig.compareWLayer3,
+        'deScale': AppConfig.compareDeScale,
+        'widthMm': widthMm,
+        'heightMm': heightMm,
       });
       if (raw == null) return null;
       return LabCompareResult(
-        score:        (raw['score']       as num).toDouble(),
-        activeZones:  (raw['activeZones'] as num).toInt(),
-        totalZones:   (raw['totalZones']  as num).toInt(),
-        level0:       _toDoubleList(raw['level0']),
-        level1:       _toDoubleList(raw['level1']),
-        level2:       _toDoubleList(raw['level2']),
-        level3:       _toDoubleList(raw['level3']),
-        shiftDL:      (raw['shiftDL'] as num).toDouble(),
-        shiftDA:      (raw['shiftDA'] as num).toDouble(),
-        shiftDB:      (raw['shiftDB'] as num).toDouble(),
+        score: (raw['score'] as num).toDouble(),
+        activeZones: (raw['activeZones'] as num).toInt(),
+        totalZones: (raw['totalZones'] as num).toInt(),
+        level0: _toDoubleList(raw['level0']),
+        level1: _toDoubleList(raw['level1']),
+        level2: _toDoubleList(raw['level2']),
+        level3: _toDoubleList(raw['level3']),
+        shiftDL: (raw['shiftDL'] as num).toDouble(),
+        shiftDA: (raw['shiftDA'] as num).toDouble(),
+        shiftDB: (raw['shiftDB'] as num).toDouble(),
         refCanonical: raw['refCanonical'] as Uint8List,
         cmpCanonical: raw['cmpCanonical'] as Uint8List?,
-        diffL3:       raw['diffL3'] as Uint8List,
+        diffL3: raw['diffL3'] as Uint8List,
       );
     } on MissingPluginException {
       _available = false;
@@ -218,6 +216,30 @@ class OpenCvService {
     List<Offset> refPoints,
     List<Offset> srcPoints,
   ) async {
+    if (_bytesEqual(refBytes, srcBytes)) {
+      final pointError = _pointPairError(refPoints, srcPoints);
+      final quality = pointError < 2.0
+          ? 'excellent'
+          : pointError < 5.0
+              ? 'good'
+              : 'warning';
+      final confidence = pointError < 2.0
+          ? 1.0
+          : pointError < 5.0
+              ? 0.9
+              : 0.75;
+      return AlignByAnchorsResult(
+        alignedBytes: srcBytes,
+        refCanonicalBytes: refBytes,
+        homography: const [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+        reprojError: pointError,
+        eccScore: 1.0,
+        confidence: confidence,
+        quality: quality,
+        refinedSrcPoints: List<Offset>.from(srcPoints),
+      );
+    }
+
     if (!_available) {
       return _dartAlignFallback(refBytes, srcBytes, refPoints, srcPoints);
     }
@@ -229,7 +251,9 @@ class OpenCvService {
         'srcPoints': srcPoints.map((p) => {'x': p.dx, 'y': p.dy}).toList(),
       });
       if (raw == null) return null;
-      final hList = (raw['homography'] as List).map((e) => (e as num).toDouble()).toList();
+      final hList = (raw['homography'] as List)
+          .map((e) => (e as num).toDouble())
+          .toList();
       final srcRaw = raw['refinedSrcPoints'] as List;
       final refinedSrc = srcRaw.map((e) {
         final m = e as Map;
@@ -252,13 +276,39 @@ class OpenCvService {
     }
   }
 
+  static bool _bytesEqual(Uint8List a, Uint8List b) {
+    if (identical(a, b)) return true;
+    if (a.lengthInBytes != b.lengthInBytes) return false;
+    for (var i = 0; i < a.lengthInBytes; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  static double _pointPairError(
+      List<Offset> refPoints, List<Offset> srcPoints) {
+    if (refPoints.isEmpty || refPoints.length != srcPoints.length) return 0.0;
+    var sum = 0.0;
+    for (var i = 0; i < refPoints.length; i++) {
+      sum += (refPoints[i] - srcPoints[i]).distance;
+    }
+    return sum / refPoints.length;
+  }
+
   static Future<AlignByAnchorsResult?> _dartAlignFallback(
-    Uint8List refBytes, Uint8List srcBytes,
-    List<Offset> refPoints, List<Offset> srcPoints,
+    Uint8List refBytes,
+    Uint8List srcBytes,
+    List<Offset> refPoints,
+    List<Offset> srcPoints,
   ) async {
-    final r = await dartAlignByAnchors(refBytes, srcBytes, refPoints, srcPoints);
+    final r =
+        await dartAlignByAnchors(refBytes, srcBytes, refPoints, srcPoints);
     if (r == null) return null;
-    final q = r.reprojError < 3 ? 'excellent' : r.reprojError < 6 ? 'good' : 'warning';
+    final q = r.reprojError < 3
+        ? 'excellent'
+        : r.reprojError < 6
+            ? 'good'
+            : 'warning';
     return AlignByAnchorsResult(
       alignedBytes: r.alignedBytes,
       refCanonicalBytes: r.refCanonicalBytes,
@@ -279,11 +329,11 @@ class AlignByAnchorsResult {
   // Канонизированный эталон (только web-фолбэк; null на нативном пути,
   // где компенсация разрешений делается внутри compareImages).
   final Uint8List? refCanonicalBytes;
-  final List<double> homography;       // 3×3 row-major, 9 values
-  final double reprojError;            // средняя ошибка репроекции в пикселях
-  final double eccScore;               // ECC correlation 0..1
-  final double confidence;             // итоговая уверенность 0..1
-  final String quality;                // "excellent" | "good" | "warning" | "fail"
+  final List<double> homography; // 3×3 row-major, 9 values
+  final double reprojError; // средняя ошибка репроекции в пикселях
+  final double eccScore; // ECC correlation 0..1
+  final double confidence; // итоговая уверенность 0..1
+  final String quality; // "excellent" | "good" | "warning" | "fail"
   final List<Offset> refinedSrcPoints; // уточнённые точки src (cornerSubPix)
 
   const AlignByAnchorsResult({
@@ -301,28 +351,34 @@ class AlignByAnchorsResult {
 
   String get qualityLabel {
     switch (quality) {
-      case 'excellent': return 'Отлично';
-      case 'good':      return 'Хорошо';
-      case 'warning':   return 'Слабо';
-      default:          return 'Ошибка';
+      case 'excellent':
+        return 'Отлично';
+      case 'good':
+        return 'Хорошо';
+      case 'warning':
+        return 'Слабо';
+      default:
+        return 'Ошибка';
     }
   }
 }
 
 class LabCompareResult {
-  final double score;           // итоговый балл 0–100 (только активные зоны)
-  final int activeZones;        // зон участвовало в счёте (не letterbox)
-  final int totalZones;         // всего зон L3 (всегда 729)
-  final List<double> level0;    //   1 зона: [ΔE]
-  final List<double> level1;    //   9 зон:  [ΔE × 9]
-  final List<double> level2;    //  81 зона: [ΔE × 81]
-  final List<double> level3;    // 729 зон:  [ΔE × 729]
-  final double shiftDL;         // глобальный сдвиг яркости L* (ref − cmp)
-  final double shiftDA;         // глобальный сдвиг a* (+ красный, − зелёный)
-  final double shiftDB;         // глобальный сдвиг b* (+ жёлтый, − синий)
-  final Uint8List refCanonical; // каноническое ref-изображение для наложения diff
-  final Uint8List? cmpCanonical; // каноническое cmp-изображение, та же система координат
-  final Uint8List diffL3;       // PNG карта L3 27×27 детали
+  final double score; // итоговый балл 0–100 (только активные зоны)
+  final int activeZones; // зон участвовало в счёте (не letterbox)
+  final int totalZones; // всего зон L3 (всегда 729)
+  final List<double> level0; //   1 зона: [ΔE]
+  final List<double> level1; //   9 зон:  [ΔE × 9]
+  final List<double> level2; //  81 зона: [ΔE × 81]
+  final List<double> level3; // 729 зон:  [ΔE × 729]
+  final double shiftDL; // глобальный сдвиг яркости L* (ref − cmp)
+  final double shiftDA; // глобальный сдвиг a* (+ красный, − зелёный)
+  final double shiftDB; // глобальный сдвиг b* (+ жёлтый, − синий)
+  final Uint8List
+      refCanonical; // каноническое ref-изображение для наложения diff
+  final Uint8List?
+      cmpCanonical; // каноническое cmp-изображение, та же система координат
+  final Uint8List diffL3; // PNG карта L3 27×27 детали
 
   const LabCompareResult({
     required this.score,
