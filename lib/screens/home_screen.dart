@@ -1,19 +1,14 @@
 import 'package:flutter/material.dart';
-import '../config/app_theme.dart';
 import '../widgets/xp_widgets.dart';
 
 class HomeScreen extends StatelessWidget {
   final String email;
-  final VoidCallback onOpenCompare;
-  final VoidCallback onOpenChat;
   final VoidCallback onOpenSettings;
   final VoidCallback onSignOut;
 
   const HomeScreen({
     super.key,
     required this.email,
-    required this.onOpenCompare,
-    required this.onOpenChat,
     required this.onOpenSettings,
     required this.onSignOut,
   });
@@ -22,11 +17,6 @@ class HomeScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(children: [
       XpMenuBar(icon: 'HM', menus: [
-        XpMenu(label: 'Навигация', items: [
-          XpMenuItem(label: 'Сравнение', icon: 'CP', onTap: onOpenCompare),
-          XpMenuItem(label: 'Чат', icon: 'CH', onTap: onOpenChat),
-          XpMenuItem(label: 'Настройки', icon: 'ST', onTap: onOpenSettings),
-        ]),
         XpMenu(label: 'Аккаунт', items: [
           XpMenuItem(
             label: 'Профиль',
@@ -34,295 +24,235 @@ class HomeScreen extends StatelessWidget {
             onTap: () => xpDlg(
               context,
               'Профиль',
-              'Email: ${email.isEmpty ? 'не указан' : email}\nНик и организация будут загружаться из профиля Supabase.',
+              'Email: ${email.isEmpty ? 'не указан' : email}\nПлан: Бесплатный',
             ),
           ),
+          XpMenuItem(
+            label: 'Изменить план',
+            icon: 'PL',
+            onTap: onOpenSettings,
+          ),
+          XpMenuItem.sep,
           XpMenuItem(label: 'Выйти', icon: 'EX', onTap: onSignOut),
         ]),
       ]),
       Expanded(
         child: Stack(children: [
-          const Positioned.fill(child: _HomeBackground()),
-          Positioned.fill(
-            child: LayoutBuilder(builder: (context, constraints) {
-              final wide = constraints.maxWidth >= 980;
-              return SingleChildScrollView(
-                padding: EdgeInsets.symmetric(
-                  horizontal: wide ? 28 : 14,
-                  vertical: 18,
+          const Positioned.fill(child: _HomePhotoBackground()),
+          LayoutBuilder(builder: (context, constraints) {
+            final wide = constraints.maxWidth >= 880;
+            return SingleChildScrollView(
+              padding: EdgeInsets.symmetric(
+                horizontal: wide ? 44 : 18,
+                vertical: wide ? 42 : 24,
+              ),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  minHeight: constraints.maxHeight - (wide ? 84 : 48),
                 ),
                 child: Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 1220),
-                    child: wide
-                        ? Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(flex: 5, child: _hero(context)),
-                              const SizedBox(width: 16),
-                              Expanded(
-                                flex: 4,
-                                child: Column(children: [
-                                  _accountPanel(context),
-                                  const SizedBox(height: 12),
-                                  _shopPanel(context),
-                                ]),
-                              ),
-                            ],
-                          )
-                        : Column(children: [
-                            _hero(context),
-                            const SizedBox(height: 12),
-                            _accountPanel(context),
-                            const SizedBox(height: 12),
-                            _shopPanel(context),
-                          ]),
-                  ),
+                  child: wide
+                      ? Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            _planPanel(context, width: 372),
+                            const SizedBox(width: 42),
+                            Expanded(child: _brandHero(wide: true)),
+                          ],
+                        )
+                      : Column(
+                          children: [
+                            _brandHero(wide: false),
+                            const SizedBox(height: 26),
+                            _planPanel(context, width: double.infinity),
+                          ],
+                        ),
                 ),
-              );
-            }),
-          ),
+              ),
+            );
+          }),
         ]),
       ),
-      XpStatusBar(left: 'Главная', right: 'Навигация · аккаунт · магазин'),
+      XpStatusBar(left: 'Главная', right: 'План: Бесплатный'),
     ]);
   }
 
-  Widget _hero(BuildContext context) {
-    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      Container(
-        padding: const EdgeInsets.fromLTRB(22, 22, 22, 18),
-        decoration: BoxDecoration(
-          color: const Color(0xDDF8FCFF),
-          borderRadius: BorderRadius.circular(22),
-          border: Border.all(color: const Color(0x88FFFFFF)),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x30000000),
-              blurRadius: 24,
-              offset: Offset(0, 14),
+  Widget _brandHero({required bool wide}) {
+    return Column(
+      crossAxisAlignment:
+          wide ? CrossAxisAlignment.start : CrossAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          width: wide ? 560 : 340,
+          child: const Text(
+            'Photo Compare',
+            textAlign: TextAlign.left,
+            style: TextStyle(
+              color: Color(0xFFF8FAFC),
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0,
+              shadows: [
+                Shadow(
+                  color: Color(0xAA000000),
+                  blurRadius: 16,
+                  offset: Offset(0, 4),
+                ),
+              ],
             ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        Text(
+          'Помогаем вам\nразличить важное',
+          textAlign: wide ? TextAlign.left : TextAlign.center,
+          style: TextStyle(
+            color: const Color(0xFFF8FAFC),
+            fontSize: wide ? 46 : 30,
+            height: 1.04,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 0,
+            shadows: const [
+              Shadow(
+                color: Color(0xCC000000),
+                blurRadius: 18,
+                offset: Offset(0, 5),
+              ),
+              Shadow(
+                color: Color(0x5538BDF8),
+                blurRadius: 20,
+                offset: Offset(-2, -1),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 18),
+        Container(
+          width: wide ? 540 : 330,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+          decoration: BoxDecoration(
+            color: const Color(0x66111827),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0x24FFFFFF)),
+          ),
+          child: Text(
+            'Просмотровый стол, спектрофотометр, лупа печатника и цветовые различия - в одном спокойном рабочем пространстве.',
+            textAlign: wide ? TextAlign.left : TextAlign.center,
+            style: const TextStyle(
+              color: Color(0xFFE2E8F0),
+              fontSize: 15,
+              height: 1.5,
+              letterSpacing: 0,
+              shadows: [
+                Shadow(
+                  color: Color(0x99000000),
+                  blurRadius: 10,
+                  offset: Offset(0, 2),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 18),
+        Wrap(
+          alignment: wide ? WrapAlignment.start : WrapAlignment.center,
+          spacing: 8,
+          runSpacing: 8,
+          children: const [
+            _SoftChip('RGB'),
+            _SoftChip('CMY'),
+            _SoftChip('Delta E'),
+            _SoftChip('Print inspection'),
           ],
         ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text(
-            'Photo Compare',
-            style: TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w900,
-              color: Color(0xFF0F3F5A),
-            ),
-          ),
-          const SizedBox(height: 7),
-          const Text(
-            'Помогаем вам различить важное',
-            style: TextStyle(
-              fontSize: 34,
-              fontWeight: FontWeight.w900,
-              height: 1.05,
-              color: Color(0xFF102A3A),
-            ),
-          ),
-          const SizedBox(height: 12),
-          const Text(
-            'Главная страница остается внутри программы: отсюда можно перейти к сравнению, открыть чат организации, управлять профилем и выбрать тариф.',
-            style: TextStyle(
-              fontSize: 14,
-              height: 1.45,
-              color: Color(0xFF334155),
-            ),
-          ),
-          const SizedBox(height: 16),
-          Wrap(spacing: 10, runSpacing: 10, children: [
-            _bigAction('Начать сравнение', onOpenCompare, primary: true),
-            _bigAction('Открыть чат', onOpenChat),
-            _bigAction('Настройки', onOpenSettings),
-          ]),
-        ]),
-      ),
-      const SizedBox(height: 12),
-      _siteNavPanel(),
-    ]);
+      ],
+    );
   }
 
-  Widget _siteNavPanel() {
-    final items = const [
-      ('Сравнение', 'Эталон, образец, карта Delta E, ЧБ-геометрия'),
-      ('Чат', 'Обсуждение проверки, удаленный просмотр картинок'),
-      ('Протокол', 'Последняя проверка, метрики, история'),
-      ('Магазин', 'Тарифы, AI, облако, API'),
-    ];
-    return _panel(
-      title: 'Навигация по сайту',
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: items.map((item) {
-          return Container(
-            width: 260,
+  Widget _planPanel(BuildContext context, {required double width}) {
+    return Container(
+      width: width,
+      margin: const EdgeInsets.symmetric(horizontal: 4),
+      decoration: BoxDecoration(
+        color: const Color(0xEEF8FAFC),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0x55FFFFFF)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x40000000),
+            blurRadius: 26,
+            offset: Offset(0, 18),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(18),
+        child:
+            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 18, 18, 12),
+            child: Row(children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: const [
+                    Text(
+                      'Рабочий профиль',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF111827),
+                        letterSpacing: 0,
+                      ),
+                    ),
+                    SizedBox(height: 3),
+                    Text(
+                      'Photo Compare workspace',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Color(0xFF64748B),
+                        letterSpacing: 0,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const _MiniPrismMark(),
+            ]),
+          ),
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 14),
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: Colors.white,
-              border: Border.all(color: const Color(0xFFC9E2F0)),
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: AppTheme.shadowSubtle,
+              border: Border.all(color: const Color(0xFFD6E7F0)),
+              borderRadius: BorderRadius.circular(14),
             ),
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(
-                item.$1,
-                style:
-                    const TextStyle(fontSize: 13, fontWeight: FontWeight.w900),
-              ),
-              const SizedBox(height: 5),
-              Text(
-                item.$2,
-                style: const TextStyle(
-                  fontSize: 10,
-                  height: 1.35,
-                  color: Colors.black54,
+              _profileRow('Email', email.isEmpty ? 'не указан' : email),
+              _profileRow('План', 'Бесплатный'),
+              _profileRow('Лимит', '10 проверок в день'),
+              _profileRow('Облако', 'протоколы и превью позже'),
+            ]),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+            child: Row(children: [
+              Expanded(
+                child: XpBtn(
+                  label: 'Изменить план',
+                  primary: true,
+                  onPressed: onOpenSettings,
                 ),
               ),
+              const SizedBox(width: 8),
+              Expanded(child: XpBtn(label: 'Выйти', onPressed: onSignOut)),
             ]),
-          );
-        }).toList(),
-      ),
-    );
-  }
-
-  Widget _accountPanel(BuildContext context) {
-    return _panel(
-      title: 'Регистрация и профиль',
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        _profileRow('Email', email.isEmpty ? 'не указан' : email),
-        _profileRow('Ник', 'будет храниться в профиле'),
-        _profileRow('Организация', 'группа для чата и проверок'),
-        const SizedBox(height: 10),
-        Row(children: [
-          Expanded(
-            child: XpBtn(
-              label: 'Профиль',
-              primary: true,
-              onPressed: () => xpDlg(
-                context,
-                'Профиль',
-                'Здесь позже будет редактирование ника, организации и прав доступа.',
-              ),
-            ),
           ),
-          const SizedBox(width: 8),
-          Expanded(child: XpBtn(label: 'Выйти', onPressed: onSignOut)),
         ]),
-      ]),
-    );
-  }
-
-  Widget _shopPanel(BuildContext context) {
-    final offers = const [
-      _Offer('Бесплатный', '10 проверок в день', 'Активен', true),
-      _Offer('Pro', 'AI-анализ, облако, отчеты', '€9.99/мес', false),
-      _Offer('AI анализ', '50 заключений в месяц', '€4.99/мес', false),
-      _Offer('API', 'интеграция с сайтом', '€19.99/мес', false),
-      _Offer('Пакет 100', 'разовые проверки', '€2.99', false),
-    ];
-    return _panel(
-      title: 'Магазин',
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        const Text(
-          'Пока это компактный витринный блок. Потом сюда подключим оплату, лимиты и историю покупок.',
-          style: TextStyle(fontSize: 11, height: 1.35, color: Colors.black54),
-        ),
-        const SizedBox(height: 10),
-        ...offers.map((offer) => _offerTile(context, offer)),
-      ]),
-    );
-  }
-
-  Widget _offerTile(BuildContext context, _Offer offer) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: offer.active ? const Color(0xFFE8FFE8) : Colors.white,
-        border: Border.all(
-          color: offer.active ? AppTheme.simHigh : const Color(0xFFC9E2F0),
-        ),
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: AppTheme.shadowSubtle,
       ),
-      child: Row(children: [
-        Expanded(
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(
-              offer.name,
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900),
-            ),
-            const SizedBox(height: 3),
-            Text(
-              offer.desc,
-              style: const TextStyle(fontSize: 10, color: Colors.black54),
-            ),
-          ]),
-        ),
-        const SizedBox(width: 8),
-        Text(
-          offer.price,
-          style: TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.w900,
-            color: offer.active ? AppTheme.simHigh : AppTheme.blue,
-          ),
-        ),
-        if (!offer.active) ...[
-          const SizedBox(width: 8),
-          XpBtn(
-            label: 'Выбрать',
-            onPressed: () => xpDlg(
-              context,
-              offer.name,
-              '${offer.desc}\nЦена: ${offer.price}',
-            ),
-          ),
-        ],
-      ]),
-    );
-  }
-
-  Widget _panel({required String title, required Widget child}) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: const Color(0xEEF8FCFF),
-        border: Border.all(color: const Color(0x88FFFFFF)),
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x26000000),
-            blurRadius: 18,
-            offset: Offset(0, 10),
-          ),
-        ],
-      ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Text(
-          title,
-          style: const TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.w900,
-            color: Color(0xFF0F3F5A),
-          ),
-        ),
-        const SizedBox(height: 10),
-        child,
-      ]),
-    );
-  }
-
-  Widget _bigAction(String label, VoidCallback onTap, {bool primary = false}) {
-    return SizedBox(
-      width: 178,
-      child: XpBtn(label: label, primary: primary, onPressed: onTap),
     );
   }
 
@@ -331,7 +261,7 @@ class HomeScreen extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 7),
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         SizedBox(
-          width: 92,
+          width: 74,
           child: Text(
             label,
             style: const TextStyle(fontSize: 10, color: Colors.black54),
@@ -348,8 +278,8 @@ class HomeScreen extends StatelessWidget {
   }
 }
 
-class _HomeBackground extends StatelessWidget {
-  const _HomeBackground();
+class _HomePhotoBackground extends StatelessWidget {
+  const _HomePhotoBackground();
 
   @override
   Widget build(BuildContext context) {
@@ -365,13 +295,30 @@ class _HomeBackground extends StatelessWidget {
         child: DecoratedBox(
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
               colors: const [
-                Color(0xBFEAF6FC),
-                Color(0xDDF4FAFD),
-                Color(0xEEF8FCFF),
+                Color(0xE60B111D),
+                Color(0x9D111827),
+                Color(0x33111827),
               ],
+              stops: const [0.0, 0.48, 1.0],
+            ),
+          ),
+        ),
+      ),
+      Positioned.fill(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: RadialGradient(
+              center: const Alignment(0.32, 0.10),
+              radius: 1.15,
+              colors: const [
+                Color(0x00111827),
+                Color(0x77111827),
+                Color(0xC90B111D),
+              ],
+              stops: const [0.0, 0.58, 1.0],
             ),
           ),
         ),
@@ -380,11 +327,103 @@ class _HomeBackground extends StatelessWidget {
   }
 }
 
-class _Offer {
-  final String name;
-  final String desc;
-  final String price;
-  final bool active;
+class _SoftChip extends StatelessWidget {
+  final String text;
+  const _SoftChip(this.text);
 
-  const _Offer(this.name, this.desc, this.price, this.active);
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+      decoration: BoxDecoration(
+        color: const Color(0x40FFFFFF),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: const Color(0x40FFFFFF)),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(
+          color: Color(0xFFF8FAFC),
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0,
+        ),
+      ),
+    );
+  }
+}
+
+class _MiniPrismMark extends StatelessWidget {
+  const _MiniPrismMark();
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 46,
+      height: 38,
+      child: CustomPaint(painter: _MiniPrismPainter()),
+    );
+  }
+}
+
+class _MiniPrismPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final prism = Path()
+      ..moveTo(size.width * 0.50, size.height * 0.10)
+      ..lineTo(size.width * 0.16, size.height * 0.86)
+      ..lineTo(size.width * 0.88, size.height * 0.78)
+      ..close();
+    canvas.drawPath(
+      prism,
+      Paint()
+        ..shader = const LinearGradient(
+          colors: [Color(0xDDF8FAFC), Color(0x9967E8F9)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ).createShader(Offset.zero & size),
+    );
+    canvas.drawPath(
+      prism,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.1
+        ..color = const Color(0xFF0F172A).withOpacity(0.28),
+    );
+    final colors = [
+      const Color(0xFFE11D48),
+      const Color(0xFF22C55E),
+      const Color(0xFF2563EB),
+    ];
+    for (var i = 0; i < colors.length; i++) {
+      final y = size.height * (0.28 + i * 0.14);
+      canvas.drawLine(
+        Offset(0, y),
+        Offset(size.width * 0.48, y + size.height * 0.08),
+        Paint()
+          ..color = colors[i].withOpacity(0.85)
+          ..strokeWidth = 2.0
+          ..strokeCap = StrokeCap.round,
+      );
+    }
+    final out = [
+      const Color(0xFFFACC15),
+      const Color(0xFFEC4899),
+      const Color(0xFF06B6D4),
+    ];
+    for (var i = 0; i < out.length; i++) {
+      final y = size.height * (0.34 + i * 0.13);
+      canvas.drawLine(
+        Offset(size.width * 0.62, y),
+        Offset(size.width, y - size.height * (0.11 - i * 0.03)),
+        Paint()
+          ..color = out[i].withOpacity(0.9)
+          ..strokeWidth = 2.0
+          ..strokeCap = StrokeCap.round,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

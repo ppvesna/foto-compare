@@ -106,8 +106,6 @@ class _MainShellState extends State<MainShell> {
     final screens = [
       HomeScreen(
         email: email,
-        onOpenCompare: () => _onTab(1),
-        onOpenChat: () => _onTab(2),
         onOpenSettings: () => _onTab(3),
         onSignOut: _signOut,
       ),
