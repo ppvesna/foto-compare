@@ -1360,6 +1360,21 @@ class _CompareScreenState extends State<CompareScreen>
     final stepWidth = width >= 1200 ? 170.0 : 140.0;
     final inspectorWidth = width >= 1200 ? 320.0 : 280.0;
 
+    if (_calStep != 0) {
+      return Container(
+        color: const Color(0xFFC9CDD3),
+        child: Scrollbar(
+          controller: _workspaceScrollCtrl,
+          thumbVisibility: true,
+          child: SingleChildScrollView(
+            controller: _workspaceScrollCtrl,
+            padding: const EdgeInsets.all(10),
+            child: _workspaceColumn(),
+          ),
+        ),
+      );
+    }
+
     return Container(
       color: const Color(0xFFC9CDD3),
       child: Row(
@@ -1384,6 +1399,21 @@ class _CompareScreenState extends State<CompareScreen>
   }
 
   Widget _mobileWorkbench() {
+    if (_calStep != 0) {
+      return Container(
+        color: const Color(0xFFC9CDD3),
+        child: Scrollbar(
+          controller: _workspaceScrollCtrl,
+          thumbVisibility: true,
+          child: SingleChildScrollView(
+            controller: _workspaceScrollCtrl,
+            padding: const EdgeInsets.all(10),
+            child: _workspaceColumn(),
+          ),
+        ),
+      );
+    }
+
     return Container(
       color: const Color(0xFFC9CDD3),
       child: Scrollbar(
@@ -1546,8 +1576,6 @@ class _CompareScreenState extends State<CompareScreen>
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _calibrationWorkbench(),
-          const SizedBox(height: 10),
-          _comparisonStage(),
         ],
       );
     }
@@ -2177,41 +2205,46 @@ class _CompareScreenState extends State<CompareScreen>
             Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           _calibrationBanner(message),
           const SizedBox(height: 8),
+          _calibrationControls(),
+          const SizedBox(height: 8),
           LayoutBuilder(builder: (_, constraints) {
             final panelWidth = constraints.maxWidth;
-            final refPanel = _calibrationPointPanel(
-              label: _calStep == 1 ? 'Эталон - ставьте точки' : 'Эталон',
+            final viewportHeight = MediaQuery.sizeOf(context).height;
+            final panelHeight = (viewportHeight - 245).clamp(460.0, 980.0);
+            if (_calStep == 2) {
+              return _calibrationPointPanel(
+                label: 'Образец - ставьте точки',
+                bytes: _cmpImg!,
+                imgSize: _cmpImgSize,
+                anchorPts: _cmpAnchorPts,
+                ctrl: _cmpAlignCtrl,
+                availableWidth: panelWidth,
+                panelHeightOverride: panelHeight,
+                placing: true,
+                tempPts: _tempCmpPts,
+                onTap: _addPanelPoint,
+                onUndo: _undoLastPoint,
+                minPts:
+                    _tempRefPts.isEmpty ? _minAnchorPts : _tempRefPts.length,
+              );
+            }
+            if (_calStep == 3) {
+              return const SizedBox.shrink();
+            }
+            return _calibrationPointPanel(
+              label: 'Эталон - ставьте точки',
               bytes: _refImg!,
               imgSize: _refImgSize,
               anchorPts: _refAnchorPts,
               ctrl: _refAlignCtrl,
               availableWidth: panelWidth,
-              placing: _calStep == 1,
+              panelHeightOverride: panelHeight,
+              placing: true,
               tempPts: _tempRefPts,
-              onTap: _calStep == 1 ? _addPanelPoint : null,
-              onUndo: _calStep == 1 ? _undoLastPoint : null,
+              onTap: _addPanelPoint,
+              onUndo: _undoLastPoint,
               minPts: _minAnchorPts,
             );
-            final cmpPanel = _calibrationPointPanel(
-              label: _calStep == 2 ? 'Образец - ставьте точки' : 'Образец',
-              bytes: _cmpImg!,
-              imgSize: _cmpImgSize,
-              anchorPts: _cmpAnchorPts,
-              ctrl: _cmpAlignCtrl,
-              availableWidth: panelWidth,
-              placing: _calStep == 2,
-              tempPts: _tempCmpPts,
-              onTap: _calStep == 2 ? _addPanelPoint : null,
-              onUndo: _calStep == 2 ? _undoLastPoint : null,
-              minPts: _tempRefPts.isEmpty ? _minAnchorPts : _tempRefPts.length,
-            );
-            return Column(children: [
-              refPanel,
-              const SizedBox(height: 8),
-              _calibrationControls(),
-              const SizedBox(height: 8),
-              cmpPanel,
-            ]);
           }),
         ]),
       ),
@@ -2341,6 +2374,7 @@ class _CompareScreenState extends State<CompareScreen>
     required List<Offset>? anchorPts,
     required TransformationController ctrl,
     required double availableWidth,
+    double? panelHeightOverride,
     bool placing = false,
     List<Offset> tempPts = const [],
     void Function(Offset)? onTap,
@@ -2348,7 +2382,8 @@ class _CompareScreenState extends State<CompareScreen>
     int minPts = 4,
   }) {
     final imageSize = imgSize;
-    final panelHeight = (availableWidth * 9 / 16).clamp(280.0, 520.0);
+    final panelHeight =
+        panelHeightOverride ?? (availableWidth * 9 / 16).clamp(280.0, 520.0);
 
     Rect imageRect(Size boxSize) {
       if (imageSize == null || imageSize.width <= 0 || imageSize.height <= 0) {
