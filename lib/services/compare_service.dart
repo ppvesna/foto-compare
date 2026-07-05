@@ -19,6 +19,7 @@ const int _defectZoneSize = 64;
 const double _minorDeltaE = 3.0;
 const double _strongDeltaE = 6.0;
 const double _criticalDeltaE = 12.0;
+const int _edgeToleranceRadius = 1;
 
 double _pivotRgb(num v) {
   final c = v / 255.0;
@@ -57,6 +58,8 @@ double _deltaE76(img.Pixel ref, img.Pixel cmp) {
 
 _TileCompareData _compareTiles(img.Image r, img.Image c) {
   final residualShift = _estimateResidualShift(r, c);
+  final refEdges = _edgeMask(r);
+  final cmpEdges = _edgeMask(c);
   final w = r.width;
   final h = r.height;
   final zoneCols = (w + _defectZoneSize - 1) ~/ _defectZoneSize;
@@ -85,7 +88,21 @@ _TileCompareData _compareTiles(img.Image r, img.Image c) {
             out.setPixelRgba(x, y, 0, 0, 0, 0);
             continue;
           }
-          final deltaE = _deltaE76(pr, pc);
+          var deltaE = _deltaE76(pr, pc);
+          if (deltaE >= _minorDeltaE &&
+              (_isEdgeNear(refEdges, w, h, x, y, _edgeToleranceRadius) ||
+                  _isEdgeNear(cmpEdges, w, h, cx, cy, _edgeToleranceRadius))) {
+            deltaE = math.min(
+              deltaE,
+              _minLocalDeltaE(
+                pr,
+                c,
+                cx,
+                cy,
+                _edgeToleranceRadius,
+              ),
+            );
+          }
           diff += deltaE;
           if (deltaE > maxDeltaE) maxDeltaE = deltaE;
           validPx++;
@@ -220,6 +237,49 @@ Uint8List _edgeMask(img.Image source) {
     }
   }
   return mask;
+}
+
+bool _isEdgeNear(
+  Uint8List mask,
+  int width,
+  int height,
+  int cx,
+  int cy,
+  int radius,
+) {
+  for (int y = math.max(1, cy - radius);
+      y <= math.min(height - 2, cy + radius);
+      y++) {
+    for (int x = math.max(1, cx - radius);
+        x <= math.min(width - 2, cx + radius);
+        x++) {
+      if (mask[y * width + x] == 1) return true;
+    }
+  }
+  return false;
+}
+
+double _minLocalDeltaE(
+  img.Pixel ref,
+  img.Image cmp,
+  int cx,
+  int cy,
+  int radius,
+) {
+  var best = double.infinity;
+  for (int y = math.max(0, cy - radius);
+      y <= math.min(cmp.height - 1, cy + radius);
+      y++) {
+    for (int x = math.max(0, cx - radius);
+        x <= math.min(cmp.width - 1, cx + radius);
+        x++) {
+      final p = cmp.getPixel(x, y);
+      if (_noData(p)) continue;
+      best = math.min(best, _deltaE76(ref, p));
+    }
+  }
+  if (best.isFinite) return best;
+  return _deltaE76(ref, cmp.getPixel(cx, cy));
 }
 
 ({int x, int y}) _estimateResidualShift(img.Image r, img.Image c) {
