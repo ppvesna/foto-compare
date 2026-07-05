@@ -5,11 +5,16 @@ import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
 
 class AnchorRefinementService {
-  static Future<Offset> refine(Uint8List bytes, Offset roughPoint) async {
+  static Future<Offset> refine(
+    Uint8List bytes,
+    Offset roughPoint, {
+    double maxShift = 7.0,
+  }) async {
     final result = await compute(_refineAnchorPoint, {
       'bytes': bytes,
       'x': roughPoint.dx,
       'y': roughPoint.dy,
+      'maxShift': maxShift,
     });
     if (result == null) return roughPoint;
     return Offset(result['x']!, result['y']!);
@@ -39,7 +44,7 @@ Map<String, double>? _refineAnchorPoint(Map<String, dynamic> args) {
     original.y,
     center.x,
     center.y,
-    maxShift: 7.0,
+    maxShift: (args['maxShift'] as num?)?.toDouble() ?? 7.0,
   );
 
   return {'x': center.x, 'y': center.y};

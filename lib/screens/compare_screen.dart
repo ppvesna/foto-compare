@@ -247,8 +247,24 @@ class _CompareScreenState extends State<CompareScreen>
             : null;
     if (bytes == null) return;
 
+    final imageSize = step == 1 ? _refImgSize : _cmpImgSize;
+    final resolvedSize = imageSize ?? await _readImageSize(bytes);
+    if (!mounted || _calStep != step) return;
+    final precise = await _showAnchorLoupe(
+      bytes: bytes,
+      imageSize: resolvedSize,
+      roughPoint: imgCoord,
+      pointIndex: step == 1 ? _tempRefPts.length + 1 : _tempCmpPts.length + 1,
+      title: step == 1 ? 'Точка на эталоне' : 'Точка на образце',
+    );
+    if (precise == null || !mounted || _calStep != step) return;
+
     setState(() => _anchorRefining = true);
-    final refined = await AnchorRefinementService.refine(bytes, imgCoord);
+    final refined = await AnchorRefinementService.refine(
+      bytes,
+      precise,
+      maxShift: 2.0,
+    );
     if (!mounted) return;
     setState(() {
       _anchorRefining = false;
@@ -259,6 +275,26 @@ class _CompareScreenState extends State<CompareScreen>
         _tempCmpPts = [..._tempCmpPts, refined];
       }
     });
+  }
+
+  Future<Offset?> _showAnchorLoupe({
+    required Uint8List bytes,
+    required Size imageSize,
+    required Offset roughPoint,
+    required int pointIndex,
+    required String title,
+  }) {
+    return showDialog<Offset>(
+      context: context,
+      barrierDismissible: true,
+      builder: (_) => _AnchorLoupeDialog(
+        bytes: bytes,
+        imageSize: imageSize,
+        roughPoint: roughPoint,
+        pointIndex: pointIndex,
+        title: title,
+      ),
+    );
   }
 
   void _undoLastPoint() {
@@ -2547,7 +2583,7 @@ class _CompareScreenState extends State<CompareScreen>
               placing
                   ? _anchorRefining
                       ? 'Ищу ближайший ч/б контраст рядом с кликом...'
-                      : 'Клик - точка с мягким магнитом к ч/б контрасту. Ctrl+скролл/драг - зум и сдвиг.'
+                      : 'Клик - открыть лупу. В лупе поставьте точную точку. Ctrl+скролл/драг - зум и сдвиг.'
                   : 'Ctrl+скролл/драг - зум и перемещение.',
               style: const TextStyle(fontSize: 10, color: Colors.black54),
             ),
@@ -6045,6 +6081,263 @@ class _ImageBoundsPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _ImageBoundsPainter oldDelegate) {
     return oldDelegate.rect != rect;
+  }
+}
+
+class _AnchorLoupeDialog extends StatefulWidget {
+  final Uint8List bytes;
+  final Size imageSize;
+  final Offset roughPoint;
+  final int pointIndex;
+  final String title;
+
+  const _AnchorLoupeDialog({
+    required this.bytes,
+    required this.imageSize,
+    required this.roughPoint,
+    required this.pointIndex,
+    required this.title,
+  });
+
+  @override
+  State<_AnchorLoupeDialog> createState() => _AnchorLoupeDialogState();
+}
+
+class _AnchorLoupeDialogState extends State<_AnchorLoupeDialog> {
+  ui.Image? _image;
+  late Offset _center;
+  double _zoom = 8.0;
+
+  @override
+  void initState() {
+    super.initState();
+    _center = _clampPoint(widget.roughPoint);
+    _decode();
+  }
+
+  Future<void> _decode() async {
+    final codec = await ui.instantiateImageCodec(widget.bytes);
+    final frame = await codec.getNextFrame();
+    if (mounted) setState(() => _image = frame.image);
+  }
+
+  Offset _clampPoint(Offset p) {
+    return Offset(
+      p.dx.clamp(0.0, widget.imageSize.width - 1.0),
+      p.dy.clamp(0.0, widget.imageSize.height - 1.0),
+    );
+  }
+
+  Rect _sourceRect(double side) {
+    final imageW = widget.imageSize.width;
+    final imageH = widget.imageSize.height;
+    final sourceSide =
+        (side / _zoom).clamp(18.0, min(imageW, imageH)).toDouble();
+    var left = _center.dx - sourceSide / 2;
+    var top = _center.dy - sourceSide / 2;
+    left = left.clamp(0.0, max(0.0, imageW - sourceSide));
+    top = top.clamp(0.0, max(0.0, imageH - sourceSide));
+    return Rect.fromLTWH(left, top, sourceSide, sourceSide);
+  }
+
+  Offset _localToImage(Offset local, double side, Rect source) {
+    return _clampPoint(
+      Offset(
+        source.left + local.dx / side * source.width,
+        source.top + local.dy / side * source.height,
+      ),
+    );
+  }
+
+  void _pan(DragUpdateDetails details, double side, Rect source) {
+    final dx = details.delta.dx / side * source.width;
+    final dy = details.delta.dy / side * source.height;
+    setState(() => _center = _clampPoint(_center.translate(-dx, -dy)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final image = _image;
+    return Dialog(
+      insetPadding: const EdgeInsets.all(14),
+      backgroundColor: const Color(0xFF111419),
+      child: LayoutBuilder(builder: (context, constraints) {
+        final availableW = MediaQuery.sizeOf(context).width - 44;
+        final availableH = MediaQuery.sizeOf(context).height - 170;
+        final side = min(availableW, availableH).clamp(300.0, 680.0);
+        final source = _sourceRect(side);
+        return Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Row(children: [
+              Expanded(
+                child: Text(
+                  '${widget.title} #${widget.pointIndex}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              Text(
+                'x ${_center.dx.toStringAsFixed(1)}  y ${_center.dy.toStringAsFixed(1)}',
+                style: const TextStyle(color: Colors.white70, fontSize: 11),
+              ),
+            ]),
+            const SizedBox(height: 8),
+            GestureDetector(
+              onTapDown: image == null
+                  ? null
+                  : (details) {
+                      final p =
+                          _localToImage(details.localPosition, side, source);
+                      Navigator.pop(context, p);
+                    },
+              onPanUpdate: image == null
+                  ? null
+                  : (details) => _pan(details, side, source),
+              child: Container(
+                width: side,
+                height: side,
+                color: Colors.black,
+                child: image == null
+                    ? const Center(
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : CustomPaint(
+                        painter: _AnchorLoupePainter(
+                          image: image,
+                          source: source,
+                          roughPoint: widget.roughPoint,
+                        ),
+                      ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(children: [
+              _LoupeZoomBtn(
+                label: '4x',
+                selected: _zoom == 4.0,
+                onTap: () => setState(() => _zoom = 4.0),
+              ),
+              const SizedBox(width: 6),
+              _LoupeZoomBtn(
+                label: '8x',
+                selected: _zoom == 8.0,
+                onTap: () => setState(() => _zoom = 8.0),
+              ),
+              const SizedBox(width: 6),
+              _LoupeZoomBtn(
+                label: '12x',
+                selected: _zoom == 12.0,
+                onTap: () => setState(() => _zoom = 12.0),
+              ),
+              const Spacer(),
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Отмена'),
+              ),
+            ]),
+            const Text(
+              'Клик в лупе ставит точку. Драг сдвигает фрагмент.',
+              style: TextStyle(color: Colors.white60, fontSize: 11),
+            ),
+          ]),
+        );
+      }),
+    );
+  }
+}
+
+class _LoupeZoomBtn extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _LoupeZoomBtn({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton(
+      onPressed: onTap,
+      style: OutlinedButton.styleFrom(
+        foregroundColor: selected ? Colors.black : Colors.white,
+        backgroundColor: selected ? Colors.white : Colors.transparent,
+        side: BorderSide(color: selected ? Colors.white : Colors.white38),
+        minimumSize: const Size(48, 34),
+      ),
+      child: Text(label),
+    );
+  }
+}
+
+class _AnchorLoupePainter extends CustomPainter {
+  final ui.Image image;
+  final Rect source;
+  final Offset roughPoint;
+
+  const _AnchorLoupePainter({
+    required this.image,
+    required this.source,
+    required this.roughPoint,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final dest = Offset.zero & size;
+    final paint = Paint()..filterQuality = FilterQuality.none;
+    canvas.drawImageRect(image, source, dest, paint);
+
+    final gridPaint = Paint()
+      ..color = Colors.white.withOpacity(0.14)
+      ..strokeWidth = 1;
+    if (source.width <= 120) {
+      final startX = source.left.ceil();
+      final endX = source.right.floor();
+      for (var x = startX; x <= endX; x += 5) {
+        final dx = (x - source.left) / source.width * size.width;
+        canvas.drawLine(Offset(dx, 0), Offset(dx, size.height), gridPaint);
+      }
+      final startY = source.top.ceil();
+      final endY = source.bottom.floor();
+      for (var y = startY; y <= endY; y += 5) {
+        final dy = (y - source.top) / source.height * size.height;
+        canvas.drawLine(Offset(0, dy), Offset(size.width, dy), gridPaint);
+      }
+    }
+
+    final centerPaint = Paint()
+      ..color = Colors.cyanAccent
+      ..strokeWidth = 1.4;
+    final center = Offset(size.width / 2, size.height / 2);
+    canvas.drawLine(
+        center.translate(-18, 0), center.translate(18, 0), centerPaint);
+    canvas.drawLine(
+        center.translate(0, -18), center.translate(0, 18), centerPaint);
+
+    if (source.contains(roughPoint)) {
+      final rough = Offset(
+        (roughPoint.dx - source.left) / source.width * size.width,
+        (roughPoint.dy - source.top) / source.height * size.height,
+      );
+      final roughPaint = Paint()
+        ..color = Colors.amber
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2;
+      canvas.drawCircle(rough, 9, roughPaint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _AnchorLoupePainter oldDelegate) {
+    return oldDelegate.image != image ||
+        oldDelegate.source != source ||
+        oldDelegate.roughPoint != roughPoint;
   }
 }
 
