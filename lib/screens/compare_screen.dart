@@ -508,18 +508,12 @@ class _CompareScreenState extends State<CompareScreen>
       createdAt: _layoutProfile?.createdAt ?? DateTime.now(),
     );
     await LayoutProfileStorage.save(profile);
-    final savedRef = await ReferenceStorage.saveProfile(
-      bytes: _refImg!,
-      label: name,
-      layoutProfile: profile,
-    );
     await _loadProfiles();
-    await _refreshSavedReferences();
     if (!mounted) return false;
     setState(() {
       _layoutProfile = profile;
-      _savedRefLabel = savedRef.label;
-      _activeReferenceId = savedRef.id;
+      _savedRefLabel = name;
+      _activeReferenceId = profile.id;
       _refAnchorPts = List<Offset>.from(refPts);
       _refImgSize = refSize;
     });
