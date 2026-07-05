@@ -315,6 +315,12 @@ class _CompareScreenState extends State<CompareScreen>
       _tempCmpPts = [];
       _refImgSize = refSize;
       _cmpImgSize = cmpSize;
+      _cmpAligned = null;
+      _cmpAnchorPts = null;
+      _result = null;
+      _pointProbe = null;
+      _compareStatus = null;
+      _compareSteps.clear();
       _refAlignCtrl.value = Matrix4.identity();
       _cmpAlignCtrl.value = Matrix4.identity();
       if (storedRefPts != null) _refAnchorPts = storedRefPts;
@@ -407,13 +413,76 @@ class _CompareScreenState extends State<CompareScreen>
     });
   }
 
-  // Шаг 1 → 2 (переключаем на образец)
-  void _advanceToStep2() {
+  // Шаг 1 → сохраняем эталон с точками → 2 (переключаем на образец)
+  Future<void> _advanceToStep2() async {
     if (_tempRefPts.length < _minAnchorPts) return;
+    final saved = await _saveReferenceAnchorsFromPoints(_tempRefPts);
+    if (!saved || !mounted) return;
     setState(() {
       _calStep = 2;
       _tempCmpPts = [];
+      _cmpAligned = null;
+      _cmpAnchorPts = null;
+      _result = null;
+      _pointProbe = null;
+      _compareStatus = null;
+      _compareSteps.clear();
     });
+  }
+
+  Future<bool> _saveReferenceAnchorsFromPoints(List<Offset> refPts) async {
+    if (_refImg == null || refPts.length < _minAnchorPts) return false;
+    final refSize = _refImgSize ?? await _readImageSize(_refImg!);
+    if (!mounted) return false;
+    final name = _savedRefLabel ?? await _promptProfileName();
+    if (name == null || !mounted) return false;
+    final refW = refSize.width;
+    final refH = refSize.height;
+    final refAnchors = refPts
+        .asMap()
+        .entries
+        .map(
+          (e) => AnchorPoint(
+            id: _anchorId(e.key, refPts.length),
+            x: e.value.dx / refW,
+            y: e.value.dy / refH,
+            type: 'corner',
+            confidence: 1.0,
+          ),
+        )
+        .toList();
+    final profile = LayoutProfile(
+      id: _activeReferenceId ??
+          _layoutProfile?.id ??
+          DateTime.now().millisecondsSinceEpoch.toString(),
+      name: name,
+      refAnchors: refAnchors,
+      homography: const [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+      cropRegion: CropRegion.defaultCrop,
+      widthMm: AppConfig.printWidthMm,
+      heightMm: AppConfig.printHeightMm,
+      refImageWidth: refSize.width.round(),
+      refImageHeight: refSize.height.round(),
+      alignment: null,
+      createdAt: _layoutProfile?.createdAt ?? DateTime.now(),
+    );
+    await LayoutProfileStorage.save(profile);
+    final savedRef = await ReferenceStorage.saveProfile(
+      bytes: _refImg!,
+      label: name,
+      layoutProfile: profile,
+    );
+    await _loadProfiles();
+    await _refreshSavedReferences();
+    if (!mounted) return false;
+    setState(() {
+      _layoutProfile = profile;
+      _savedRefLabel = savedRef.label;
+      _activeReferenceId = savedRef.id;
+      _refAnchorPts = List<Offset>.from(refPts);
+      _refImgSize = refSize;
+    });
+    return true;
   }
 
   // Шаг 2 → расчёт
@@ -469,7 +538,7 @@ class _CompareScreenState extends State<CompareScreen>
         return;
       }
 
-      final name = await _promptProfileName();
+      final name = _savedRefLabel ?? await _promptProfileName();
       if (name == null || !mounted) {
         setState(() {
           _calStep = 0;
@@ -497,7 +566,9 @@ class _CompareScreenState extends State<CompareScreen>
           .toList();
 
       final profile = LayoutProfile(
-        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        id: _activeReferenceId ??
+            _layoutProfile?.id ??
+            DateTime.now().millisecondsSinceEpoch.toString(),
         name: name,
         refAnchors: refAnchors,
         homography: alignResult.homography,
@@ -511,7 +582,7 @@ class _CompareScreenState extends State<CompareScreen>
           eccScore: alignResult.eccScore,
           confidence: alignResult.confidence,
         ),
-        createdAt: DateTime.now(),
+        createdAt: _layoutProfile?.createdAt ?? DateTime.now(),
       );
       await LayoutProfileStorage.save(profile);
       await _loadProfiles();
@@ -902,7 +973,6 @@ class _CompareScreenState extends State<CompareScreen>
         _cmpImg = fused;
         _cmpImgSize = sz;
         _cmpAligned = null;
-        _layoutProfile = null;
         _cmpAnchorPts = null;
         _cmp2Img = null;
         _cmp2Ctrl.value = Matrix4.identity();
@@ -983,11 +1053,27 @@ class _CompareScreenState extends State<CompareScreen>
     });
   }
 
+  bool get _canRunAlignedCompare =>
+      _refImg != null &&
+      _cmpImg != null &&
+      _layoutProfile != null &&
+      _cmpAligned != null &&
+      _calStep == 0 &&
+      !_calibrating;
+
   Future<void> _runCompare() async {
     final ref = _refAligned ?? _refImg;
     final cmp = _cmpAligned ?? _cmpImg;
     if (ref == null || cmp == null) {
       xpDlg(context, 'Ошибка', 'Загрузите оба изображения');
+      return;
+    }
+    if (!_canRunAlignedCompare) {
+      xpDlg(
+        context,
+        'Нужен этап «Рассчитать»',
+        'Сначала выберите эталон, поставьте точки на образце и нажмите «Рассчитать». После этого можно запускать сравнение.',
+      );
       return;
     }
     setState(() {
@@ -1011,21 +1097,19 @@ class _CompareScreenState extends State<CompareScreen>
     });
     _resultCmpCtrl.value = Matrix4.identity();
     try {
-      _setCompareStatus('Проверяю цветовую карту и геометрию по тайлам...');
+      _setCompareStatus(
+        'Этап 1/5: проверяю ч/б геометрию и базовую карту отличий...',
+      );
       final compareResult = await CompareService.compare(ref, cmp);
       if (!mounted) return;
       setState(() {
         _result = compareResult;
-        _compareStatus =
-            'Цветовая карта и геометрия готовы. Проверяю цветовой сдвиг...';
-        _compareSteps.add(_geometryStatusLine(compareResult));
-        _compareSteps.add(
-          'Цветовая карта и геометрия готовы. Проверяю цветовой сдвиг...',
-        );
       });
+      _setCompareStatus(_geometryStatusLine(compareResult));
       _tabs.animateTo(3);
 
       // Lab-пирамида — точнее MAE, обновляем результат если OpenCV доступен.
+      _setCompareStatus('Этап 2/5: рассчитываю цветовую карту Delta E...');
       final lab = await OpenCvService.compareImages(ref, cmp);
       if (lab != null && mounted && _result != null) {
         final r = _result!;
@@ -1064,9 +1148,16 @@ class _CompareScreenState extends State<CompareScreen>
             geometryCmpCanonical: r.geometryCmpCanonical,
           ),
         );
+        _setCompareStatus(
+          'Delta E рассчитана: max ${_fmt(_maxOf(lab.level3))}, среднее ${_fmt(_meanOf(lab.level3))}.',
+        );
+      } else {
+        _setCompareStatus(
+          'Delta E: используется базовая карта отличий без OpenCV Lab-пирамиды.',
+        );
       }
 
-      _setCompareStatus('Проверяю штрихкоды...');
+      _setCompareStatus('Этап 3/5: проверяю штрихкоды и QR...');
       final barcodeResults = await Future.wait([
         BarcodeService.scanImage(
           ref,
@@ -1079,8 +1170,11 @@ class _CompareScreenState extends State<CompareScreen>
       setState(() {
         _refBarcodes = barcodeResults[0];
         _cmpBarcodes = barcodeResults[1];
-        _compareStatus = 'Штрихкоды проверены. Проверяю текст...';
       });
+      _setCompareStatus(
+        'Штрихкоды проверены: эталон ${_refBarcodes.length}, образец ${_cmpBarcodes.length}.',
+      );
+      _setCompareStatus('Этап 4/5: проверяю текст OCR...');
 
       Future<OcrResult> ocrSafe(Uint8List b) async {
         try {
@@ -1103,9 +1197,14 @@ class _CompareScreenState extends State<CompareScreen>
         _textDiff = (!ro.isEmpty || !co.isEmpty)
             ? OcrService.compareTexts(ro.fullText, co.fullText)
             : null;
-        _compareStatus = 'Текст проверен. Строю Lab ID...';
       });
+      _setCompareStatus(
+        _textDiff == null
+            ? 'OCR: распознанного текста для вычитки нет.'
+            : 'OCR: совпадение текста ${_textDiff!.similarity.toStringAsFixed(1)}%.',
+      );
 
+      _setCompareStatus('Этап 5/5: строю Lab ID и сохраняю протокол...');
       final fingerprints = await Future.wait([
         LabFingerprintService.create(ref),
         LabFingerprintService.create(cmp),
@@ -1118,8 +1217,10 @@ class _CompareScreenState extends State<CompareScreen>
           _refLabFingerprint,
           _cmpLabFingerprint,
         );
-        _compareStatus = 'Lab ID готов. Сохраняю результат...';
       });
+      _setCompareStatus(
+        'Lab ID готов: совпадение ${_fmt(_labFingerprintMatch)}%.',
+      );
 
       try {
         await _saveCheckResult();
@@ -1307,7 +1408,6 @@ class _CompareScreenState extends State<CompareScreen>
         if (!mounted) return;
         final newSize = sz;
         setState(() {
-          _layoutProfile = null;
           // Точки незавершённой калибровки (_tempRefPts/_tempCmpPts) записаны
           // в пиксельных координатах старого (необрезанного) изображения —
           // после обрезки они "уезжают" относительно нового кадра, поэтому
@@ -1316,6 +1416,7 @@ class _CompareScreenState extends State<CompareScreen>
           _tempRefPts = [];
           _tempCmpPts = [];
           if (isRef) {
+            _layoutProfile = null;
             _refImg = result;
             _refImgSize = newSize;
             _savedRefLabel = null;
@@ -1392,7 +1493,6 @@ class _CompareScreenState extends State<CompareScreen>
           _cmpImg = bytes;
           _cmpImgSize = sz;
           _cmpAligned = null;
-          _layoutProfile = null;
           _cmpAnchorPts = null;
           _result = null;
           _compareStatus = null;
@@ -1928,7 +2028,7 @@ class _CompareScreenState extends State<CompareScreen>
           _toolBtn(
             Icons.compare,
             'Сравнить',
-            _refImg != null && _cmpImg != null ? _runCompare : null,
+            _canRunAlignedCompare ? _runCompare : null,
             primary: true,
           ),
         ],
@@ -2595,8 +2695,9 @@ class _CompareScreenState extends State<CompareScreen>
         next: XpBtn(
           label: 'Далее ›',
           primary: true,
-          onPressed:
-              _tempRefPts.length >= _minAnchorPts ? _advanceToStep2 : null,
+          onPressed: _tempRefPts.length >= _minAnchorPts
+              ? () => _advanceToStep2()
+              : null,
         ),
       );
     }
@@ -2970,11 +3071,8 @@ class _CompareScreenState extends State<CompareScreen>
                 child: XpBtn(
                   label: _comparing ? '6. Сравнение...' : '6. Сравнить',
                   icon: Icons.compare,
-                  primary: _refImg != null && _cmpImg != null,
-                  onPressed: _refImg != null &&
-                          _cmpImg != null &&
-                          !_comparing &&
-                          !_imageBusy
+                  primary: _canRunAlignedCompare,
+                  onPressed: _canRunAlignedCompare && !_comparing && !_imageBusy
                       ? _runCompare
                       : null,
                 ),
@@ -4580,11 +4678,8 @@ class _CompareScreenState extends State<CompareScreen>
                         : XpBtn(
                             label: 'Сравнить ›',
                             primary: true,
-                            onPressed: _refImg != null &&
-                                    _cmpImg != null &&
-                                    _layoutProfile != null
-                                ? _runCompare
-                                : null,
+                            onPressed:
+                                _canRunAlignedCompare ? _runCompare : null,
                           ),
                   ],
                 ),
@@ -4603,7 +4698,7 @@ class _CompareScreenState extends State<CompareScreen>
                   label: 'Далее ›',
                   primary: true,
                   onPressed: _tempRefPts.length >= _minAnchorPts
-                      ? _advanceToStep2
+                      ? () => _advanceToStep2()
                       : null,
                 ),
               ],
