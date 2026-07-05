@@ -95,7 +95,7 @@ class _CompareScreenState extends State<CompareScreen>
   bool _stacking = false;
   bool _imageBusy = false;
   String _imageBusyLabel = 'Обработка изображения...';
-  double _diffSlider = 0.0;
+  double _diffSlider = 0.5;
   _ResultMapMode _resultMapMode = _ResultMapMode.deltaE;
   final _resultCmpCtrl = TransformationController();
   _PointProbe? _pointProbe;
