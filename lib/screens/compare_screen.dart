@@ -2332,24 +2332,88 @@ class _CompareScreenState extends State<CompareScreen>
         else
           Container(
             color: const Color(0xFFF8FAFC),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _probeCell(
-                  'Сходство',
-                  '${r.score.toStringAsFixed(1)}%\nточка ΔE ${probe.deltaE.toStringAsFixed(2)}',
-                  flex: 2,
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _probeCell(
+                        'Сходство',
+                        '${r.score.toStringAsFixed(1)}%\nточка ΔE ${probe.deltaE.toStringAsFixed(2)}',
+                        flex: 2,
+                      ),
+                      _probeCell('CMYK эталона', probe.refCmyk.label, flex: 3),
+                      _probeCell('CMYK образца', probe.cmpCmyk.label, flex: 3),
+                      _probeCell(
+                        'RGB',
+                        'эталон ${probe.refRgb}\nобразец ${probe.cmpRgb}',
+                        flex: 3,
+                      ),
+                    ],
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Row(children: [
+                      Expanded(
+                        child: _probeLoupeTile(
+                          'Лупа печатника · эталон',
+                          probe.refLoupePng,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _probeLoupeTile(
+                          'Лупа печатника · образец',
+                          probe.cmpLoupePng,
+                        ),
+                      ),
+                    ]),
+                  ),
+                ]),
+          ),
+      ]),
+    );
+  }
+
+  Widget _probeLoupeTile(String title, Uint8List png) {
+    return Container(
+      height: 118,
+      decoration: BoxDecoration(
+        color: Colors.black,
+        border: Border.all(color: const Color(0xFFC9E2F0)),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(fit: StackFit.expand, children: [
+        Image.memory(
+          png,
+          fit: BoxFit.cover,
+          filterQuality: FilterQuality.none,
+          gaplessPlayback: true,
+        ),
+        const _LoupeCrosshair(),
+        Positioned(
+          left: 7,
+          top: 6,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.62),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+              child: Text(
+                title,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
                 ),
-                _probeCell('CMYK эталона', probe.refCmyk.label, flex: 3),
-                _probeCell('CMYK образца', probe.cmpCmyk.label, flex: 3),
-                _probeCell(
-                  'RGB',
-                  'эталон ${probe.refRgb}\nобразец ${probe.cmpRgb}',
-                  flex: 3,
-                ),
-              ],
+              ),
             ),
           ),
+        ),
       ]),
     );
   }
@@ -5991,8 +6055,33 @@ class _CompareScreenState extends State<CompareScreen>
         refCmyk: _CmykColor.fromPixel(refPixel),
         cmpCmyk: _CmykColor.fromPixel(cmpPixel),
         deltaE: _deltaE76(refPixel, cmpPixel),
+        refLoupePng: _makeProbeLoupe(ref, rx, ry),
+        cmpLoupePng: _makeProbeLoupe(cmp, cx, cy),
       );
     });
+  }
+
+  Uint8List _makeProbeLoupe(img.Image source, int cx, int cy) {
+    const radius = 18;
+    const outputSize = 180;
+    final left = (cx - radius).clamp(0, source.width - 1);
+    final top = (cy - radius).clamp(0, source.height - 1);
+    final right = (cx + radius + 1).clamp(left + 1, source.width);
+    final bottom = (cy + radius + 1).clamp(top + 1, source.height);
+    final crop = img.copyCrop(
+      source,
+      x: left,
+      y: top,
+      width: right - left,
+      height: bottom - top,
+    );
+    final enlarged = img.copyResize(
+      crop,
+      width: outputSize,
+      height: outputSize,
+      interpolation: img.Interpolation.nearest,
+    );
+    return Uint8List.fromList(img.encodePng(enlarged, level: 1));
   }
 
   Rect _containedImageRect(Size box, Size image) {
@@ -6423,6 +6512,8 @@ class _PointProbe {
   final _CmykColor refCmyk;
   final _CmykColor cmpCmyk;
   final double deltaE;
+  final Uint8List refLoupePng;
+  final Uint8List cmpLoupePng;
 
   const _PointProbe({
     required this.x,
@@ -6434,6 +6525,8 @@ class _PointProbe {
     required this.refCmyk,
     required this.cmpCmyk,
     required this.deltaE,
+    required this.refLoupePng,
+    required this.cmpLoupePng,
   });
 }
 
@@ -6863,6 +6956,56 @@ class _ProbePointPainter extends CustomPainter {
     return oldDelegate.normalized != normalized ||
         oldDelegate.imageSize != imageSize;
   }
+}
+
+class _LoupeCrosshair extends StatelessWidget {
+  const _LoupeCrosshair();
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(painter: _LoupeCrosshairPainter());
+  }
+}
+
+class _LoupeCrosshairPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final shadow = Paint()
+      ..color = Colors.black
+      ..strokeWidth = 2.4
+      ..style = PaintingStyle.stroke;
+    final light = Paint()
+      ..color = Colors.white
+      ..strokeWidth = 1.1
+      ..style = PaintingStyle.stroke;
+    for (final paint in [shadow, light]) {
+      canvas.drawCircle(center, 7, paint);
+      canvas.drawLine(
+        Offset(center.dx, 8),
+        Offset(center.dx, center.dy - 10),
+        paint,
+      );
+      canvas.drawLine(
+        Offset(center.dx, center.dy + 10),
+        Offset(center.dx, size.height - 8),
+        paint,
+      );
+      canvas.drawLine(
+        Offset(8, center.dy),
+        Offset(center.dx - 10, center.dy),
+        paint,
+      );
+      canvas.drawLine(
+        Offset(center.dx + 10, center.dy),
+        Offset(size.width - 8, center.dy),
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 class _ZoomBtn extends StatelessWidget {
