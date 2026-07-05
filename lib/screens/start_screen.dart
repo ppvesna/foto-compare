@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:math';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/app_theme.dart';
 import '../widgets/xp_widgets.dart';
@@ -15,6 +16,7 @@ class _StartScreenState extends State<StartScreen>
     with SingleTickerProviderStateMixin {
   bool _isLogin = true;
   bool _remember = false;
+  bool _authBusy = false;
   late AnimationController _ctrl;
   late Animation<double> _fade;
 
@@ -344,7 +346,11 @@ class _StartScreenState extends State<StartScreen>
           child: const Text('Забыли пароль?',
               style: TextStyle(fontSize: 10, color: AppTheme.blue)),
         ),
-        XpBtn(label: 'Войти →', primary: true, onPressed: _doLogin),
+        XpBtn(
+          label: _authBusy ? 'Входим...' : 'Войти →',
+          primary: true,
+          onPressed: _authBusy ? null : _doLogin,
+        ),
       ]),
     ]));
   }
@@ -411,7 +417,10 @@ class _StartScreenState extends State<StartScreen>
       const Divider(),
       Row(mainAxisAlignment: MainAxisAlignment.end, children: [
         XpBtn(
-            label: 'Создать аккаунт →', primary: true, onPressed: _doRegister),
+          label: _authBusy ? 'Создаём...' : 'Создать аккаунт →',
+          primary: true,
+          onPressed: _authBusy ? null : _doRegister,
+        ),
       ]),
     ]));
   }
@@ -434,10 +443,29 @@ class _StartScreenState extends State<StartScreen>
           .select('email')
           .eq('nickname', nick)
           .maybeSingle();
-      return row?['email'] as String?;
+      final email = row?['email'] as String?;
+      if (email != null && email.isNotEmpty) return email;
     } catch (_) {
-      return null;
+      // Если Supabase-профили ещё не настроены, пробуем локальную связку.
     }
+    return _localEmailForNick(nick);
+  }
+
+  Future<String?> _localEmailForNick(String nickname) async {
+    final nick = _normalizeNick(nickname);
+    if (nick.isEmpty) return null;
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('nick_email_$nick');
+  }
+
+  Future<void> _saveLocalNickEmail(String nickname, String email) async {
+    final nick = _normalizeNick(nickname);
+    final cleanEmail = email.trim();
+    if (nick.isEmpty || cleanEmail.isEmpty || !_looksLikeEmail(cleanEmail)) {
+      return;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('nick_email_$nick', cleanEmail);
   }
 
   Future<bool> _isNickAvailable(String nickname) async {
@@ -460,6 +488,7 @@ class _StartScreenState extends State<StartScreen>
     required String displayName,
     String organizationName = '',
   }) async {
+    await _saveLocalNickEmail(nickname, email);
     try {
       await Supabase.instance.client.from('user_profiles').upsert({
         'user_id': userId,
@@ -480,11 +509,16 @@ class _StartScreenState extends State<StartScreen>
       xpDlg(context, 'Ошибка', 'Введите email или ник и пароль');
       return;
     }
+    setState(() => _authBusy = true);
     try {
       final email = await _emailForLogin(login);
       if (email == null) {
         if (mounted) {
-          xpDlg(context, 'Ошибка входа', 'Ник не найден. Попробуйте email.');
+          xpDlg(
+            context,
+            'Ошибка входа',
+            'Ник не найден в профиле. Введите email аккаунта. После успешного входа связка ник-email сохранится на этом компьютере.',
+          );
         }
         return;
       }
@@ -505,6 +539,8 @@ class _StartScreenState extends State<StartScreen>
             displayName: displayName ?? '',
             organizationName: (metadata['organization_name'] as String?) ?? '',
           );
+        } else if (_looksLikeEmail(login)) {
+          await _saveLocalNickEmail(email.split('@').first, email);
         }
       }
       if (mounted) {
@@ -514,11 +550,14 @@ class _StartScreenState extends State<StartScreen>
         );
       }
     } catch (e) {
-      if (mounted) xpDlg(context, 'Ошибка входа', e.toString());
+      if (mounted) xpDlg(context, 'Ошибка входа', _authErrorText(e));
+    } finally {
+      if (mounted) setState(() => _authBusy = false);
     }
   }
 
   void _doRegister() async {
+    if (_authBusy) return;
     if (_passCtrl.text != _pass2Ctrl.text) {
       xpDlg(context, 'Ошибка', 'Пароли не совпадают');
       return;
@@ -536,9 +575,11 @@ class _StartScreenState extends State<StartScreen>
           'Ник: 3-24 символа, латиница, цифры и подчёркивание.');
       return;
     }
+    setState(() => _authBusy = true);
     final nickAvailable = await _isNickAvailable(nick);
     if (!nickAvailable) {
       if (mounted) xpDlg(context, 'Ошибка', 'Такой ник уже занят.');
+      if (mounted) setState(() => _authBusy = false);
       return;
     }
     try {
@@ -565,12 +606,33 @@ class _StartScreenState extends State<StartScreen>
         );
       }
       if (mounted) {
-        xpDlg(context, 'Готово',
-            'Аккаунт создан!\nПроверьте email для подтверждения.');
+        xpDlg(
+          context,
+          'Готово',
+          'Аккаунт создан.\nЕсли приложение не вошло автоматически, откройте вкладку "Вход" и войдите по email: $email',
+        );
+        setState(() => _isLogin = true);
       }
     } catch (e) {
-      if (mounted) xpDlg(context, 'Ошибка регистрации', e.toString());
+      if (mounted) xpDlg(context, 'Ошибка регистрации', _authErrorText(e));
+    } finally {
+      if (mounted) setState(() => _authBusy = false);
     }
+  }
+
+  String _authErrorText(Object e) {
+    final text = e.toString();
+    final lower = text.toLowerCase();
+    if (lower.contains('invalid login credentials')) {
+      return 'Неверный email/ник или пароль. Попробуйте войти по email аккаунта.';
+    }
+    if (lower.contains('email not confirmed')) {
+      return 'Email ещё не подтверждён. Откройте письмо Supabase и подтвердите аккаунт.';
+    }
+    if (lower.contains('network') || lower.contains('socket')) {
+      return 'Нет соединения с сервером авторизации. Проверьте интернет и повторите вход.';
+    }
+    return text;
   }
 }
 
