@@ -36,8 +36,10 @@ class _CropFrameScreenState extends State<CropFrameScreen> {
   // Размер изображения в пикселях
   ui.Size _imgSize = ui.Size.zero;
 
-  // Рамка в координатах виджета (0..1 относительно области отображения)
-  Rect _frame = const Rect.fromLTWH(0.1, 0.1, 0.8, 0.8);
+  // Рамка в координатах виджета (0..1 относительно области отображения).
+  // Инициализируется по реальным границам изображения внутри BoxFit.contain.
+  Rect _frame = Rect.zero;
+  bool _frameInitialized = false;
 
   // Размер виджета-просмотра
   Size _viewSize = Size.zero;
@@ -84,6 +86,48 @@ class _CropFrameScreenState extends State<CropFrameScreen> {
         _frame.height * _viewSize.height,
       );
 
+  Rect _imageRect(Size viewSize) {
+    if (_imgSize.width <= 0 || _imgSize.height <= 0) {
+      return Offset.zero & viewSize;
+    }
+    final imgAspect = _imgSize.width / _imgSize.height;
+    final viewAspect = viewSize.width / viewSize.height;
+    double imgX, imgY, imgW, imgH;
+    if (imgAspect > viewAspect) {
+      imgW = viewSize.width;
+      imgH = viewSize.width / imgAspect;
+      imgX = 0;
+      imgY = (viewSize.height - imgH) / 2;
+    } else {
+      imgH = viewSize.height;
+      imgW = viewSize.height * imgAspect;
+      imgY = 0;
+      imgX = (viewSize.width - imgW) / 2;
+    }
+    return Rect.fromLTWH(imgX, imgY, imgW, imgH);
+  }
+
+  Rect _normalizedImageRect(Size viewSize) {
+    final r = _imageRect(viewSize);
+    if (viewSize.width <= 0 || viewSize.height <= 0) {
+      return const Rect.fromLTWH(0, 0, 1, 1);
+    }
+    return Rect.fromLTRB(
+      r.left / viewSize.width,
+      r.top / viewSize.height,
+      r.right / viewSize.width,
+      r.bottom / viewSize.height,
+    );
+  }
+
+  void _ensureFrameInitialized(Size viewSize) {
+    if (_frameInitialized || viewSize.width <= 0 || viewSize.height <= 0) {
+      return;
+    }
+    _frame = _normalizedImageRect(viewSize);
+    _frameInitialized = true;
+  }
+
   _DragTarget _hitTest(Offset pos) {
     final r = _frameRect;
     const h = _handleSize;
@@ -124,33 +168,36 @@ class _CropFrameScreenState extends State<CropFrameScreen> {
           t = _frame.top,
           r = _frame.right,
           b = _frame.bottom;
+      final bounds = _normalizedImageRect(_viewSize);
+      final minW = _minFrameSide.clamp(0.0, bounds.width);
+      final minH = _minFrameSide.clamp(0.0, bounds.height);
 
       switch (_dragTarget!) {
         case _DragTarget.move:
-          final nl = (l + dx).clamp(0.0, 1.0 - _frame.width);
-          final nt = (t + dy).clamp(0.0, 1.0 - _frame.height);
+          final nl = (l + dx).clamp(bounds.left, bounds.right - _frame.width);
+          final nt = (t + dy).clamp(bounds.top, bounds.bottom - _frame.height);
           _frame = Rect.fromLTWH(nl, nt, _frame.width, _frame.height);
           return;
         case _DragTarget.topLeft:
-          l = (l + dx).clamp(0.0, r - _minFrameSide);
-          t = (t + dy).clamp(0.0, b - _minFrameSide);
+          l = (l + dx).clamp(bounds.left, r - minW);
+          t = (t + dy).clamp(bounds.top, b - minH);
         case _DragTarget.topRight:
-          r = (r + dx).clamp(l + _minFrameSide, 1.0);
-          t = (t + dy).clamp(0.0, b - _minFrameSide);
+          r = (r + dx).clamp(l + minW, bounds.right);
+          t = (t + dy).clamp(bounds.top, b - minH);
         case _DragTarget.bottomLeft:
-          l = (l + dx).clamp(0.0, r - _minFrameSide);
-          b = (b + dy).clamp(t + _minFrameSide, 1.0);
+          l = (l + dx).clamp(bounds.left, r - minW);
+          b = (b + dy).clamp(t + minH, bounds.bottom);
         case _DragTarget.bottomRight:
-          r = (r + dx).clamp(l + _minFrameSide, 1.0);
-          b = (b + dy).clamp(t + _minFrameSide, 1.0);
+          r = (r + dx).clamp(l + minW, bounds.right);
+          b = (b + dy).clamp(t + minH, bounds.bottom);
         case _DragTarget.top:
-          t = (t + dy).clamp(0.0, b - _minFrameSide);
+          t = (t + dy).clamp(bounds.top, b - minH);
         case _DragTarget.bottom:
-          b = (b + dy).clamp(t + _minFrameSide, 1.0);
+          b = (b + dy).clamp(t + minH, bounds.bottom);
         case _DragTarget.left:
-          l = (l + dx).clamp(0.0, r - _minFrameSide);
+          l = (l + dx).clamp(bounds.left, r - minW);
         case _DragTarget.right:
-          r = (r + dx).clamp(l + _minFrameSide, 1.0);
+          r = (r + dx).clamp(l + minW, bounds.right);
         case _DragTarget.none:
           return;
       }
@@ -198,6 +245,7 @@ class _CropFrameScreenState extends State<CropFrameScreen> {
           ? const Center(child: CircularProgressIndicator())
           : LayoutBuilder(builder: (_, constraints) {
               _viewSize = constraints.biggest;
+              _ensureFrameInitialized(_viewSize);
               return GestureDetector(
                 onPanStart: _onPanStart,
                 onPanUpdate: _onPanUpdate,
