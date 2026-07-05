@@ -1,58 +1,160 @@
-import 'dart:io';
-import 'dart:typed_data';
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
-import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../models/layout_profile.dart';
+
+class SavedReferenceProfile {
+  final String id;
+  final String label;
+  final Uint8List bytes;
+  final LayoutProfile? layoutProfile;
+  final DateTime createdAt;
+
+  const SavedReferenceProfile({
+    required this.id,
+    required this.label,
+    required this.bytes,
+    required this.layoutProfile,
+    required this.createdAt,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'label': label,
+        'bytes': base64Encode(bytes),
+        'layoutProfile': layoutProfile?.toJson(),
+        'createdAt': createdAt.toIso8601String(),
+      };
+
+  factory SavedReferenceProfile.fromJson(Map<String, dynamic> json) {
+    return SavedReferenceProfile(
+      id: json['id'] as String,
+      label: json['label'] as String? ?? 'Эталон',
+      bytes: base64Decode(json['bytes'] as String),
+      layoutProfile: json['layoutProfile'] == null
+          ? null
+          : LayoutProfile.fromJson(
+              Map<String, dynamic>.from(json['layoutProfile'] as Map),
+            ),
+      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
+          DateTime.now(),
+    );
+  }
+}
 
 class ReferenceStorage {
-  static const _fileName = 'reference_image.bin';
-  static const _metaFile = 'reference_meta.txt';
+  static const _profilesKey = 'reference_profiles_v2';
+  static const _activeIdKey = 'reference_profiles_active_id_v2';
 
-  static Future<String> _dir() async {
-    final d = await getApplicationDocumentsDirectory();
-    return d.path;
-  }
+  static final ValueNotifier<List<SavedReferenceProfile>> profiles =
+      ValueNotifier<List<SavedReferenceProfile>>(const []);
 
-  // Сохранить эталон на диск
-  static Future<void> save(Uint8List bytes, {String? label}) async {
-    if (kIsWeb) return;
-    final dir = await _dir();
-    await File('$dir/$_fileName').writeAsBytes(bytes);
-    if (label != null) {
-      await File('$dir/$_metaFile').writeAsString(label);
+  static Future<List<SavedReferenceProfile>> loadProfiles() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_profilesKey);
+    if (raw == null || raw.isEmpty) {
+      profiles.value = const [];
+      return const [];
+    }
+    try {
+      final list = (jsonDecode(raw) as List)
+          .map((e) => SavedReferenceProfile.fromJson(
+                Map<String, dynamic>.from(e as Map),
+              ))
+          .toList()
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      profiles.value = list;
+      return list;
+    } catch (_) {
+      profiles.value = const [];
+      return const [];
     }
   }
 
-  // Загрузить сохранённый эталон
-  static Future<Uint8List?> load() async {
-    if (kIsWeb) return null;
-    final dir = await _dir();
-    final file = File('$dir/$_fileName');
-    if (!await file.exists()) return null;
-    return await file.readAsBytes();
+  static Future<void> save(
+    Uint8List bytes, {
+    String? label,
+    LayoutProfile? layoutProfile,
+  }) async {
+    await saveProfile(
+      bytes: bytes,
+      label: label ?? layoutProfile?.name ?? 'Эталон',
+      layoutProfile: layoutProfile,
+    );
   }
 
-  // Метка (имя/дата) сохранённого эталона
-  static Future<String?> loadLabel() async {
-    if (kIsWeb) return null;
-    final dir = await _dir();
-    final file = File('$dir/$_metaFile');
-    if (!await file.exists()) return null;
-    return await file.readAsString();
+  static Future<SavedReferenceProfile> saveProfile({
+    required Uint8List bytes,
+    required String label,
+    LayoutProfile? layoutProfile,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final all = await loadProfiles();
+    final id =
+        layoutProfile?.id ?? DateTime.now().millisecondsSinceEpoch.toString();
+    final item = SavedReferenceProfile(
+      id: id,
+      label: label.trim().isEmpty ? 'Эталон' : label.trim(),
+      bytes: bytes,
+      layoutProfile: layoutProfile,
+      createdAt: DateTime.now(),
+    );
+    final next = [item, ...all.where((p) => p.id != id)];
+    await prefs.setString(
+        _profilesKey, jsonEncode(next.map((p) => p.toJson()).toList()));
+    await prefs.setString(_activeIdKey, item.id);
+    profiles.value = next;
+    return item;
   }
 
-  // Удалить сохранённый эталон
+  static Future<void> setActive(String id) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_activeIdKey, id);
+  }
+
+  static Future<SavedReferenceProfile?> loadActiveProfile() async {
+    final prefs = await SharedPreferences.getInstance();
+    final all = await loadProfiles();
+    if (all.isEmpty) return null;
+    final id = prefs.getString(_activeIdKey);
+    return all.firstWhere(
+      (p) => p.id == id,
+      orElse: () => all.first,
+    );
+  }
+
+  static Future<Uint8List?> load() async => (await loadActiveProfile())?.bytes;
+
+  static Future<String?> loadLabel() async =>
+      (await loadActiveProfile())?.label;
+
+  static Future<LayoutProfile?> loadLayoutProfile() async =>
+      (await loadActiveProfile())?.layoutProfile;
+
+  static Future<void> delete(String id) async {
+    final prefs = await SharedPreferences.getInstance();
+    final next = (await loadProfiles()).where((p) => p.id != id).toList();
+    await prefs.setString(
+        _profilesKey, jsonEncode(next.map((p) => p.toJson()).toList()));
+    final activeId = prefs.getString(_activeIdKey);
+    if (activeId == id) {
+      if (next.isEmpty) {
+        await prefs.remove(_activeIdKey);
+      } else {
+        await prefs.setString(_activeIdKey, next.first.id);
+      }
+    }
+    profiles.value = next;
+  }
+
   static Future<void> clear() async {
-    if (kIsWeb) return;
-    final dir = await _dir();
-    final f1 = File('$dir/$_fileName');
-    final f2 = File('$dir/$_metaFile');
-    if (await f1.exists()) await f1.delete();
-    if (await f2.exists()) await f2.delete();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_profilesKey);
+    await prefs.remove(_activeIdKey);
+    profiles.value = const [];
   }
 
-  static Future<bool> exists() async {
-    if (kIsWeb) return false;
-    final dir = await _dir();
-    return File('$dir/$_fileName').exists();
-  }
+  static Future<bool> exists() async => (await loadProfiles()).isNotEmpty;
 }

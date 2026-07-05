@@ -101,6 +101,8 @@ class _CompareScreenState extends State<CompareScreen>
   _PointProbe? _pointProbe;
 
   String? _savedRefLabel;
+  String? _activeReferenceId;
+  List<SavedReferenceProfile> _savedReferences = [];
 
   static const int _uiImageCacheWidth = 1600;
 
@@ -171,16 +173,55 @@ class _CompareScreenState extends State<CompareScreen>
   }
 
   Future<void> _loadSavedReference() async {
-    final bytes = await ReferenceStorage.load();
-    final label = await ReferenceStorage.loadLabel();
-    if (bytes != null && mounted) {
-      final size = await _readImageSize(bytes);
-      if (!mounted) return;
-      setState(() {
-        _refImg = bytes;
-        _refImgSize = size;
-        _savedRefLabel = label;
-      });
+    final refs = await ReferenceStorage.loadProfiles();
+    final active = await ReferenceStorage.loadActiveProfile();
+    if (!mounted) return;
+    setState(() => _savedReferences = refs);
+    if (active != null) {
+      await _activateSavedReference(active, showMessage: false);
+    }
+  }
+
+  Future<void> _refreshSavedReferences() async {
+    final refs = await ReferenceStorage.loadProfiles();
+    if (mounted) setState(() => _savedReferences = refs);
+  }
+
+  Future<void> _activateSavedReference(
+    SavedReferenceProfile item, {
+    bool showMessage = true,
+  }) async {
+    await ReferenceStorage.setActive(item.id);
+    final size = await _readImageSize(item.bytes);
+    if (!mounted) return;
+    final profile = item.layoutProfile;
+    final anchors = profile == null
+        ? null
+        : profile.refAnchors
+            .map((a) => Offset(a.x * size.width, a.y * size.height))
+            .toList();
+    setState(() {
+      _refImg = item.bytes;
+      _refImgSize = size;
+      _savedRefLabel = item.label;
+      _activeReferenceId = item.id;
+      _layoutProfile = profile;
+      _refAnchorPts = anchors;
+      _cmpAligned = null;
+      _refAligned = null;
+      _cmpAnchorPts = null;
+      _result = null;
+      _pointProbe = null;
+      _compareStatus = null;
+    });
+    if (showMessage) {
+      xpDlg(
+        context,
+        'Эталон выбран',
+        profile == null
+            ? '${item.label}\nТочки ещё не сохранены.'
+            : '${item.label}\nТочек: ${profile.refAnchors.length}',
+      );
     }
   }
 
@@ -189,9 +230,17 @@ class _CompareScreenState extends State<CompareScreen>
     final now = DateTime.now();
     final label =
         '${now.day.toString().padLeft(2, '0')}.${now.month.toString().padLeft(2, '0')}.${now.year}';
-    await ReferenceStorage.save(_refImg!, label: label);
+    final item = await ReferenceStorage.saveProfile(
+      bytes: _refImg!,
+      label: label,
+      layoutProfile: _layoutProfile,
+    );
+    await _refreshSavedReferences();
     if (mounted) {
-      setState(() => _savedRefLabel = label);
+      setState(() {
+        _savedRefLabel = item.label;
+        _activeReferenceId = item.id;
+      });
       xpDlg(
         context,
         'Эталон сохранён',
@@ -210,6 +259,8 @@ class _CompareScreenState extends State<CompareScreen>
     await ReferenceStorage.clear();
     if (mounted)
       setState(() {
+        _savedReferences = [];
+        _activeReferenceId = null;
         _refImg = null;
         _refImgSize = null;
         _savedRefLabel = null;
@@ -232,15 +283,22 @@ class _CompareScreenState extends State<CompareScreen>
     if (cmpSize == null) {
       cmpSize = await _readImageSize(_cmpImg!);
     }
+    final storedRefPts = _layoutProfile == null
+        ? null
+        : _layoutProfile!.refAnchors
+            .map((a) => Offset(a.x * refSize!.width, a.y * refSize.height))
+            .toList();
     if (!mounted) return;
     setState(() {
-      _calStep = 1;
-      _tempRefPts = [];
+      _calStep =
+          storedRefPts == null || storedRefPts.length < _minAnchorPts ? 1 : 2;
+      _tempRefPts = storedRefPts ?? [];
       _tempCmpPts = [];
       _refImgSize = refSize;
       _cmpImgSize = cmpSize;
       _refAlignCtrl.value = Matrix4.identity();
       _cmpAlignCtrl.value = Matrix4.identity();
+      if (storedRefPts != null) _refAnchorPts = storedRefPts;
     });
   }
 
@@ -438,9 +496,17 @@ class _CompareScreenState extends State<CompareScreen>
       );
       await LayoutProfileStorage.save(profile);
       await _loadProfiles();
+      final savedRef = await ReferenceStorage.saveProfile(
+        bytes: _refImg!,
+        label: name,
+        layoutProfile: profile,
+      );
+      await _refreshSavedReferences();
 
       setState(() {
         _layoutProfile = profile;
+        _savedRefLabel = savedRef.label;
+        _activeReferenceId = savedRef.id;
         _cmpAligned = alignResult.alignedBytes;
         _refAligned = alignResult.refCanonicalBytes;
         _refAnchorPts = refPts;
@@ -764,6 +830,8 @@ class _CompareScreenState extends State<CompareScreen>
       setState(() {
         _refImg = fused;
         _refImgSize = sz;
+        _savedRefLabel = null;
+        _activeReferenceId = null;
         _refAligned = null;
         _layoutProfile = null;
         _refAnchorPts = null;
@@ -1165,6 +1233,7 @@ class _CompareScreenState extends State<CompareScreen>
     final r = _result;
     if (r == null) return;
     final now = DateTime.now();
+    final sampleNumber = CheckHistoryService.checks.value.length + 1;
     await CheckHistoryService.saveLast(
       CheckProtocol(
         id: now.millisecondsSinceEpoch.toString(),
@@ -1174,6 +1243,8 @@ class _CompareScreenState extends State<CompareScreen>
         refSize: r.refSize,
         cmpSize: r.cmpSize,
         labId: _shortLabId(_refLabFingerprint?.labId),
+        referenceLabel: _savedRefLabel ?? _layoutProfile?.name ?? 'Эталон',
+        sampleLabel: 'Образец $sampleNumber',
         labMatch: _labFingerprintMatch,
         stages: _checkProtocolStages(r),
       ),
@@ -1219,6 +1290,8 @@ class _CompareScreenState extends State<CompareScreen>
           if (isRef) {
             _refImg = result;
             _refImgSize = newSize;
+            _savedRefLabel = null;
+            _activeReferenceId = null;
             _refAligned = null;
             _refAnchorPts = null;
           } else {
@@ -1906,7 +1979,7 @@ class _CompareScreenState extends State<CompareScreen>
             ],
             if (r != null) ...[
               const SizedBox(height: 10),
-              _checkProtocolPanel(r),
+              _checkProtocolListPanel(),
             ],
           ],
         ),
@@ -2179,8 +2252,73 @@ class _CompareScreenState extends State<CompareScreen>
     );
   }
 
-  Widget _checkProtocolPanel(CompareResult r) {
-    final stages = _checkProtocolStages(r);
+  Widget _checkProtocolListPanel() {
+    return ValueListenableBuilder<List<CheckProtocol>>(
+      valueListenable: CheckHistoryService.checks,
+      builder: (context, protocols, _) {
+        final list = protocols;
+        if (list.isEmpty && _result != null) {
+          return _checkProtocolTable(
+            title: 'Протокол проверки',
+            stages: _checkProtocolStages(_result!),
+          );
+        }
+        return Container(
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8FAFC),
+            border: Border.all(color: AppTheme.border),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                color: AppTheme.blueDark,
+                child: const Text(
+                  'Протокол проверки',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              ...list.asMap().entries.map((entry) {
+                final i = entry.key;
+                final p = entry.value;
+                return ExpansionTile(
+                  initiallyExpanded: i == 0,
+                  tilePadding: const EdgeInsets.symmetric(horizontal: 10),
+                  childrenPadding: EdgeInsets.zero,
+                  title: Text(
+                    p.sampleLabel,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  subtitle: Text(
+                    '${p.referenceLabel} · ${p.verdict} · ${p.score.toStringAsFixed(1)}%',
+                    style: const TextStyle(fontSize: 10),
+                  ),
+                  trailing: SimBadge(value: p.score, fontSize: 10),
+                  children: [_protocolStageTable(p.stages)],
+                );
+              }),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _checkProtocolTable({
+    required String title,
+    required List<CheckProtocolStage> stages,
+  }) {
     return Container(
       decoration: BoxDecoration(
         color: const Color(0xFFF8FAFC),
@@ -2194,8 +2332,8 @@ class _CompareScreenState extends State<CompareScreen>
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
             color: AppTheme.blueDark,
-            child: const Text(
-              'Протокол проверки',
+            child: Text(
+              title,
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 12,
@@ -2232,6 +2370,41 @@ class _CompareScreenState extends State<CompareScreen>
           }),
         ],
       ),
+    );
+  }
+
+  Widget _protocolStageTable(List<CheckProtocolStage> stages) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          color: AppTheme.silver,
+          child: Row(
+            children: [
+              _protocolCell('Этап', flex: 3, bold: true),
+              _protocolCell('Статус', flex: 2, bold: true),
+              _protocolCell('Метрика', flex: 3, bold: true),
+              _protocolCell('Комментарий', flex: 5, bold: true),
+            ],
+          ),
+        ),
+        ...stages.asMap().entries.map((entry) {
+          final i = entry.key;
+          final stage = entry.value;
+          return Container(
+            color: i.isEven ? Colors.white : const Color(0xFFF5F8FB),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _protocolCell(stage.name, flex: 3),
+                _protocolCell(stage.status, flex: 2),
+                _protocolCell(stage.metric, flex: 3),
+                _protocolCell(stage.comment, flex: 5),
+              ],
+            ),
+          );
+        }),
+      ],
     );
   }
 
@@ -2681,6 +2854,8 @@ class _CompareScreenState extends State<CompareScreen>
             const SizedBox(height: 8),
             _inspectorStatusCard(),
             const SizedBox(height: 8),
+            _referenceProfilesInspector(),
+            const SizedBox(height: 8),
             _inspectorSection('Порядок действий', [
               SizedBox(
                 width: double.infinity,
@@ -2870,6 +3045,70 @@ class _CompareScreenState extends State<CompareScreen>
         ],
       ),
     );
+  }
+
+  Widget _referenceProfilesInspector() {
+    if (_savedReferences.isEmpty) {
+      return _inspectorSection('Эталоны', [
+        const Text(
+          'Сохранённых эталонов пока нет. После калибровки профиль появится здесь.',
+          style: TextStyle(fontSize: 11, height: 1.35, color: Colors.black54),
+        ),
+      ]);
+    }
+    return _inspectorSection('Эталоны', [
+      ..._savedReferences.take(6).map((item) {
+        final selected = item.id == _activeReferenceId;
+        final points = item.layoutProfile?.refAnchors.length ?? 0;
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: InkWell(
+            onTap: () => _activateSavedReference(item),
+            borderRadius: BorderRadius.circular(8),
+            child: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: selected ? const Color(0xFFEAF6FC) : Colors.white,
+                border: Border.all(
+                  color: selected ? AppTheme.blue : AppTheme.border,
+                ),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(children: [
+                Icon(
+                  selected ? Icons.radio_button_checked : Icons.image,
+                  size: 16,
+                  color: selected ? AppTheme.blue : Colors.black54,
+                ),
+                const SizedBox(width: 7),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        item.label,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Text(
+                        points == 0 ? 'точки не сохранены' : '$points точек',
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: Colors.black54,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ]),
+            ),
+          ),
+        );
+      }),
+    ]);
   }
 
   Widget _calibrationInspector() {

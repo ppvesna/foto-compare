@@ -5,17 +5,36 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class CheckHistoryService {
   static const _lastCheckKey = 'last_check_protocol_v1';
+  static const _checksKey = 'check_protocols_v2';
   static final ValueNotifier<CheckProtocol?> lastCheck =
       ValueNotifier<CheckProtocol?>(null);
+  static final ValueNotifier<List<CheckProtocol>> checks =
+      ValueNotifier<List<CheckProtocol>>(const []);
 
   static Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_lastCheckKey);
-    if (raw == null || raw.isEmpty) return;
+    final listRaw = prefs.getString(_checksKey);
+    if (listRaw != null && listRaw.isNotEmpty) {
+      try {
+        final list = (jsonDecode(listRaw) as List)
+            .map((e) => CheckProtocol.fromJson(
+                  Map<String, dynamic>.from(e as Map),
+                ))
+            .toList()
+          ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        checks.value = list;
+        if (list.isNotEmpty) lastCheck.value = list.first;
+      } catch (_) {
+        checks.value = const [];
+      }
+    }
+    if (raw == null || raw.isEmpty || lastCheck.value != null) return;
     try {
       lastCheck.value = CheckProtocol.fromJson(
         Map<String, dynamic>.from(jsonDecode(raw) as Map),
       );
+      checks.value = [lastCheck.value!];
     } catch (_) {
       lastCheck.value = null;
     }
@@ -23,14 +42,24 @@ class CheckHistoryService {
 
   static Future<void> saveLast(CheckProtocol protocol) async {
     lastCheck.value = protocol;
+    final next = [protocol, ...checks.value.where((p) => p.id != protocol.id)]
+        .take(30)
+        .toList();
+    checks.value = next;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_lastCheckKey, jsonEncode(protocol.toJson()));
+    await prefs.setString(
+      _checksKey,
+      jsonEncode(next.map((p) => p.toJson()).toList()),
+    );
   }
 
   static Future<void> clearLast() async {
     lastCheck.value = null;
+    checks.value = const [];
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_lastCheckKey);
+    await prefs.remove(_checksKey);
   }
 }
 
@@ -42,6 +71,8 @@ class CheckProtocol {
   final String refSize;
   final String cmpSize;
   final String labId;
+  final String referenceLabel;
+  final String sampleLabel;
   final double? labMatch;
   final List<CheckProtocolStage> stages;
 
@@ -53,6 +84,8 @@ class CheckProtocol {
     required this.refSize,
     required this.cmpSize,
     required this.labId,
+    this.referenceLabel = 'Эталон',
+    this.sampleLabel = 'Образец',
     required this.labMatch,
     required this.stages,
   });
@@ -65,6 +98,8 @@ class CheckProtocol {
         refSize: json['refSize'] as String,
         cmpSize: json['cmpSize'] as String,
         labId: json['labId'] as String? ?? '-',
+        referenceLabel: json['referenceLabel'] as String? ?? 'Эталон',
+        sampleLabel: json['sampleLabel'] as String? ?? 'Образец',
         labMatch: (json['labMatch'] as num?)?.toDouble(),
         stages: (json['stages'] as List)
             .map((e) => CheckProtocolStage.fromJson(
@@ -81,6 +116,8 @@ class CheckProtocol {
         'refSize': refSize,
         'cmpSize': cmpSize,
         'labId': labId,
+        'referenceLabel': referenceLabel,
+        'sampleLabel': sampleLabel,
         'labMatch': labMatch,
         'stages': stages.map((e) => e.toJson()).toList(),
       };
