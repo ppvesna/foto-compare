@@ -25,6 +25,8 @@ import '../services/layout_profile_storage.dart';
 
 enum _ResultMapMode { deltaE, geometry, overlay }
 
+enum _InspectionTool { point, loupe }
+
 class CompareScreen extends StatefulWidget {
   const CompareScreen({super.key});
 
@@ -97,8 +99,13 @@ class _CompareScreenState extends State<CompareScreen>
   String _imageBusyLabel = 'Обработка изображения...';
   double _diffSlider = 0.5;
   _ResultMapMode _resultMapMode = _ResultMapMode.deltaE;
+  _InspectionTool _inspectionTool = _InspectionTool.point;
   final _resultCmpCtrl = TransformationController();
   _PointProbe? _pointProbe;
+  _AreaLoupe? _areaLoupe;
+  Offset? _loupeDragStart;
+  Rect? _loupeDraftRect;
+  Size? _loupeImageSize;
 
   String? _savedRefLabel;
   String? _activeReferenceId;
@@ -212,6 +219,9 @@ class _CompareScreenState extends State<CompareScreen>
       _cmpAnchorPts = null;
       _result = null;
       _pointProbe = null;
+      _areaLoupe = null;
+      _loupeDraftRect = null;
+      _loupeDragStart = null;
       _compareStatus = null;
     });
     if (showMessage) {
@@ -261,6 +271,9 @@ class _CompareScreenState extends State<CompareScreen>
       _result = null;
       _aiResult = null;
       _pointProbe = null;
+      _areaLoupe = null;
+      _loupeDraftRect = null;
+      _loupeDragStart = null;
       _compareStatus = null;
       _compareSteps.clear();
       _calStep = 0;
@@ -319,6 +332,9 @@ class _CompareScreenState extends State<CompareScreen>
       _cmpAnchorPts = null;
       _result = null;
       _pointProbe = null;
+      _areaLoupe = null;
+      _loupeDraftRect = null;
+      _loupeDragStart = null;
       _compareStatus = null;
       _compareSteps.clear();
       _refAlignCtrl.value = Matrix4.identity();
@@ -425,6 +441,9 @@ class _CompareScreenState extends State<CompareScreen>
       _cmpAnchorPts = null;
       _result = null;
       _pointProbe = null;
+      _areaLoupe = null;
+      _loupeDraftRect = null;
+      _loupeDragStart = null;
       _compareStatus = null;
       _compareSteps.clear();
     });
@@ -1089,6 +1108,9 @@ class _CompareScreenState extends State<CompareScreen>
       _labFingerprintMatch = null;
       _result = null;
       _pointProbe = null;
+      _areaLoupe = null;
+      _loupeDraftRect = null;
+      _loupeDragStart = null;
       _compareSteps
         ..clear()
         ..add('Готовлю изображения к проверке...');
@@ -2236,15 +2258,71 @@ class _CompareScreenState extends State<CompareScreen>
       );
     }
 
-    return Row(
-      children: [
-        item(_ResultMapMode.deltaE, 'ΔE цвет'),
+    Widget tool(_InspectionTool tool, IconData icon, String label) {
+      final selected = _inspectionTool == tool;
+      return Expanded(
+        child: InkWell(
+          onTap: () => setState(() => _inspectionTool = tool),
+          borderRadius: BorderRadius.circular(10),
+          child: Container(
+            height: 34,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: selected ? const Color(0xFF1D6E68) : Colors.white,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: selected
+                    ? const Color(0xFF14524E)
+                    : const Color(0xFFD5DAE2),
+              ),
+              boxShadow: selected
+                  ? [
+                      BoxShadow(
+                        color: const Color(0xFF1D6E68).withOpacity(0.18),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ]
+                  : null,
+            ),
+            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Icon(icon,
+                  size: 15, color: selected ? Colors.white : Colors.black87),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  label,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: selected ? Colors.white : Colors.black87,
+                  ),
+                ),
+              ),
+            ]),
+          ),
+        ),
+      );
+    }
+
+    return Column(children: [
+      Row(
+        children: [
+          item(_ResultMapMode.deltaE, 'ΔE цвет'),
+          const SizedBox(width: 6),
+          item(_ResultMapMode.geometry, 'Геометрия ЧБ'),
+          const SizedBox(width: 6),
+          item(_ResultMapMode.overlay, 'Наложение'),
+        ],
+      ),
+      const SizedBox(height: 6),
+      Row(children: [
+        tool(_InspectionTool.point, Icons.gps_fixed, 'Параметры точки'),
         const SizedBox(width: 6),
-        item(_ResultMapMode.geometry, 'Геометрия ЧБ'),
-        const SizedBox(width: 6),
-        item(_ResultMapMode.overlay, 'Наложение'),
-      ],
-    );
+        tool(_InspectionTool.loupe, Icons.zoom_in, 'Лупа области'),
+      ]),
+    ]);
   }
 
   Widget _mapLegend() {
@@ -2290,6 +2368,9 @@ class _CompareScreenState extends State<CompareScreen>
   }
 
   Widget _pointProbePanel(CompareResult r) {
+    if (_inspectionTool == _InspectionTool.loupe) {
+      return _areaLoupePanel();
+    }
     final probe = _pointProbe;
     return Container(
       decoration: BoxDecoration(
@@ -2371,6 +2452,107 @@ class _CompareScreenState extends State<CompareScreen>
                     ]),
                   ),
                 ]),
+          ),
+      ]),
+    );
+  }
+
+  Widget _areaLoupePanel() {
+    final loupe = _areaLoupe;
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: const Color(0xFFC9E2F0)),
+        borderRadius: BorderRadius.circular(8),
+        boxShadow: AppTheme.shadowSubtle,
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          decoration: const BoxDecoration(
+            color: Color(0xFFEAF6FC),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(8)),
+          ),
+          child: Row(children: [
+            const Expanded(
+              child: Text(
+                'Лупа области',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900),
+              ),
+            ),
+            Text(
+              loupe == null
+                  ? 'выделите область мышью'
+                  : 'эталон ${loupe.refWidth}×${loupe.refHeight} · образец ${loupe.cmpWidth}×${loupe.cmpHeight}',
+              style: const TextStyle(fontSize: 10, color: Colors.black54),
+            ),
+          ]),
+        ),
+        if (loupe == null)
+          const Padding(
+            padding: EdgeInsets.all(10),
+            child: Text(
+              'Включите «Лупа области», зажмите мышь на карте сравнения и выделите прямоугольник. Здесь появится увеличенное наложение эталона и образца; ползунок над картой переключает вид.',
+              style:
+                  TextStyle(fontSize: 11, height: 1.35, color: Colors.black54),
+            ),
+          )
+        else
+          Padding(
+            padding: const EdgeInsets.all(8),
+            child: Container(
+              height: 190,
+              decoration: BoxDecoration(
+                color: Colors.black,
+                border: Border.all(color: const Color(0xFFC9E2F0)),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: Stack(fit: StackFit.expand, children: [
+                Image.memory(
+                  loupe.refPng,
+                  fit: BoxFit.contain,
+                  filterQuality: FilterQuality.none,
+                  gaplessPlayback: true,
+                ),
+                Opacity(
+                  opacity: _diffSlider,
+                  child: Image.memory(
+                    loupe.cmpPng,
+                    fit: BoxFit.contain,
+                    filterQuality: FilterQuality.none,
+                    gaplessPlayback: true,
+                  ),
+                ),
+                const _LoupeCrosshair(),
+                Positioned(
+                  right: 8,
+                  top: 7,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.62),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 7, vertical: 4),
+                      child: Text(
+                        _diffSlider < 0.08
+                            ? 'эталон'
+                            : _diffSlider > 0.92
+                                ? 'образец'
+                                : 'наложение ${(100 * _diffSlider).round()}%',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ]),
+            ),
           ),
       ]),
     );
@@ -5968,13 +6150,43 @@ class _CompareScreenState extends State<CompareScreen>
               final boxSize = Size(constraints.maxWidth, constraints.maxHeight);
               return GestureDetector(
                 behavior: HitTestBehavior.opaque,
-                onTapDown: refBase != null && cmpBase != null
+                onTapDown: refBase != null &&
+                        cmpBase != null &&
+                        _inspectionTool == _InspectionTool.point
                     ? (details) => _sampleResultPoint(
                           local: details.localPosition,
                           viewportSize: boxSize,
                           refBytes: refBase,
                           cmpBytes: cmpBase,
                           ctrl: ctrl,
+                        )
+                    : null,
+                onPanStart: refBase != null &&
+                        cmpBase != null &&
+                        _inspectionTool == _InspectionTool.loupe
+                    ? (details) => _startAreaLoupeSelection(
+                          local: details.localPosition,
+                          viewportSize: boxSize,
+                          refBytes: refBase,
+                          ctrl: ctrl,
+                        )
+                    : null,
+                onPanUpdate: refBase != null &&
+                        cmpBase != null &&
+                        _inspectionTool == _InspectionTool.loupe
+                    ? (details) => _updateAreaLoupeSelection(
+                          local: details.localPosition,
+                          viewportSize: boxSize,
+                          refBytes: refBase,
+                          ctrl: ctrl,
+                        )
+                    : null,
+                onPanEnd: refBase != null &&
+                        cmpBase != null &&
+                        _inspectionTool == _InspectionTool.loupe
+                    ? (_) => _finishAreaLoupeSelection(
+                          refBytes: refBase,
+                          cmpBytes: cmpBase,
                         )
                     : null,
                 child: InteractiveViewer(
@@ -6004,6 +6216,17 @@ class _CompareScreenState extends State<CompareScreen>
                           painter: _ProbePointPainter(
                             normalized: _pointProbe!.normalized,
                             imageSize: _pointProbe!.imageSize,
+                          ),
+                        ),
+                      if (_loupeDraftRect != null || _areaLoupe != null)
+                        CustomPaint(
+                          painter: _LoupeSelectionPainter(
+                            normalized:
+                                _loupeDraftRect ?? _areaLoupe!.normalizedRect,
+                            imageSize: _loupeImageSize ??
+                                _areaLoupe?.imageSize ??
+                                Size.zero,
+                            active: _loupeDraftRect != null,
                           ),
                         ),
                     ],
@@ -6061,6 +6284,144 @@ class _CompareScreenState extends State<CompareScreen>
     });
   }
 
+  void _startAreaLoupeSelection({
+    required Offset local,
+    required Size viewportSize,
+    required Uint8List refBytes,
+    required TransformationController ctrl,
+  }) {
+    final ref = img.decodeImage(refBytes);
+    if (ref == null) return;
+    final p = _normalizedOverlayPoint(
+      local: local,
+      viewportSize: viewportSize,
+      imageSize: Size(ref.width.toDouble(), ref.height.toDouble()),
+      ctrl: ctrl,
+    );
+    if (p == null) return;
+    setState(() {
+      _loupeDragStart = p;
+      _loupeDraftRect = Rect.fromPoints(p, p);
+      _loupeImageSize = Size(ref.width.toDouble(), ref.height.toDouble());
+    });
+  }
+
+  void _updateAreaLoupeSelection({
+    required Offset local,
+    required Size viewportSize,
+    required Uint8List refBytes,
+    required TransformationController ctrl,
+  }) {
+    final start = _loupeDragStart;
+    if (start == null) return;
+    final ref = img.decodeImage(refBytes);
+    if (ref == null) return;
+    final p = _normalizedOverlayPoint(
+      local: local,
+      viewportSize: viewportSize,
+      imageSize: Size(ref.width.toDouble(), ref.height.toDouble()),
+      ctrl: ctrl,
+    );
+    if (p == null) return;
+    setState(() {
+      _loupeDraftRect = _normalizedRectFromPoints(start, p);
+      _loupeImageSize = Size(ref.width.toDouble(), ref.height.toDouble());
+    });
+  }
+
+  void _finishAreaLoupeSelection({
+    required Uint8List refBytes,
+    required Uint8List cmpBytes,
+  }) {
+    final draft = _loupeDraftRect;
+    if (draft == null) return;
+    final ref = img.decodeImage(refBytes);
+    final cmp = img.decodeImage(cmpBytes);
+    if (ref == null || cmp == null) return;
+    final normalized = _expandLoupeRect(draft);
+    final refCrop = _cropRectForImage(ref, normalized);
+    final cmpCrop = _cropRectForImage(cmp, normalized);
+    setState(() {
+      _areaLoupe = _AreaLoupe(
+        normalizedRect: normalized,
+        imageSize: Size(ref.width.toDouble(), ref.height.toDouble()),
+        refPng: _makeAreaLoupe(ref, normalized),
+        cmpPng: _makeAreaLoupe(cmp, normalized),
+        refWidth: refCrop.width,
+        refHeight: refCrop.height,
+        cmpWidth: cmpCrop.width,
+        cmpHeight: cmpCrop.height,
+      );
+      _loupeDraftRect = null;
+      _loupeDragStart = null;
+      _loupeImageSize = Size(ref.width.toDouble(), ref.height.toDouble());
+    });
+  }
+
+  Offset? _normalizedOverlayPoint({
+    required Offset local,
+    required Size viewportSize,
+    required Size imageSize,
+    required TransformationController ctrl,
+  }) {
+    final scenePoint = ctrl.toScene(local);
+    final rect = _containedImageRect(viewportSize, imageSize);
+    if (!rect.contains(scenePoint)) return null;
+    return Offset(
+      ((scenePoint.dx - rect.left) / rect.width).clamp(0.0, 1.0),
+      ((scenePoint.dy - rect.top) / rect.height).clamp(0.0, 1.0),
+    );
+  }
+
+  Rect _normalizedRectFromPoints(Offset a, Offset b) {
+    return Rect.fromLTRB(
+      min(a.dx, b.dx).clamp(0.0, 1.0),
+      min(a.dy, b.dy).clamp(0.0, 1.0),
+      max(a.dx, b.dx).clamp(0.0, 1.0),
+      max(a.dy, b.dy).clamp(0.0, 1.0),
+    );
+  }
+
+  Rect _expandLoupeRect(Rect rect) {
+    const minSide = 0.035;
+    var left = rect.left;
+    var top = rect.top;
+    var right = rect.right;
+    var bottom = rect.bottom;
+    if (right - left < minSide) {
+      final c = (left + right) / 2;
+      left = (c - minSide / 2).clamp(0.0, 1.0 - minSide);
+      right = left + minSide;
+    }
+    if (bottom - top < minSide) {
+      final c = (top + bottom) / 2;
+      top = (c - minSide / 2).clamp(0.0, 1.0 - minSide);
+      bottom = top + minSide;
+    }
+    return Rect.fromLTRB(left, top, right, bottom);
+  }
+
+  ({int x, int y, int width, int height}) _cropRectForImage(
+      img.Image source, Rect normalized) {
+    final x = (normalized.left * source.width)
+        .floor()
+        .clamp(0, source.width - 1)
+        .toInt();
+    final y = (normalized.top * source.height)
+        .floor()
+        .clamp(0, source.height - 1)
+        .toInt();
+    final right = (normalized.right * source.width)
+        .ceil()
+        .clamp(x + 1, source.width)
+        .toInt();
+    final bottom = (normalized.bottom * source.height)
+        .ceil()
+        .clamp(y + 1, source.height)
+        .toInt();
+    return (x: x, y: y, width: right - x, height: bottom - y);
+  }
+
   Uint8List _makeProbeLoupe(img.Image source, int cx, int cy) {
     const radius = 18;
     const outputSize = 180;
@@ -6079,6 +6440,27 @@ class _CompareScreenState extends State<CompareScreen>
       crop,
       width: outputSize,
       height: outputSize,
+      interpolation: img.Interpolation.nearest,
+    );
+    return Uint8List.fromList(img.encodePng(enlarged, level: 1));
+  }
+
+  Uint8List _makeAreaLoupe(img.Image source, Rect normalized) {
+    final cropRect = _cropRectForImage(source, normalized);
+    final crop = img.copyCrop(
+      source,
+      x: cropRect.x,
+      y: cropRect.y,
+      width: cropRect.width,
+      height: cropRect.height,
+    );
+    final aspect = crop.width / crop.height;
+    final width = aspect >= 1 ? 520 : max(160, (520 * aspect).round());
+    final height = aspect >= 1 ? max(160, (520 / aspect).round()) : 520;
+    final enlarged = img.copyResize(
+      crop,
+      width: width,
+      height: height,
       interpolation: img.Interpolation.nearest,
     );
     return Uint8List.fromList(img.encodePng(enlarged, level: 1));
@@ -6530,6 +6912,28 @@ class _PointProbe {
   });
 }
 
+class _AreaLoupe {
+  final Rect normalizedRect;
+  final Size imageSize;
+  final Uint8List refPng;
+  final Uint8List cmpPng;
+  final int refWidth;
+  final int refHeight;
+  final int cmpWidth;
+  final int cmpHeight;
+
+  const _AreaLoupe({
+    required this.normalizedRect,
+    required this.imageSize,
+    required this.refPng,
+    required this.cmpPng,
+    required this.refWidth,
+    required this.refHeight,
+    required this.cmpWidth,
+    required this.cmpHeight,
+  });
+}
+
 class _RgbColor {
   final int r;
   final int g;
@@ -6955,6 +7359,67 @@ class _ProbePointPainter extends CustomPainter {
   bool shouldRepaint(covariant _ProbePointPainter oldDelegate) {
     return oldDelegate.normalized != normalized ||
         oldDelegate.imageSize != imageSize;
+  }
+}
+
+class _LoupeSelectionPainter extends CustomPainter {
+  final Rect normalized;
+  final Size imageSize;
+  final bool active;
+
+  const _LoupeSelectionPainter({
+    required this.normalized,
+    required this.imageSize,
+    required this.active,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (imageSize == Size.zero) return;
+    final imageRect = _containedRect(size, imageSize);
+    final rect = Rect.fromLTRB(
+      imageRect.left + normalized.left * imageRect.width,
+      imageRect.top + normalized.top * imageRect.height,
+      imageRect.left + normalized.right * imageRect.width,
+      imageRect.top + normalized.bottom * imageRect.height,
+    );
+    if (rect.width <= 1 || rect.height <= 1) return;
+
+    final fill = Paint()
+      ..color =
+          (active ? AppTheme.blue : const Color(0xFF1D6E68)).withOpacity(0.13)
+      ..style = PaintingStyle.fill;
+    final outer = Paint()
+      ..color = Colors.black
+      ..strokeWidth = 3
+      ..style = PaintingStyle.stroke;
+    final inner = Paint()
+      ..color = active ? Colors.white : const Color(0xFFBFFFF8)
+      ..strokeWidth = 1.4
+      ..style = PaintingStyle.stroke;
+    canvas.drawRect(rect, fill);
+    canvas.drawRect(rect, outer);
+    canvas.drawRect(rect, inner);
+  }
+
+  Rect _containedRect(Size box, Size image) {
+    if (box.width <= 0 ||
+        box.height <= 0 ||
+        image.width <= 0 ||
+        image.height <= 0) {
+      return Offset.zero & box;
+    }
+    final scale = min(box.width / image.width, box.height / image.height);
+    final w = image.width * scale;
+    final h = image.height * scale;
+    return Rect.fromLTWH((box.width - w) / 2, (box.height - h) / 2, w, h);
+  }
+
+  @override
+  bool shouldRepaint(covariant _LoupeSelectionPainter oldDelegate) {
+    return oldDelegate.normalized != normalized ||
+        oldDelegate.imageSize != imageSize ||
+        oldDelegate.active != active;
   }
 }
 
