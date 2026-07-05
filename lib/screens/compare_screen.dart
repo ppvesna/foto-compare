@@ -1094,6 +1094,10 @@ class _CompareScreenState extends State<CompareScreen>
     });
   }
 
+  Future<void> _yieldUi() {
+    return Future<void>.delayed(const Duration(milliseconds: 16));
+  }
+
   bool get _canRunAlignedCompare =>
       _refImg != null &&
       _cmpImg != null &&
@@ -1144,7 +1148,12 @@ class _CompareScreenState extends State<CompareScreen>
       _setCompareStatus(
         'Этап 1/5: проверяю ч/б геометрию и базовую карту отличий...',
       );
-      final compareResult = await CompareService.compare(ref, cmp);
+      await _yieldUi();
+      final compareResult = await CompareService.compare(
+        ref,
+        cmp,
+        onProgress: (message) => _setCompareStatus(message),
+      );
       if (!mounted) return;
       setState(() {
         _result = compareResult;
@@ -1154,6 +1163,7 @@ class _CompareScreenState extends State<CompareScreen>
 
       // Lab-пирамида — точнее MAE, обновляем результат если OpenCV доступен.
       _setCompareStatus('Этап 2/5: рассчитываю цветовую карту Delta E...');
+      await _yieldUi();
       final lab = await OpenCvService.compareImages(ref, cmp);
       if (lab != null && mounted && _result != null) {
         final r = _result!;
@@ -1202,6 +1212,7 @@ class _CompareScreenState extends State<CompareScreen>
       }
 
       _setCompareStatus('Этап 3/5: проверяю штрихкоды и QR...');
+      await _yieldUi();
       final barcodeResults = await Future.wait([
         BarcodeService.scanImage(
           ref,
@@ -1219,6 +1230,7 @@ class _CompareScreenState extends State<CompareScreen>
         'Штрихкоды проверены: эталон ${_refBarcodes.length}, образец ${_cmpBarcodes.length}.',
       );
       _setCompareStatus('Этап 4/5: проверяю текст OCR...');
+      await _yieldUi();
 
       Future<OcrResult> ocrSafe(Uint8List b) async {
         try {
@@ -1249,6 +1261,7 @@ class _CompareScreenState extends State<CompareScreen>
       );
 
       _setCompareStatus('Этап 5/5: строю Lab ID и сохраняю протокол...');
+      await _yieldUi();
       final fingerprints = await Future.wait([
         LabFingerprintService.create(ref),
         LabFingerprintService.create(cmp),
@@ -2514,7 +2527,7 @@ class _CompareScreenState extends State<CompareScreen>
           const Padding(
             padding: EdgeInsets.all(10),
             child: Text(
-              'Включите «Лупа области», зажмите мышь на карте сравнения и выделите прямоугольник. Здесь появится увеличенное наложение эталона и образца; ползунок над картой переключает вид.',
+              'Зажмите мышь на карте сравнения и выделите прямоугольник. Окно сравнения приблизит выбранное место; ползунок над картой переключает эталон и образец.',
               style:
                   TextStyle(fontSize: 11, height: 1.35, color: Colors.black54),
             ),
@@ -2522,59 +2535,31 @@ class _CompareScreenState extends State<CompareScreen>
         else
           Padding(
             padding: const EdgeInsets.all(8),
-            child: Container(
-              height: 190,
-              decoration: BoxDecoration(
-                color: Colors.black,
-                border: Border.all(color: const Color(0xFFC9E2F0)),
-                borderRadius: BorderRadius.circular(8),
+            child: Row(children: [
+              const Icon(Icons.zoom_in, size: 16, color: Color(0xFF1D6E68)),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                  'Область приближена в окне сравнения. Двигайте ползунок: эталон ↔ образец.',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    height: 1.35,
+                    color: Colors.black54,
+                  ),
+                ),
               ),
-              clipBehavior: Clip.antiAlias,
-              child: Stack(fit: StackFit.expand, children: [
-                Image.memory(
-                  loupe.refPng,
-                  fit: BoxFit.contain,
-                  filterQuality: FilterQuality.none,
-                  gaplessPlayback: true,
-                ),
-                Opacity(
-                  opacity: _diffSlider,
-                  child: Image.memory(
-                    loupe.cmpPng,
-                    fit: BoxFit.contain,
-                    filterQuality: FilterQuality.none,
-                    gaplessPlayback: true,
-                  ),
-                ),
-                const _LoupeCrosshair(),
-                Positioned(
-                  right: 8,
-                  top: 7,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.62),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 7, vertical: 4),
-                      child: Text(
-                        _diffSlider < 0.08
-                            ? 'эталон'
-                            : _diffSlider > 0.92
-                                ? 'образец'
-                                : 'наложение ${(100 * _diffSlider).round()}%',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ]),
-            ),
+              TextButton(
+                onPressed: () {
+                  _resultCmpCtrl.value = Matrix4.identity();
+                  setState(() {
+                    _areaLoupe = null;
+                    _loupeDraftRect = null;
+                    _loupeDragStart = null;
+                  });
+                },
+                child: const Text('Сбросить'),
+              ),
+            ]),
           ),
       ]),
     );
@@ -6207,8 +6192,10 @@ class _CompareScreenState extends State<CompareScreen>
                         cmpBase != null &&
                         _inspectionTool == _InspectionTool.loupe
                     ? (_) => _finishAreaLoupeSelection(
+                          viewportSize: boxSize,
                           refBytes: refBase,
                           cmpBytes: cmpBase,
+                          ctrl: ctrl,
                         )
                     : null,
                 child: InteractiveViewer(
@@ -6352,8 +6339,10 @@ class _CompareScreenState extends State<CompareScreen>
   }
 
   void _finishAreaLoupeSelection({
+    required Size viewportSize,
     required Uint8List refBytes,
     required Uint8List cmpBytes,
+    required TransformationController ctrl,
   }) {
     final draft = _loupeDraftRect;
     if (draft == null) return;
@@ -6367,8 +6356,6 @@ class _CompareScreenState extends State<CompareScreen>
       _areaLoupe = _AreaLoupe(
         normalizedRect: normalized,
         imageSize: Size(ref.width.toDouble(), ref.height.toDouble()),
-        refPng: _makeAreaLoupe(ref, normalized),
-        cmpPng: _makeAreaLoupe(cmp, normalized),
         refWidth: refCrop.width,
         refHeight: refCrop.height,
         cmpWidth: cmpCrop.width,
@@ -6378,6 +6365,38 @@ class _CompareScreenState extends State<CompareScreen>
       _loupeDragStart = null;
       _loupeImageSize = Size(ref.width.toDouble(), ref.height.toDouble());
     });
+    _zoomComparisonToRect(
+      normalized,
+      viewportSize: viewportSize,
+      imageSize: Size(ref.width.toDouble(), ref.height.toDouble()),
+      ctrl: ctrl,
+    );
+  }
+
+  void _zoomComparisonToRect(
+    Rect normalized, {
+    required Size viewportSize,
+    required Size imageSize,
+    required TransformationController ctrl,
+  }) {
+    final imageRect = _containedImageRect(viewportSize, imageSize);
+    if (imageRect.width <= 0 || imageRect.height <= 0) return;
+    final target = Rect.fromLTRB(
+      imageRect.left + normalized.left * imageRect.width,
+      imageRect.top + normalized.top * imageRect.height,
+      imageRect.left + normalized.right * imageRect.width,
+      imageRect.top + normalized.bottom * imageRect.height,
+    );
+    if (target.width <= 1 || target.height <= 1) return;
+    final scale = (min(viewportSize.width / target.width,
+                viewportSize.height / target.height) *
+            0.86)
+        .clamp(0.7, 8.0);
+    final tx = viewportSize.width / 2 - target.center.dx * scale;
+    final ty = viewportSize.height / 2 - target.center.dy * scale;
+    ctrl.value = Matrix4.identity()
+      ..translate(tx, ty)
+      ..scale(scale);
   }
 
   Offset? _normalizedOverlayPoint({
@@ -6462,27 +6481,6 @@ class _CompareScreenState extends State<CompareScreen>
       crop,
       width: outputSize,
       height: outputSize,
-      interpolation: img.Interpolation.nearest,
-    );
-    return Uint8List.fromList(img.encodePng(enlarged, level: 1));
-  }
-
-  Uint8List _makeAreaLoupe(img.Image source, Rect normalized) {
-    final cropRect = _cropRectForImage(source, normalized);
-    final crop = img.copyCrop(
-      source,
-      x: cropRect.x,
-      y: cropRect.y,
-      width: cropRect.width,
-      height: cropRect.height,
-    );
-    final aspect = crop.width / crop.height;
-    final width = aspect >= 1 ? 520 : max(160, (520 * aspect).round());
-    final height = aspect >= 1 ? max(160, (520 / aspect).round()) : 520;
-    final enlarged = img.copyResize(
-      crop,
-      width: width,
-      height: height,
       interpolation: img.Interpolation.nearest,
     );
     return Uint8List.fromList(img.encodePng(enlarged, level: 1));
@@ -6937,8 +6935,6 @@ class _PointProbe {
 class _AreaLoupe {
   final Rect normalizedRect;
   final Size imageSize;
-  final Uint8List refPng;
-  final Uint8List cmpPng;
   final int refWidth;
   final int refHeight;
   final int cmpWidth;
@@ -6947,8 +6943,6 @@ class _AreaLoupe {
   const _AreaLoupe({
     required this.normalizedRect,
     required this.imageSize,
-    required this.refPng,
-    required this.cmpPng,
     required this.refWidth,
     required this.refHeight,
     required this.cmpWidth,

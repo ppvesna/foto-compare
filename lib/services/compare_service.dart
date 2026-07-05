@@ -6,8 +6,18 @@ import 'package:image/image.dart' as img;
 import 'compare_settings_service.dart';
 
 class CompareService {
-  static Future<CompareResult> compare(Uint8List ref, Uint8List cmp) async {
+  static Future<CompareResult> compare(
+    Uint8List ref,
+    Uint8List cmp, {
+    ValueChanged<String>? onProgress,
+  }) async {
     final settings = await CompareSettingsService.load();
+    if (kIsWeb) {
+      return _runYielding(
+        [ref, cmp, settings.deltaEdgeTolerancePx],
+        onProgress: onProgress,
+      );
+    }
     return compute(_run, [ref, cmp, settings.deltaEdgeTolerancePx]);
   }
 }
@@ -150,6 +160,102 @@ _TileCompareData _compareTiles(
   );
 }
 
+Future<_TileCompareData> _compareTilesYielding(
+  img.Image r,
+  img.Image c,
+  int edgeToleranceRadius, {
+  ValueChanged<String>? onProgress,
+}) async {
+  final residualShift = _estimateResidualShift(r, c);
+  final refEdges = _edgeMask(r);
+  final cmpEdges = _edgeMask(c);
+  final w = r.width;
+  final h = r.height;
+  final zoneCols = (w + _defectZoneSize - 1) ~/ _defectZoneSize;
+  final out = img.Image(width: w, height: h, numChannels: 4);
+  double diff = 0;
+  double maxDeltaE = 0;
+  int diffPx = 0;
+  int validPx = 0;
+  final defectZones = <int>{};
+  final tileCols = (w + _tileSize - 1) ~/ _tileSize;
+  final tileRows = (h + _tileSize - 1) ~/ _tileSize;
+  final totalTiles = tileCols * tileRows;
+  var doneTiles = 0;
+
+  for (int y0 = 0; y0 < h; y0 += _tileSize) {
+    final y1 = (y0 + _tileSize).clamp(0, h);
+    for (int x0 = 0; x0 < w; x0 += _tileSize) {
+      final x1 = (x0 + _tileSize).clamp(0, w);
+      for (int y = y0; y < y1; y++) {
+        for (int x = x0; x < x1; x++) {
+          final pr = r.getPixel(x, y);
+          final cx = x + residualShift.x;
+          final cy = y + residualShift.y;
+          if (cx < 0 || cy < 0 || cx >= w || cy >= h) {
+            out.setPixelRgba(x, y, 0, 0, 0, 0);
+            continue;
+          }
+          final pc = c.getPixel(cx, cy);
+          if (_noData(pr) || _noData(pc)) {
+            out.setPixelRgba(x, y, 0, 0, 0, 0);
+            continue;
+          }
+          var deltaE = _deltaE76(pr, pc);
+          if (edgeToleranceRadius > 0 &&
+              deltaE >= _minorDeltaE &&
+              (_isEdgeNear(refEdges, w, h, x, y, edgeToleranceRadius) ||
+                  _isEdgeNear(cmpEdges, w, h, cx, cy, edgeToleranceRadius))) {
+            deltaE = math.min(
+              deltaE,
+              _minLocalDeltaE(pr, c, cx, cy, edgeToleranceRadius),
+            );
+          }
+          diff += deltaE;
+          if (deltaE > maxDeltaE) maxDeltaE = deltaE;
+          validPx++;
+          if (deltaE >= _minorDeltaE) diffPx++;
+          if (deltaE >= _strongDeltaE) {
+            defectZones
+                .add((y ~/ _defectZoneSize) * zoneCols + x ~/ _defectZoneSize);
+          }
+          if (deltaE < _minorDeltaE) {
+            out.setPixelRgba(x, y, 0, 0, 0, 0);
+          } else if (deltaE < _strongDeltaE) {
+            final a =
+                ((deltaE - _minorDeltaE) / (_strongDeltaE - _minorDeltaE) * 210)
+                    .toInt();
+            out.setPixelRgba(x, y, 30, 210, 30, a);
+          } else if (deltaE < _criticalDeltaE) {
+            final a = 180 +
+                ((deltaE - _strongDeltaE) /
+                        (_criticalDeltaE - _strongDeltaE) *
+                        50)
+                    .toInt();
+            out.setPixelRgba(x, y, 255, 170, 0, a.clamp(0, 230));
+          } else {
+            out.setPixelRgba(x, y, 240, 20, 20, 230);
+          }
+        }
+      }
+      doneTiles++;
+      onProgress?.call('Delta E: тайл $doneTiles / $totalTiles...');
+      await Future<void>.delayed(Duration.zero);
+    }
+  }
+
+  onProgress?.call('Delta E: кодирую карту отличий...');
+  await Future<void>.delayed(Duration.zero);
+  return _TileCompareData(
+    diff: diff,
+    diffPixels: diffPx,
+    totalPixels: validPx == 0 ? w * h : validPx,
+    maxDeltaE: maxDeltaE,
+    defectZoneCount: defectZones.length,
+    diffPng: Uint8List.fromList(img.encodePng(out)),
+  );
+}
+
 GeometryCompareData _compareGeometry(img.Image r, img.Image c) {
   final residualShift = _estimateResidualShift(r, c);
   final refEdges = _edgeMask(r);
@@ -198,6 +304,78 @@ GeometryCompareData _compareGeometry(img.Image r, img.Image c) {
   final shiftPx = math.sqrt(
       residualShift.x * residualShift.x + residualShift.y * residualShift.y);
 
+  return GeometryCompareData(
+    score: score.clamp(0.0, 100.0),
+    shiftPx: shiftPx,
+    missingPercent: missingPercent,
+    extraPercent: extraPercent,
+    overlapPixels: overlap,
+    missingPixels: missing,
+    extraPixels: extra,
+    diffPng: Uint8List.fromList(img.encodePng(out)),
+  );
+}
+
+Future<GeometryCompareData> _compareGeometryYielding(
+  img.Image r,
+  img.Image c, {
+  ValueChanged<String>? onProgress,
+}) async {
+  final residualShift = _estimateResidualShift(r, c);
+  final refEdges = _edgeMask(r);
+  final cmpEdges = _edgeMask(c);
+  final out = img.Image(width: r.width, height: r.height, numChannels: 4);
+  int refEdgeCount = 0;
+  int cmpEdgeCount = 0;
+  int overlap = 0;
+  int missing = 0;
+  int extra = 0;
+  final rowStep = math.max(64, r.height ~/ 24);
+
+  for (int y = 0; y < r.height; y++) {
+    for (int x = 0; x < r.width; x++) {
+      final i = y * r.width + x;
+      final refHas = refEdges[i] == 1;
+      if (refHas) refEdgeCount++;
+
+      final cx = x + residualShift.x;
+      final cy = y + residualShift.y;
+      final cmpHas = cx >= 0 &&
+          cy >= 0 &&
+          cx < c.width &&
+          cy < c.height &&
+          cmpEdges[cy * c.width + cx] == 1;
+      if (cmpHas) cmpEdgeCount++;
+
+      if (refHas && cmpHas) {
+        overlap++;
+        out.setPixelRgba(x, y, 0, 0, 0, 0);
+      } else if (refHas) {
+        missing++;
+        out.setPixelRgba(x, y, 40, 90, 255, 210);
+      } else if (cmpHas) {
+        extra++;
+        out.setPixelRgba(x, y, 230, 30, 120, 210);
+      } else {
+        out.setPixelRgba(x, y, 0, 0, 0, 0);
+      }
+    }
+    if (y % rowStep == 0) {
+      final pct = (y / math.max(1, r.height) * 100).clamp(0, 100).round();
+      onProgress?.call('ЧБ геометрия: $pct%...');
+      await Future<void>.delayed(Duration.zero);
+    }
+  }
+
+  final union = refEdgeCount + cmpEdgeCount - overlap;
+  final score = union == 0 ? 100.0 : overlap / union * 100;
+  final missingPercent = refEdgeCount == 0 ? 0.0 : missing / refEdgeCount * 100;
+  final extraPercent = cmpEdgeCount == 0 ? 0.0 : extra / cmpEdgeCount * 100;
+  final shiftPx = math.sqrt(
+      residualShift.x * residualShift.x + residualShift.y * residualShift.y);
+
+  onProgress?.call('ЧБ геометрия: кодирую карту...');
+  await Future<void>.delayed(Duration.zero);
   return GeometryCompareData(
     score: score.clamp(0.0, 100.0),
     shiftPx: shiftPx,
@@ -451,6 +629,88 @@ CompareResult _run(List<dynamic> args) {
   final scaled = (avgDiff / _criticalDeltaE).clamp(0.0, 1.0);
   final similarity = ((1 - scaled) * 100).clamp(0.0, 100.0);
 
+  return CompareResult(
+    similarity: similarity,
+    diffPixels: tileResult.diffPixels,
+    totalPixels: tileResult.totalPixels,
+    refSize: '${imgRef.width}×${imgRef.height}',
+    cmpSize: '${imgCmp.width}×${imgCmp.height}',
+    meanDeltaE: avgDiff,
+    maxDeltaE: tileResult.maxDeltaE,
+    defectZoneCount: tileResult.defectZoneCount,
+    defectAreaPercent: tileResult.diffPixels / tileResult.totalPixels * 100,
+    refCanonical: Uint8List.fromList(img.encodePng(refCanonical)),
+    cmpCanonical: Uint8List.fromList(img.encodePng(cmpCanonical)),
+    diffL3: tileResult.diffPng,
+    geometryScore: geometry.score,
+    geometryShiftPx: geometry.shiftPx,
+    geometryMissingPercent: geometry.missingPercent,
+    geometryExtraPercent: geometry.extraPercent,
+    geometryOverlapPixels: geometry.overlapPixels,
+    geometryMissingPixels: geometry.missingPixels,
+    geometryExtraPixels: geometry.extraPixels,
+    geometryDiff: geometry.diffPng,
+    geometryRefCanonical: Uint8List.fromList(img.encodePng(refCanonical)),
+    geometryCmpCanonical: Uint8List.fromList(img.encodePng(cmpCanonical)),
+  );
+}
+
+Future<CompareResult> _runYielding(
+  List<dynamic> args, {
+  ValueChanged<String>? onProgress,
+}) async {
+  onProgress?.call('Декодирую изображения...');
+  await Future<void>.delayed(Duration.zero);
+  final imgRef = img.decodeImage(args[0] as Uint8List);
+  final imgCmp = img.decodeImage(args[1] as Uint8List);
+  final edgeToleranceRadius =
+      args.length > 2 ? (args[2] as int).clamp(0, 3) : 2;
+  if (imgRef == null || imgCmp == null) {
+    throw Exception('Не удалось декодировать изображение');
+  }
+
+  final refCanonical = imgRef;
+  onProgress?.call('Привожу образец к размеру эталона...');
+  await Future<void>.delayed(Duration.zero);
+  final cmpCanonicalRaw =
+      imgCmp.width == imgRef.width && imgCmp.height == imgRef.height
+          ? imgCmp
+          : img.copyResize(
+              imgCmp,
+              width: imgRef.width,
+              height: imgRef.height,
+              interpolation: img.Interpolation.average,
+            );
+
+  onProgress?.call('Нормализую яркость...');
+  await Future<void>.delayed(Duration.zero);
+  final refMean = _meanLuminance(refCanonical);
+  final cmpMean = _meanLuminance(cmpCanonicalRaw);
+  final lumScale = cmpMean < 1 ? 1.0 : refMean / cmpMean;
+  final cmpCanonical = _applyLuminanceScale(cmpCanonicalRaw, lumScale);
+
+  onProgress?.call('Считаю Delta E по тайлам...');
+  final tileResult = await _compareTilesYielding(
+    refCanonical,
+    cmpCanonical,
+    edgeToleranceRadius,
+    onProgress: onProgress,
+  );
+
+  onProgress?.call('Проверяю ЧБ геометрию...');
+  final geometry = await _compareGeometryYielding(
+    refCanonical,
+    cmpCanonical,
+    onProgress: onProgress,
+  );
+  final avgDiff = tileResult.totalPixels == 0
+      ? 0.0
+      : tileResult.diff / tileResult.totalPixels;
+  final scaled = (avgDiff / _criticalDeltaE).clamp(0.0, 1.0);
+  final similarity = ((1 - scaled) * 100).clamp(0.0, 100.0);
+
+  onProgress?.call('Формирую карты сравнения...');
+  await Future<void>.delayed(Duration.zero);
   return CompareResult(
     similarity: similarity,
     diffPixels: tileResult.diffPixels,
