@@ -3,15 +3,28 @@ import '../widgets/xp_widgets.dart';
 
 class HomeScreen extends StatelessWidget {
   final String email;
+  final String displayName;
+  final String nickname;
+  final String organizationName;
   final VoidCallback onOpenSettings;
   final VoidCallback onSignOut;
 
   const HomeScreen({
     super.key,
     required this.email,
+    required this.displayName,
+    required this.nickname,
+    required this.organizationName,
     required this.onOpenSettings,
     required this.onSignOut,
   });
+
+  String get _shownNick =>
+      nickname.trim().isEmpty ? 'не задан' : nickname.trim();
+  String get _shownOrg =>
+      organizationName.trim().isEmpty ? 'не указана' : organizationName.trim();
+  String get _shownName =>
+      displayName.trim().isEmpty ? 'профиль без имени' : displayName.trim();
 
   @override
   Widget build(BuildContext context) {
@@ -24,7 +37,7 @@ class HomeScreen extends StatelessWidget {
             onTap: () => xpDlg(
               context,
               'Профиль',
-              'Email: ${email.isEmpty ? 'не указан' : email}\nПлан: Бесплатный',
+              'Email: ${email.isEmpty ? 'не указан' : email}\nНик: $_shownNick\nОрганизация: $_shownOrg\nПлан: Бесплатный',
             ),
           ),
           XpMenuItem(
@@ -39,6 +52,11 @@ class HomeScreen extends StatelessWidget {
       Expanded(
         child: Stack(children: [
           const Positioned.fill(child: _HomePhotoBackground()),
+          Positioned(
+            left: 22,
+            top: 18,
+            child: _TriMatrixLogo(organizationName: _shownOrg),
+          ),
           LayoutBuilder(builder: (context, constraints) {
             final wide = constraints.maxWidth >= 880;
             return SingleChildScrollView(
@@ -232,6 +250,9 @@ class HomeScreen extends StatelessWidget {
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               _profileRow('Email', email.isEmpty ? 'не указан' : email),
+              _profileRow('Ник', _shownNick),
+              _profileRow('Имя', _shownName),
+              _profileRow('Организация', _shownOrg),
               _profileRow('План', 'Бесплатный'),
               _profileRow('Лимит', '10 проверок в день'),
               _profileRow('Облако', 'протоколы и превью позже'),
@@ -349,6 +370,117 @@ class _SoftChip extends StatelessWidget {
           letterSpacing: 0,
         ),
       ),
+    );
+  }
+}
+
+class _TriMatrixLogo extends StatelessWidget {
+  final String organizationName;
+
+  const _TriMatrixLogo({required this.organizationName});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 218,
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 11),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF05070A), Color(0xFF20262C), Color(0xFF0A0D10)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFF46515A)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0xAA000000),
+            blurRadius: 18,
+            offset: Offset(0, 9),
+          ),
+          BoxShadow(
+            color: Color(0x44A7F3FF),
+            blurRadius: 12,
+            offset: Offset(-2, -2),
+          ),
+        ],
+      ),
+      child: Row(children: [
+        Container(
+          width: 38,
+          height: 38,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: const RadialGradient(
+              colors: [Color(0xFF5E6A72), Color(0xFF171B20), Color(0xFF05070A)],
+              stops: [0.0, 0.62, 1.0],
+            ),
+            border: Border.all(color: const Color(0xFF7C8A94)),
+          ),
+          child: const Center(
+            child: Text(
+              'TM',
+              style: TextStyle(
+                color: Color(0xFFE7EEF4),
+                fontSize: 11,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0,
+                shadows: [
+                  Shadow(
+                    color: Color(0xFF000000),
+                    blurRadius: 4,
+                    offset: Offset(0, 2),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            ShaderMask(
+              shaderCallback: (rect) => const LinearGradient(
+                colors: [
+                  Color(0xFFFFFFFF),
+                  Color(0xFF95A3AD),
+                  Color(0xFFE8F7FF)
+                ],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+              ).createShader(rect),
+              child: const Text(
+                'TriMatrix',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0,
+                  shadows: [
+                    Shadow(
+                      color: Color(0xFF000000),
+                      blurRadius: 6,
+                      offset: Offset(0, 3),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            Text(
+              organizationName == 'не указана'
+                  ? 'print inspection'
+                  : organizationName,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Color(0xFFA8B3BC),
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ]),
+        ),
+      ]),
     );
   }
 }

@@ -5,7 +5,18 @@ import '../widgets/xp_widgets.dart';
 enum _ChatKind { internal, approval }
 
 class ChatScreen extends StatefulWidget {
-  const ChatScreen({super.key});
+  final String email;
+  final String displayName;
+  final String nickname;
+  final String organizationName;
+
+  const ChatScreen({
+    super.key,
+    required this.email,
+    required this.displayName,
+    required this.nickname,
+    required this.organizationName,
+  });
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -16,6 +27,20 @@ class _ChatScreenState extends State<ChatScreen> {
   String _approvalStatus = 'Ожидает согласования';
   final _msgCtrl = TextEditingController();
   final _scrollCtrl = ScrollController();
+
+  String get _userName {
+    if (widget.displayName.trim().isNotEmpty) return widget.displayName.trim();
+    if (widget.nickname.trim().isNotEmpty) return widget.nickname.trim();
+    if (widget.email.trim().isNotEmpty) return widget.email.split('@').first;
+    return 'Олег';
+  }
+
+  String get _userNick =>
+      widget.nickname.trim().isEmpty ? 'ник не задан' : widget.nickname.trim();
+
+  String get _organizationName => widget.organizationName.trim().isEmpty
+      ? 'TriMatrix'
+      : widget.organizationName.trim();
 
   final _chats = const [
     _ChatItem(
@@ -167,7 +192,7 @@ class _ChatScreenState extends State<ChatScreen> {
             onTap: () => xpDlg(
               context,
               'Участники',
-              'Олег, Мария, Иван. Роли и права позже будут браться из Supabase.',
+              '$_userName ($_userNick), Мария, Иван. Роли и права позже будут браться из Supabase.',
             ),
           ),
           XpMenuItem(
@@ -199,10 +224,21 @@ class _ChatScreenState extends State<ChatScreen> {
         }),
       ),
       XpStatusBar(
-        left: _chats[_activeChat].title,
+        left: _chatTitle(_chats[_activeChat]),
         right: 'Чат организации · картинки по разрешению',
       ),
     ]);
+  }
+
+  String _chatTitle(_ChatItem chat) {
+    return chat.title == 'Олег' ? _userName : chat.title;
+  }
+
+  String _chatSubtitle(_ChatItem chat) {
+    if (chat.title != 'Олег') return chat.subtitle;
+    final email =
+        widget.email.trim().isEmpty ? 'email не указан' : widget.email;
+    return '$email · $_userNick';
   }
 
   Widget _chatList() {
@@ -273,16 +309,19 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ),
         const SizedBox(width: 9),
-        const Expanded(
+        Expanded(
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(
               'TriMatrix',
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900),
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w900),
             ),
             Text(
-              'организация и группы',
-              style: TextStyle(fontSize: 10, color: Colors.black54),
+              _organizationName == 'TriMatrix'
+                  ? 'организация и группы'
+                  : _organizationName,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 10, color: Colors.black54),
             ),
           ]),
         ),
@@ -302,6 +341,8 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _chatTile(int index) {
     final chat = _chats[index];
     final active = index == _activeChat;
+    final title = _chatTitle(chat);
+    final subtitle = _chatSubtitle(chat);
     return InkWell(
       onTap: () => setState(() => _activeChat = index),
       borderRadius: BorderRadius.circular(16),
@@ -317,7 +358,7 @@ class _ChatScreenState extends State<ChatScreen> {
           boxShadow: active ? AppTheme.shadowSubtle : null,
         ),
         child: Row(children: [
-          _avatar(chat.title, chat.color, size: 40),
+          _avatar(title, chat.color, size: 40),
           const SizedBox(width: 9),
           Expanded(
             child:
@@ -325,7 +366,7 @@ class _ChatScreenState extends State<ChatScreen> {
               Row(children: [
                 Expanded(
                   child: Text(
-                    chat.title,
+                    title,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       fontSize: 12,
@@ -342,7 +383,7 @@ class _ChatScreenState extends State<ChatScreen> {
               Row(children: [
                 Expanded(
                   child: Text(
-                    chat.subtitle,
+                    subtitle,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontSize: 10, color: Colors.black54),
                   ),
@@ -377,6 +418,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _chatHeader(_ChatItem chat) {
+    final title = _chatTitle(chat);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: const BoxDecoration(
@@ -384,13 +426,13 @@ class _ChatScreenState extends State<ChatScreen> {
         border: Border(bottom: BorderSide(color: AppTheme.border)),
       ),
       child: Row(children: [
-        _avatar(chat.title, chat.color, size: 38),
+        _avatar(title, chat.color, size: 38),
         const SizedBox(width: 10),
         Expanded(
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(
-              chat.title,
+              title,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w900),
             ),
@@ -421,6 +463,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final align = message.isMine ? Alignment.centerRight : Alignment.centerLeft;
     final color = message.isMine ? const Color(0xFFDFF7D9) : Colors.white;
     final border = message.isMine ? const Color(0xFFA7D79D) : AppTheme.border;
+    final author = message.isMine ? _userName : message.author;
     return Align(
       alignment: align,
       child: ConstrainedBox(
@@ -437,13 +480,12 @@ class _ChatScreenState extends State<ChatScreen> {
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
-              _avatar(message.author,
-                  message.isMine ? AppTheme.simHigh : AppTheme.blue,
+              _avatar(author, message.isMine ? AppTheme.simHigh : AppTheme.blue,
                   size: 26),
               const SizedBox(width: 7),
               Expanded(
                 child: Text(
-                  '${message.author} · ${message.role}',
+                  '$author · ${message.role}',
                   style: const TextStyle(
                     fontSize: 10,
                     fontWeight: FontWeight.w800,
@@ -1148,7 +1190,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _approvalStatus = status;
       _approvalMessages.add(
         _ChatMessage(
-          author: 'Олег',
+          author: _userName,
           role: 'менеджер',
           time: time,
           text: 'Статус согласования изменен: $status.',
@@ -1166,7 +1208,7 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       _visibleMessages.add(
         _ChatMessage(
-          author: 'Олег',
+          author: _userName,
           role: _chats[_activeChat].kind == _ChatKind.approval
               ? 'менеджер'
               : 'оператор',

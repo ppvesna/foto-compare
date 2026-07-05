@@ -103,14 +103,27 @@ class _MainShellState extends State<MainShell> {
   Widget build(BuildContext context) {
     final user = Supabase.instance.client.auth.currentUser;
     final email = user?.email ?? '';
+    final metadata = user?.userMetadata ?? {};
+    final displayName = (metadata['display_name'] as String?)?.trim() ?? '';
+    final nickname = (metadata['nickname'] as String?)?.trim() ?? '';
+    final organizationName =
+        (metadata['organization_name'] as String?)?.trim() ?? '';
     final screens = [
       HomeScreen(
         email: email,
+        displayName: displayName,
+        nickname: nickname,
+        organizationName: organizationName,
         onOpenSettings: () => _onTab(3),
         onSignOut: _signOut,
       ),
       const CompareScreen(),
-      const ChatScreen(),
+      ChatScreen(
+        email: email,
+        displayName: displayName,
+        nickname: nickname,
+        organizationName: organizationName,
+      ),
       const SettingsScreen(),
     ];
 
