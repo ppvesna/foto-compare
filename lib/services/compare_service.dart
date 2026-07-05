@@ -3,9 +3,12 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
 
+import 'compare_settings_service.dart';
+
 class CompareService {
-  static Future<CompareResult> compare(Uint8List ref, Uint8List cmp) {
-    return compute(_run, [ref, cmp]);
+  static Future<CompareResult> compare(Uint8List ref, Uint8List cmp) async {
+    final settings = await CompareSettingsService.load();
+    return compute(_run, [ref, cmp, settings.deltaEdgeTolerancePx]);
   }
 }
 
@@ -19,7 +22,6 @@ const int _defectZoneSize = 64;
 const double _minorDeltaE = 3.0;
 const double _strongDeltaE = 6.0;
 const double _criticalDeltaE = 12.0;
-const int _edgeToleranceRadius = 1;
 
 double _pivotRgb(num v) {
   final c = v / 255.0;
@@ -56,7 +58,11 @@ double _deltaE76(img.Pixel ref, img.Pixel cmp) {
   return math.sqrt(dl * dl + da * da + db * db);
 }
 
-_TileCompareData _compareTiles(img.Image r, img.Image c) {
+_TileCompareData _compareTiles(
+  img.Image r,
+  img.Image c,
+  int edgeToleranceRadius,
+) {
   final residualShift = _estimateResidualShift(r, c);
   final refEdges = _edgeMask(r);
   final cmpEdges = _edgeMask(c);
@@ -89,9 +95,10 @@ _TileCompareData _compareTiles(img.Image r, img.Image c) {
             continue;
           }
           var deltaE = _deltaE76(pr, pc);
-          if (deltaE >= _minorDeltaE &&
-              (_isEdgeNear(refEdges, w, h, x, y, _edgeToleranceRadius) ||
-                  _isEdgeNear(cmpEdges, w, h, cx, cy, _edgeToleranceRadius))) {
+          if (edgeToleranceRadius > 0 &&
+              deltaE >= _minorDeltaE &&
+              (_isEdgeNear(refEdges, w, h, x, y, edgeToleranceRadius) ||
+                  _isEdgeNear(cmpEdges, w, h, cx, cy, edgeToleranceRadius))) {
             deltaE = math.min(
               deltaE,
               _minLocalDeltaE(
@@ -99,7 +106,7 @@ _TileCompareData _compareTiles(img.Image r, img.Image c) {
                 c,
                 cx,
                 cy,
-                _edgeToleranceRadius,
+                edgeToleranceRadius,
               ),
             );
           }
@@ -409,9 +416,11 @@ double _meanLuminance(img.Image src) {
   return count == 0 ? 0 : sum / count;
 }
 
-CompareResult _run(List<Uint8List> args) {
-  final imgRef = img.decodeImage(args[0]);
-  final imgCmp = img.decodeImage(args[1]);
+CompareResult _run(List<dynamic> args) {
+  final imgRef = img.decodeImage(args[0] as Uint8List);
+  final imgCmp = img.decodeImage(args[1] as Uint8List);
+  final edgeToleranceRadius =
+      args.length > 2 ? (args[2] as int).clamp(0, 3) : 2;
   if (imgRef == null || imgCmp == null) {
     throw Exception('Не удалось декодировать изображение');
   }
@@ -433,7 +442,8 @@ CompareResult _run(List<Uint8List> args) {
   final lumScale = cmpMean < 1 ? 1.0 : refMean / cmpMean;
   final cmpCanonical = _applyLuminanceScale(cmpCanonicalRaw, lumScale);
 
-  final tileResult = _compareTiles(refCanonical, cmpCanonical);
+  final tileResult =
+      _compareTiles(refCanonical, cmpCanonical, edgeToleranceRadius);
   final geometry = _compareGeometry(refCanonical, cmpCanonical);
   final avgDiff = tileResult.totalPixels == 0
       ? 0.0

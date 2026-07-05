@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/app_theme.dart';
 import '../services/calibration_settings_service.dart';
 import '../services/check_history_service.dart';
+import '../services/compare_settings_service.dart';
 import '../widgets/xp_widgets.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -30,6 +31,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String _colorProfile = 'ISO Coated v2 / FOGRA39';
   CalibrationPointSettings _calibrationSettings =
       CalibrationPointSettings.defaults;
+  CompareSettings _compareSettings = CompareSettings.defaults;
 
   static const _sections = [
     _SettingsSection('Аккаунт', 'профиль и синхронизация'),
@@ -46,11 +48,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void initState() {
     super.initState();
     _loadCalibrationSettings();
+    _loadCompareSettings();
   }
 
   Future<void> _loadCalibrationSettings() async {
     final settings = await CalibrationSettingsService.load();
     if (mounted) setState(() => _calibrationSettings = settings);
+  }
+
+  Future<void> _loadCompareSettings() async {
+    final settings = await CompareSettingsService.load();
+    if (mounted) setState(() => _compareSettings = settings);
   }
 
   final _dotRows = const [
@@ -384,6 +392,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _NumberSpec('Серый баланс', '2.5'),
             _NumberSpec('Порог пятен px', '12'),
           ]),
+          const SizedBox(height: 8),
+          _sliderRow(
+            title: 'Допуск контура Delta E',
+            subtitle:
+                'в цветовой карте вокруг текста и штрихов ищем совпадение в малом радиусе; ЧБ геометрия остается строгой',
+            value: _compareSettings.deltaEdgeTolerancePx.toDouble(),
+            min: 0,
+            max: 3,
+            divisions: 3,
+            suffix: 'px',
+            onChanged: (v) => setState(() {
+              _compareSettings = _compareSettings.copyWith(
+                deltaEdgeTolerancePx: v.round(),
+              );
+            }),
+          ),
+          _infoRow(
+            'Режим',
+            _compareSettings.deltaEdgeTolerancePx == 0
+                ? 'строгий Delta E без слияния контуров'
+                : 'Delta E смягчает шум по краям текста, а смещение показывает ЧБ геометрия',
+          ),
         ]),
       ),
       const SizedBox(height: 10),
@@ -853,11 +883,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _saveSettings() async {
     await CalibrationSettingsService.save(_calibrationSettings);
+    await CompareSettingsService.save(_compareSettings);
     if (!mounted) return;
     xpDlg(
       context,
       'Сохранено',
-      'Настройки применены локально. Параметры калибровочных точек уже используются на экране сравнения.',
+      'Настройки применены локально. Параметры калибровки и Delta E будут использоваться на экране сравнения.',
     );
   }
 
@@ -881,8 +912,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _captureResolution = '3840 x 2160';
       _colorProfile = 'ISO Coated v2 / FOGRA39';
       _calibrationSettings = CalibrationPointSettings.defaults;
+      _compareSettings = CompareSettings.defaults;
     });
     await CalibrationSettingsService.reset();
+    await CompareSettingsService.reset();
   }
 
   Widget _lastCheckHistoryGroup() {
