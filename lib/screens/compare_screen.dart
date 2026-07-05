@@ -6134,6 +6134,7 @@ class _AnchorLoupeDialog extends StatefulWidget {
 class _AnchorLoupeDialogState extends State<_AnchorLoupeDialog> {
   ui.Image? _image;
   late Offset _center;
+  Offset? _selectedPoint;
   late double _zoom;
 
   @override
@@ -6184,6 +6185,14 @@ class _AnchorLoupeDialogState extends State<_AnchorLoupeDialog> {
     setState(() => _center = _clampPoint(_center.translate(-dx, -dy)));
   }
 
+  void _selectPoint(Offset local, double side, Rect source) {
+    final point = _localToImage(local, side, source);
+    setState(() {
+      _selectedPoint = point;
+      _center = point;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final image = _image;
@@ -6210,7 +6219,9 @@ class _AnchorLoupeDialogState extends State<_AnchorLoupeDialog> {
                 ),
               ),
               Text(
-                'x ${_center.dx.toStringAsFixed(1)}  y ${_center.dy.toStringAsFixed(1)}',
+                _selectedPoint == null
+                    ? 'выберите точку'
+                    : 'x ${_selectedPoint!.dx.toStringAsFixed(1)}  y ${_selectedPoint!.dy.toStringAsFixed(1)}',
                 style: const TextStyle(color: Colors.white70, fontSize: 11),
               ),
             ]),
@@ -6218,11 +6229,8 @@ class _AnchorLoupeDialogState extends State<_AnchorLoupeDialog> {
             GestureDetector(
               onTapDown: image == null
                   ? null
-                  : (details) {
-                      final p =
-                          _localToImage(details.localPosition, side, source);
-                      Navigator.pop(context, p);
-                    },
+                  : (details) =>
+                      _selectPoint(details.localPosition, side, source),
               onPanUpdate: image == null
                   ? null
                   : (details) => _pan(details, side, source),
@@ -6239,6 +6247,7 @@ class _AnchorLoupeDialogState extends State<_AnchorLoupeDialog> {
                           image: image,
                           source: source,
                           roughPoint: widget.roughPoint,
+                          selectedPoint: _selectedPoint,
                         ),
                       ),
               ),
@@ -6263,14 +6272,29 @@ class _AnchorLoupeDialogState extends State<_AnchorLoupeDialog> {
                 onTap: () => setState(() => _zoom = 12.0),
               ),
               const Spacer(),
+              ElevatedButton(
+                onPressed: _selectedPoint == null
+                    ? null
+                    : () => Navigator.pop(context, _selectedPoint),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.cyanAccent,
+                  foregroundColor: Colors.black,
+                  disabledBackgroundColor: Colors.white12,
+                  disabledForegroundColor: Colors.white38,
+                ),
+                child: const Text('Поставить точку'),
+              ),
+              const SizedBox(width: 8),
               TextButton(
                 onPressed: () => Navigator.pop(context),
                 child: const Text('Отмена'),
               ),
             ]),
-            const Text(
-              'Клик в лупе ставит точку. Драг сдвигает фрагмент.',
-              style: TextStyle(color: Colors.white60, fontSize: 11),
+            Text(
+              _selectedPoint == null
+                  ? 'Клик в лупе выбирает место. После выбора нажмите «Поставить точку».'
+                  : 'Красный прицел - выбранная точка. Можно кликнуть ещё раз точнее.',
+              style: const TextStyle(color: Colors.white60, fontSize: 11),
             ),
           ]),
         );
@@ -6309,11 +6333,13 @@ class _AnchorLoupePainter extends CustomPainter {
   final ui.Image image;
   final Rect source;
   final Offset roughPoint;
+  final Offset? selectedPoint;
 
   const _AnchorLoupePainter({
     required this.image,
     required this.source,
     required this.roughPoint,
+    required this.selectedPoint,
   });
 
   @override
@@ -6342,6 +6368,7 @@ class _AnchorLoupePainter extends CustomPainter {
 
     final centerPaint = Paint()
       ..color = Colors.cyanAccent
+          .withValues(alpha: selectedPoint == null ? 0.95 : 0.36)
       ..strokeWidth = 1.4;
     final center = Offset(size.width / 2, size.height / 2);
     canvas.drawLine(
@@ -6360,13 +6387,45 @@ class _AnchorLoupePainter extends CustomPainter {
         ..strokeWidth = 2;
       canvas.drawCircle(rough, 9, roughPaint);
     }
+
+    final selected = selectedPoint;
+    if (selected != null && source.contains(selected)) {
+      final p = Offset(
+        (selected.dx - source.left) / source.width * size.width,
+        (selected.dy - source.top) / source.height * size.height,
+      );
+      final shadow = Paint()
+        ..color = Colors.black
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 4;
+      final white = Paint()
+        ..color = Colors.white
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.4;
+      final red = Paint()
+        ..color = Colors.redAccent
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.4;
+      for (final paint in [shadow, white, red]) {
+        canvas.drawCircle(p, 13, paint);
+        canvas.drawLine(p.translate(-24, 0), p.translate(-7, 0), paint);
+        canvas.drawLine(p.translate(7, 0), p.translate(24, 0), paint);
+        canvas.drawLine(p.translate(0, -24), p.translate(0, -7), paint);
+        canvas.drawLine(p.translate(0, 7), p.translate(0, 24), paint);
+      }
+      final fill = Paint()
+        ..color = Colors.redAccent
+        ..style = PaintingStyle.fill;
+      canvas.drawCircle(p, 2.4, fill);
+    }
   }
 
   @override
   bool shouldRepaint(covariant _AnchorLoupePainter oldDelegate) {
     return oldDelegate.image != image ||
         oldDelegate.source != source ||
-        oldDelegate.roughPoint != roughPoint;
+        oldDelegate.roughPoint != roughPoint ||
+        oldDelegate.selectedPoint != selectedPoint;
   }
 }
 
