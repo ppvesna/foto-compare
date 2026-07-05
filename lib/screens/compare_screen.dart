@@ -311,7 +311,19 @@ class _CompareScreenState extends State<CompareScreen>
         return;
       }
 
-      final ok = await _showAlignmentValidation(alignResult);
+      final canUseAlignment = alignResult.isAcceptable;
+      final ok = await _showAlignmentValidation(
+        alignResult,
+        canAccept: canUseAlignment,
+      );
+      if (!mounted) return;
+      if (!canUseAlignment) {
+        setState(() {
+          _calStep = 2;
+          _tempCmpPts = [];
+        });
+        return;
+      }
       if (!ok || !mounted) {
         setState(() {
           _calStep = 0;
@@ -472,6 +484,7 @@ class _CompareScreenState extends State<CompareScreen>
   Future<bool> _showAlignmentValidation(
     AlignByAnchorsResult r, {
     bool confirmOnly = false,
+    bool canAccept = true,
   }) async {
     final color = r.quality == 'excellent'
         ? Colors.green
@@ -515,29 +528,38 @@ class _CompareScreenState extends State<CompareScreen>
                 if (r.reprojError >= 3.0) ...[
                   const SizedBox(height: 10),
                   Text(
-                    'Ошибка выше нормы. Лучше переставить точки: проверьте порядок и выбирайте одинаковые углы, метки или резкие чёрно-белые границы.',
+                    canAccept
+                        ? 'Ошибка выше идеальной нормы. Проверьте порядок точек, если карта отличий будет смещена.'
+                        : 'Точки не совпадают как пары. Профиль не будет сохранён: переставьте точки образца в том же порядке, что на эталоне.',
                     style: TextStyle(fontSize: 12, height: 1.35, color: color),
                   ),
                 ],
               ],
             ),
-            actions: confirmOnly
+            actions: !canAccept
                 ? [
                     TextButton(
-                      onPressed: () => Navigator.pop(ctx, true),
-                      child: const Text('OK'),
+                      onPressed: () => Navigator.pop(ctx, false),
+                      child: const Text('Переставить точки'),
                     ),
                   ]
-                : [
-                    TextButton(
-                      onPressed: () => Navigator.pop(ctx, false),
-                      child: const Text('Отмена'),
-                    ),
-                    TextButton(
-                      onPressed: () => Navigator.pop(ctx, true),
-                      child: const Text('Сохранить профиль'),
-                    ),
-                  ],
+                : confirmOnly
+                    ? [
+                        TextButton(
+                          onPressed: () => Navigator.pop(ctx, true),
+                          child: const Text('OK'),
+                        ),
+                      ]
+                    : [
+                        TextButton(
+                          onPressed: () => Navigator.pop(ctx, false),
+                          child: const Text('Отмена'),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.pop(ctx, true),
+                          child: const Text('Сохранить профиль'),
+                        ),
+                      ],
           ),
         ) ??
         false;

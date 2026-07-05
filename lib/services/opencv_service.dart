@@ -222,12 +222,16 @@ class OpenCvService {
           ? 'excellent'
           : pointError < 5.0
               ? 'good'
-              : 'warning';
+              : pointError < 10.0
+                  ? 'warning'
+                  : 'fail';
       final confidence = pointError < 2.0
           ? 1.0
           : pointError < 5.0
               ? 0.9
-              : 0.75;
+              : pointError < 10.0
+                  ? 0.65
+                  : 0.35;
       return AlignByAnchorsResult(
         alignedBytes: srcBytes,
         refCanonicalBytes: refBytes,
@@ -308,14 +312,20 @@ class OpenCvService {
         ? 'excellent'
         : r.reprojError < 6
             ? 'good'
-            : 'warning';
+            : r.reprojError < 10
+                ? 'warning'
+                : 'fail';
     return AlignByAnchorsResult(
       alignedBytes: r.alignedBytes,
       refCanonicalBytes: r.refCanonicalBytes,
       homography: r.homography,
       reprojError: r.reprojError,
       eccScore: 0.0,
-      confidence: r.reprojError < 6 ? 0.75 : 0.5,
+      confidence: r.reprojError < 6
+          ? 0.75
+          : r.reprojError < 10
+              ? 0.5
+              : 0.25,
       quality: q,
       refinedSrcPoints: srcPoints,
     );
