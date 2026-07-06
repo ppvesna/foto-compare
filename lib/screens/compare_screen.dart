@@ -521,10 +521,11 @@ class _CompareScreenState extends State<CompareScreen>
   }
 
   // Шаг 2 → расчёт
-  Future<void> _runAlignmentFromPoints() async {
+  Future<void> _runAlignmentFromPoints({bool runCompareAfter = false}) async {
     if (_tempCmpPts.length != _tempRefPts.length) return;
     final refPts = List<Offset>.from(_tempRefPts);
     final cmpPts = List<Offset>.from(_tempCmpPts);
+    var shouldRunCompare = false;
     setState(() {
       _calStep = 3;
       _calibrating = true;
@@ -641,17 +642,26 @@ class _CompareScreenState extends State<CompareScreen>
         _tempCmpPts = [];
       });
 
-      xpDlg(
-        context,
-        'Профиль сохранён',
-        '"$name"\n${alignResult.qualityLabel}  ·  ошибка ${alignResult.reprojError.toStringAsFixed(1)} пкс',
-      );
+      if (runCompareAfter) {
+        shouldRunCompare = true;
+        _setCompareStatus('Совмещение рассчитано. Запускаю сравнение...');
+      } else {
+        xpDlg(
+          context,
+          'Профиль сохранён',
+          '"$name"\n${alignResult.qualityLabel}  ·  ошибка ${alignResult.reprojError.toStringAsFixed(1)} пкс',
+        );
+      }
     } finally {
       if (mounted)
         setState(() {
           _calibrating = false;
           if (_calStep == 3) _calStep = 0;
         });
+    }
+    if (shouldRunCompare && mounted) {
+      await _yieldUi();
+      await _runCompare();
     }
   }
 
@@ -1100,6 +1110,17 @@ class _CompareScreenState extends State<CompareScreen>
       _calStep == 0 &&
       !_calibrating;
 
+  bool get _canCalculateAndCompare =>
+      _refImg != null &&
+      _cmpImg != null &&
+      _calStep == 2 &&
+      !_calibrating &&
+      _tempRefPts.isNotEmpty &&
+      _tempCmpPts.length == _tempRefPts.length;
+
+  bool get _canStartCompareAction =>
+      _canRunAlignedCompare || _canCalculateAndCompare;
+
   Future<void> _runCompare() async {
     final ref = _refAligned ?? _refImg;
     final cmp = _cmpAligned ?? _cmpImg;
@@ -1108,6 +1129,10 @@ class _CompareScreenState extends State<CompareScreen>
       return;
     }
     if (!_canRunAlignedCompare) {
+      if (_canCalculateAndCompare) {
+        await _runAlignmentFromPoints(runCompareAfter: true);
+        return;
+      }
       xpDlg(
         context,
         'Нужен этап «Рассчитать»',
@@ -2079,7 +2104,7 @@ class _CompareScreenState extends State<CompareScreen>
           _toolBtn(
             Icons.compare,
             'Сравнить',
-            _canRunAlignedCompare ? _runCompare : null,
+            _canStartCompareAction ? _runCompare : null,
             primary: true,
           ),
         ],
@@ -3335,12 +3360,17 @@ class _CompareScreenState extends State<CompareScreen>
               SizedBox(
                 width: double.infinity,
                 child: XpBtn(
-                  label: _comparing ? '6. Сравнение...' : '6. Сравнить',
+                  label: _comparing
+                      ? '6. Сравнение...'
+                      : _canCalculateAndCompare
+                          ? '6. Рассчитать и сравнить'
+                          : '6. Сравнить',
                   icon: Icons.compare,
-                  primary: _canRunAlignedCompare,
-                  onPressed: _canRunAlignedCompare && !_comparing && !_imageBusy
-                      ? _runCompare
-                      : null,
+                  primary: _canStartCompareAction,
+                  onPressed:
+                      _canStartCompareAction && !_comparing && !_imageBusy
+                          ? _runCompare
+                          : null,
                 ),
               ),
               const SizedBox(height: 8),
@@ -4945,7 +4975,7 @@ class _CompareScreenState extends State<CompareScreen>
                             label: 'Сравнить ›',
                             primary: true,
                             onPressed:
-                                _canRunAlignedCompare ? _runCompare : null,
+                                _canStartCompareAction ? _runCompare : null,
                           ),
                   ],
                 ),
