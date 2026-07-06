@@ -41,8 +41,8 @@ class AppTheme {
   ];
 
   static Color simColor(double pct) {
-    if (pct >= 80) return simHigh;
-    if (pct >= 70) return simMid;
+    if (pct >= 90) return simHigh;
+    if (pct >= 65) return simMid;
     return simLow;
   }
 

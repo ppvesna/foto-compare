@@ -1336,8 +1336,16 @@ class _CompareScreenState extends State<CompareScreen>
 
   String _overallStatus(double score) {
     if (score >= 90) return 'В норме';
-    if (score >= 70) return 'Требует внимания';
-    return 'Брак / нужна проверка';
+    if (score >= 80) return 'Проверить';
+    if (score >= 65) return 'Требует проверки';
+    return 'Критично';
+  }
+
+  String _shortStatus(double score) {
+    if (score >= 90) return 'OK';
+    if (score >= 80) return 'Проверить';
+    if (score >= 65) return 'Контроль';
+    return 'Критично';
   }
 
   List<CheckProtocolStage> _checkProtocolStages(CompareResult r) {
@@ -3399,13 +3407,7 @@ class _CompareScreenState extends State<CompareScreen>
 
   Widget _inspectorStatusCard() {
     final r = _result;
-    final status = r == null
-        ? 'ОЖИДАНИЕ'
-        : r.score >= 90
-            ? 'PASS'
-            : r.score >= 70
-                ? 'WARNING'
-                : 'FAIL';
+    final status = r == null ? 'ОЖИДАНИЕ' : _shortStatus(r.score);
     final color = r == null ? AppTheme.blueDark : AppTheme.simColor(r.score);
     return Container(
       padding: const EdgeInsets.all(10),
@@ -3654,13 +3656,13 @@ class _CompareScreenState extends State<CompareScreen>
     final colorShift = (r.shiftDL?.abs() ?? 0) > 2 ||
         (r.shiftDA?.abs() ?? 0) > 3 ||
         (r.shiftDB?.abs() ?? 0) > 3;
-    final status = (meanDe ?? 0) >= 6 || (maxDe ?? 0) >= 12
-        ? 'FAIL'
+    final status = (meanDe ?? 0) >= 9 || (maxDe ?? 0) >= 18
+        ? 'Критично'
         : (meanDe ?? 0) >= 3 || (maxDe ?? 0) >= 6 || colorShift
-            ? 'WARNING'
-            : 'PASS';
+            ? 'Проверить'
+            : 'OK';
     final metric = _deMetric(meanDe, maxDe);
-    final message = status == 'PASS'
+    final message = status == 'OK'
         ? 'Фон и общий тон стабильны.'
         : 'Есть общий сдвиг фона/тона: ${_colorComment(r.shiftDL, r.shiftDA, r.shiftDB)}.';
     return _LevelConclusion(
@@ -3679,12 +3681,12 @@ class _CompareScreenState extends State<CompareScreen>
         _countAbove(r.labLevel3, 6.0) ??
         r.defectZoneCount ??
         0;
-    final status = (meanDe ?? 0) >= 6 || (maxDe ?? 0) >= 12 || zones >= 9
-        ? 'FAIL'
+    final status = (meanDe ?? 0) >= 9 || (maxDe ?? 0) >= 18 || zones >= 24
+        ? 'Критично'
         : (meanDe ?? 0) >= 3 || (maxDe ?? 0) >= 6 || zones > 0
-            ? 'WARNING'
-            : 'PASS';
-    final message = status == 'PASS'
+            ? 'Проверить'
+            : 'OK';
+    final message = status == 'OK'
         ? 'Детали изображения, предметы и тон объектов совпадают.'
         : 'Есть отклонения в деталях: $zones зон выше ΔE 6.';
     return _LevelConclusion(
@@ -3700,12 +3702,12 @@ class _CompareScreenState extends State<CompareScreen>
     final maxDe = r.maxDeltaE;
     final zones = r.defectZoneCount ?? 0;
     final area = r.defectAreaPercent ?? 0;
-    final status = (maxDe ?? 0) >= 12 || zones >= 12 || area >= 3
-        ? 'FAIL'
+    final status = (maxDe ?? 0) >= 18 || zones >= 36 || area >= 8
+        ? 'Критично'
         : (maxDe ?? 0) >= 6 || zones > 0 || area >= 0.5
-            ? 'WARNING'
-            : 'PASS';
-    final message = status == 'PASS'
+            ? 'Проверить'
+            : 'OK';
+    final message = status == 'OK'
         ? 'Точки, мусор и мелкие локальные дефекты не обнаружены.'
         : 'Обнаружены мелкие локальные дефекты: $zones зон, ${area.toStringAsFixed(1)}% площади.';
     return _LevelConclusion(
@@ -3765,9 +3767,9 @@ class _CompareScreenState extends State<CompareScreen>
   }
 
   Color _statusColor(String status) {
-    return status == 'FAIL'
+    return status == 'Критично'
         ? AppTheme.simLow
-        : status == 'WARNING'
+        : status == 'Проверить' || status == 'Контроль'
             ? AppTheme.simMid
             : AppTheme.simHigh;
   }
@@ -3816,11 +3818,11 @@ class _CompareScreenState extends State<CompareScreen>
     final meanDe = r.meanDeltaE ?? 0;
     final defectZones = r.defectZoneCount ?? 0;
     final shift = shiftPx ?? 0;
-    if (maxDe >= 12 || meanDe >= 6 || defectZones >= 12 || shift >= 4) {
-      return 'Критичные отклонения: требуется проверка макета и печати.';
+    if (maxDe >= 18 || meanDe >= 9 || defectZones >= 36 || shift >= 6) {
+      return 'Критичные отклонения: требуется остановить и проверить макет, совмещение и печать.';
     }
     if (maxDe >= 6 || meanDe >= 3 || defectZones > 0 || shift >= 2) {
-      return 'Есть заметные отклонения: проверьте подсвеченные зоны.';
+      return 'Есть отклонения: проверьте подсвеченные зоны и решите по допускам тиража.';
     }
     return 'Существенных отклонений не обнаружено.';
   }
@@ -5224,10 +5226,12 @@ class _CompareScreenState extends State<CompareScreen>
           Center(
             child: Text(
               r.score >= 80
-                  ? 'Высокая схожесть'
-                  : r.score >= 70
-                      ? 'Средняя схожесть'
-                      : 'Низкая схожесть',
+                  ? r.score >= 90
+                      ? 'Высокая схожесть'
+                      : 'Проверить по допускам'
+                  : r.score >= 65
+                      ? 'Требует проверки'
+                      : 'Критичные отклонения',
               style: TextStyle(
                 color: AppTheme.simColor(r.score),
                 fontWeight: FontWeight.bold,
