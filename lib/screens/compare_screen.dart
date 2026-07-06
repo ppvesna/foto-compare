@@ -2114,6 +2114,10 @@ class _CompareScreenState extends State<CompareScreen>
             ],
             if (r?.diffL3 != null || r?.geometryDiff != null) ...[
               _mapModeSelector(),
+              if (_showAreaLoupePanel) ...[
+                const SizedBox(height: 8),
+                _areaLoupePanel(),
+              ],
               const SizedBox(height: 8),
               _mapLegend(),
               const SizedBox(height: 8),
@@ -2270,25 +2274,29 @@ class _CompareScreenState extends State<CompareScreen>
   Widget _mapModeSelector() {
     Widget item(_ResultMapMode mode, String label) {
       final selected = _resultMapMode == mode;
+      const activeColor = Color(0xFF2563EB);
+      const inactiveColor = Color(0xFFE5E7EB);
       return Expanded(
         child: InkWell(
           onTap: () => setState(() => _resultMapMode = mode),
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(16),
           child: Container(
-            height: 34,
+            height: 46,
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: selected ? AppTheme.blue : Colors.white,
-              borderRadius: BorderRadius.circular(10),
+              color: selected ? activeColor : inactiveColor,
+              borderRadius: BorderRadius.circular(16),
               border: Border.all(
-                color: selected ? AppTheme.blueDark : const Color(0xFFD5DAE2),
+                color: selected
+                    ? const Color(0xFF1D4ED8)
+                    : const Color(0xFFD1D5DB),
               ),
               boxShadow: selected
                   ? [
-                      BoxShadow(
-                        color: AppTheme.blue.withOpacity(0.18),
-                        blurRadius: 8,
-                        offset: const Offset(0, 2),
+                      const BoxShadow(
+                        color: Color(0x260F172A),
+                        blurRadius: 7,
+                        offset: Offset(0, 3),
                       ),
                     ]
                   : null,
@@ -2298,7 +2306,7 @@ class _CompareScreenState extends State<CompareScreen>
               style: TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w700,
-                color: selected ? Colors.white : Colors.black87,
+                color: selected ? Colors.white : const Color(0xFF475569),
               ),
             ),
           ),
@@ -2308,44 +2316,46 @@ class _CompareScreenState extends State<CompareScreen>
 
     Widget tool(_InspectionTool tool, IconData icon, String label) {
       final selected = _inspectionTool == tool;
-      const activeColor = Color(0xFF2F7DD3);
+      const activeColor = Color(0xFF2563EB);
+      const inactiveColor = Color(0xFFE5E7EB);
       return Expanded(
         child: InkWell(
           onTap: () => setState(() => _inspectionTool = tool),
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(16),
           child: Container(
-            height: 34,
+            height: 46,
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: selected ? activeColor : Colors.white,
-              borderRadius: BorderRadius.circular(10),
+              color: selected ? activeColor : inactiveColor,
+              borderRadius: BorderRadius.circular(16),
               border: Border.all(
                 color: selected
-                    ? const Color(0xFF1E5FA8)
-                    : const Color(0xFFD5DAE2),
+                    ? const Color(0xFF1D4ED8)
+                    : const Color(0xFFD1D5DB),
               ),
               boxShadow: selected
                   ? [
                       const BoxShadow(
-                        color: Color(0x2E2F7DD3),
-                        blurRadius: 8,
-                        offset: Offset(0, 2),
+                        color: Color(0x260F172A),
+                        blurRadius: 7,
+                        offset: Offset(0, 3),
                       ),
                     ]
                   : null,
             ),
             child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
               Icon(icon,
-                  size: 15, color: selected ? Colors.white : Colors.black87),
+                  size: 18,
+                  color: selected ? Colors.white : const Color(0xFF64748B)),
               const SizedBox(width: 6),
               Flexible(
                 child: Text(
                   label,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: 12,
                     fontWeight: FontWeight.w700,
-                    color: selected ? Colors.white : Colors.black87,
+                    color: selected ? Colors.white : const Color(0xFF475569),
                   ),
                 ),
               ),
@@ -2435,10 +2445,10 @@ class _CompareScreenState extends State<CompareScreen>
     return const Size(1600, 900);
   }
 
+  bool get _showAreaLoupePanel =>
+      _inspectionTool == _InspectionTool.loupe || _areaLoupe != null;
+
   Widget _pointProbePanel(CompareResult r) {
-    if (_inspectionTool == _InspectionTool.loupe) {
-      return _areaLoupePanel();
-    }
     final probe = _pointProbe;
     return Container(
       decoration: BoxDecoration(
@@ -2559,7 +2569,11 @@ class _CompareScreenState extends State<CompareScreen>
                   ),
                 ),
               ),
-              TextButton(
+              XpBtn(
+                label: 'Сбросить',
+                icon: Icons.restart_alt,
+                primary: true,
+                width: 138,
                 onPressed: () {
                   _resultCmpCtrl.value = Matrix4.identity();
                   setState(() {
@@ -2568,7 +2582,6 @@ class _CompareScreenState extends State<CompareScreen>
                     _loupeDragStart = null;
                   });
                 },
-                child: const Text('Сбросить'),
               ),
             ]),
           ),
@@ -5308,6 +5321,10 @@ class _CompareScreenState extends State<CompareScreen>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   _mapModeSelector(),
+                  if (_showAreaLoupePanel) ...[
+                    const SizedBox(height: 8),
+                    _areaLoupePanel(),
+                  ],
                   const SizedBox(height: 8),
                   _mapLegend(),
                   const SizedBox(height: 8),
