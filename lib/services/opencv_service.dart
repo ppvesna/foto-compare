@@ -216,6 +216,19 @@ class OpenCvService {
     List<Offset> refPoints,
     List<Offset> srcPoints,
   ) async {
+    if (_bytesEqual(refBytes, srcBytes)) {
+      return AlignByAnchorsResult(
+        alignedBytes: srcBytes,
+        refCanonicalBytes: refBytes,
+        homography: const [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+        reprojError: 0.0,
+        eccScore: 1.0,
+        confidence: 1.0,
+        quality: 'excellent',
+        refinedSrcPoints: List<Offset>.from(srcPoints),
+      );
+    }
+
     if (!_available) {
       return _dartAlignFallback(refBytes, srcBytes, refPoints, srcPoints);
     }
@@ -250,6 +263,15 @@ class OpenCvService {
     } catch (_) {
       return _dartAlignFallback(refBytes, srcBytes, refPoints, srcPoints);
     }
+  }
+
+  static bool _bytesEqual(Uint8List a, Uint8List b) {
+    if (identical(a, b)) return true;
+    if (a.lengthInBytes != b.lengthInBytes) return false;
+    for (var i = 0; i < a.lengthInBytes; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   static Future<AlignByAnchorsResult?> _dartAlignFallback(
