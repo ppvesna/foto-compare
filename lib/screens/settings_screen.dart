@@ -396,11 +396,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _sliderRow(
             title: 'Допуск контура Delta E',
             subtitle:
-                'в цветовой карте вокруг текста и штрихов ищем совпадение в малом радиусе; ЧБ геометрия остается строгой',
+                'подавляет ореолы по краям текста и штрихов в цветовой карте; ЧБ геометрия остается строгой',
             value: _compareSettings.deltaEdgeTolerancePx.toDouble(),
             min: 0,
-            max: 3,
-            divisions: 3,
+            max: 6,
+            divisions: 6,
             suffix: 'px',
             onChanged: (v) => setState(() {
               _compareSettings = _compareSettings.copyWith(
@@ -412,7 +412,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             'Режим',
             _compareSettings.deltaEdgeTolerancePx == 0
                 ? 'строгий Delta E без слияния контуров'
-                : 'Delta E смягчает шум по краям текста, а смещение показывает ЧБ геометрия',
+                : 'Delta E сливает совпадающие контуры; смещение и потерю штрихов показывает ЧБ геометрия',
           ),
         ]),
       ),

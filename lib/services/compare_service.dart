@@ -104,22 +104,19 @@ _TileCompareData _compareTiles(
             out.setPixelRgba(x, y, 0, 0, 0, 0);
             continue;
           }
-          var deltaE = _deltaE76(pr, pc);
-          if (edgeToleranceRadius > 0 &&
-              deltaE >= _minorDeltaE &&
-              (_isEdgeNear(refEdges, w, h, x, y, edgeToleranceRadius) ||
-                  _isEdgeNear(cmpEdges, w, h, cx, cy, edgeToleranceRadius))) {
-            deltaE = math.min(
-              deltaE,
-              _minLocalDeltaE(
-                pr,
-                c,
-                cx,
-                cy,
-                edgeToleranceRadius,
-              ),
-            );
-          }
+          final deltaE = _edgeAwareDeltaE(
+            refPixel: pr,
+            cmpPixel: pc,
+            refImage: r,
+            cmpImage: c,
+            refEdges: refEdges,
+            cmpEdges: cmpEdges,
+            x: x,
+            y: y,
+            cx: cx,
+            cy: cy,
+            radius: edgeToleranceRadius,
+          );
           diff += deltaE;
           if (deltaE > maxDeltaE) maxDeltaE = deltaE;
           validPx++;
@@ -201,16 +198,19 @@ Future<_TileCompareData> _compareTilesYielding(
             out.setPixelRgba(x, y, 0, 0, 0, 0);
             continue;
           }
-          var deltaE = _deltaE76(pr, pc);
-          if (edgeToleranceRadius > 0 &&
-              deltaE >= _minorDeltaE &&
-              (_isEdgeNear(refEdges, w, h, x, y, edgeToleranceRadius) ||
-                  _isEdgeNear(cmpEdges, w, h, cx, cy, edgeToleranceRadius))) {
-            deltaE = math.min(
-              deltaE,
-              _minLocalDeltaE(pr, c, cx, cy, edgeToleranceRadius),
-            );
-          }
+          final deltaE = _edgeAwareDeltaE(
+            refPixel: pr,
+            cmpPixel: pc,
+            refImage: r,
+            cmpImage: c,
+            refEdges: refEdges,
+            cmpEdges: cmpEdges,
+            x: x,
+            y: y,
+            cx: cx,
+            cy: cy,
+            radius: edgeToleranceRadius,
+          );
           diff += deltaE;
           if (deltaE > maxDeltaE) maxDeltaE = deltaE;
           validPx++;
@@ -442,6 +442,55 @@ bool _isEdgeNear(
     }
   }
   return false;
+}
+
+double _edgeAwareDeltaE({
+  required img.Pixel refPixel,
+  required img.Pixel cmpPixel,
+  required img.Image refImage,
+  required img.Image cmpImage,
+  required Uint8List refEdges,
+  required Uint8List cmpEdges,
+  required int x,
+  required int y,
+  required int cx,
+  required int cy,
+  required int radius,
+}) {
+  final raw = _deltaE76(refPixel, cmpPixel);
+  if (radius <= 0 || raw < _minorDeltaE) return raw;
+
+  final nearRefEdge = _isEdgeNear(
+    refEdges,
+    refImage.width,
+    refImage.height,
+    x,
+    y,
+    radius,
+  );
+  final nearCmpEdge = _isEdgeNear(
+    cmpEdges,
+    cmpImage.width,
+    cmpImage.height,
+    cx,
+    cy,
+    radius,
+  );
+  if (!nearRefEdge && !nearCmpEdge) return raw;
+
+  final local = math.min(
+    _minLocalDeltaE(refPixel, cmpImage, cx, cy, radius),
+    _minLocalDeltaE(cmpPixel, refImage, x, y, radius),
+  );
+  var corrected = math.min(raw, local);
+
+  // По краям текста/штрихов микросдвиг и ресемплинг дают яркие ореолы Delta E.
+  // Если обе карты видят рядом контрастный край и локально найдено совпадение,
+  // считаем это геометрическим вопросом, а не цветовым пятном.
+  if (nearRefEdge && nearCmpEdge && local < raw) {
+    corrected *= 0.42;
+  }
+  return corrected;
 }
 
 double _minLocalDeltaE(

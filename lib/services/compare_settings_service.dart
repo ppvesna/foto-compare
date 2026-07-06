@@ -8,7 +8,7 @@ class CompareSettings {
     required this.deltaEdgeTolerancePx,
   });
 
-  static const defaults = CompareSettings(deltaEdgeTolerancePx: 2);
+  static const defaults = CompareSettings(deltaEdgeTolerancePx: 4);
 
   CompareSettings copyWith({
     int? deltaEdgeTolerancePx,
@@ -30,7 +30,7 @@ class CompareSettingsService {
     final settings = CompareSettings(
       deltaEdgeTolerancePx: (prefs.getInt(_deltaEdgeToleranceKey) ??
               CompareSettings.defaults.deltaEdgeTolerancePx)
-          .clamp(0, 3),
+          .clamp(0, 6),
     );
     notifier.value = settings;
     return settings;
@@ -38,7 +38,7 @@ class CompareSettingsService {
 
   static Future<void> save(CompareSettings settings) async {
     final normalized = CompareSettings(
-      deltaEdgeTolerancePx: settings.deltaEdgeTolerancePx.clamp(0, 3),
+      deltaEdgeTolerancePx: settings.deltaEdgeTolerancePx.clamp(0, 6),
     );
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(
