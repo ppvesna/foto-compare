@@ -48,6 +48,7 @@ class _CropFrameScreenState extends State<CropFrameScreen> {
   _DragTarget? _dragTarget;
 
   static const double _handleSize = 24.0;
+  static const double _handleEdgeInset = 14.0;
   static const double _minFrameSide = 0.05;
 
   bool _loading = true;
@@ -132,21 +133,30 @@ class _CropFrameScreenState extends State<CropFrameScreen> {
     final r = _frameRect;
     const h = _handleSize;
 
+    Offset handle(Offset p) => Offset(
+          p.dx.clamp(_handleEdgeInset, _viewSize.width - _handleEdgeInset),
+          p.dy.clamp(_handleEdgeInset, _viewSize.height - _handleEdgeInset),
+        );
+
     // Углы
-    if ((pos - r.topLeft).distance < h) return _DragTarget.topLeft;
-    if ((pos - r.topRight).distance < h) return _DragTarget.topRight;
-    if ((pos - r.bottomLeft).distance < h) return _DragTarget.bottomLeft;
-    if ((pos - r.bottomRight).distance < h) return _DragTarget.bottomRight;
+    if ((pos - handle(r.topLeft)).distance < h) return _DragTarget.topLeft;
+    if ((pos - handle(r.topRight)).distance < h) return _DragTarget.topRight;
+    if ((pos - handle(r.bottomLeft)).distance < h) {
+      return _DragTarget.bottomLeft;
+    }
+    if ((pos - handle(r.bottomRight)).distance < h) {
+      return _DragTarget.bottomRight;
+    }
 
     // Стороны
     final midTop = Offset(r.center.dx, r.top);
     final midBot = Offset(r.center.dx, r.bottom);
     final midLeft = Offset(r.left, r.center.dy);
     final midRight = Offset(r.right, r.center.dy);
-    if ((pos - midTop).distance < h) return _DragTarget.top;
-    if ((pos - midBot).distance < h) return _DragTarget.bottom;
-    if ((pos - midLeft).distance < h) return _DragTarget.left;
-    if ((pos - midRight).distance < h) return _DragTarget.right;
+    if ((pos - handle(midTop)).distance < h) return _DragTarget.top;
+    if ((pos - handle(midBot)).distance < h) return _DragTarget.bottom;
+    if ((pos - handle(midLeft)).distance < h) return _DragTarget.left;
+    if ((pos - handle(midRight)).distance < h) return _DragTarget.right;
 
     // Внутри — двигаем всю рамку
     if (r.contains(pos)) return _DragTarget.move;
@@ -384,15 +394,27 @@ class _CropPainter extends CustomPainter {
     }
 
     // Угловые маркеры
-    _drawHandle(canvas, frame.topLeft);
-    _drawHandle(canvas, frame.topRight);
-    _drawHandle(canvas, frame.bottomLeft);
-    _drawHandle(canvas, frame.bottomRight);
+    _drawHandle(canvas, _handleCenter(frame.topLeft, size));
+    _drawHandle(canvas, _handleCenter(frame.topRight, size));
+    _drawHandle(canvas, _handleCenter(frame.bottomLeft, size));
+    _drawHandle(canvas, _handleCenter(frame.bottomRight, size));
     // Средние маркеры
-    _drawHandle(canvas, Offset(frame.center.dx, frame.top));
-    _drawHandle(canvas, Offset(frame.center.dx, frame.bottom));
-    _drawHandle(canvas, Offset(frame.left, frame.center.dy));
-    _drawHandle(canvas, Offset(frame.right, frame.center.dy));
+    _drawHandle(
+        canvas, _handleCenter(Offset(frame.center.dx, frame.top), size));
+    _drawHandle(
+        canvas, _handleCenter(Offset(frame.center.dx, frame.bottom), size));
+    _drawHandle(
+        canvas, _handleCenter(Offset(frame.left, frame.center.dy), size));
+    _drawHandle(
+        canvas, _handleCenter(Offset(frame.right, frame.center.dy), size));
+  }
+
+  Offset _handleCenter(Offset point, Size size) {
+    const inset = _CropFrameScreenState._handleEdgeInset;
+    return Offset(
+      point.dx.clamp(inset, size.width - inset),
+      point.dy.clamp(inset, size.height - inset),
+    );
   }
 
   void _drawHandle(Canvas canvas, Offset center) {
