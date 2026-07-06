@@ -216,34 +216,6 @@ class OpenCvService {
     List<Offset> refPoints,
     List<Offset> srcPoints,
   ) async {
-    if (_bytesEqual(refBytes, srcBytes)) {
-      final pointError = _pointPairError(refPoints, srcPoints);
-      final quality = pointError < 2.0
-          ? 'excellent'
-          : pointError < 5.0
-              ? 'good'
-              : pointError < 10.0
-                  ? 'warning'
-                  : 'fail';
-      final confidence = pointError < 2.0
-          ? 1.0
-          : pointError < 5.0
-              ? 0.9
-              : pointError < 10.0
-                  ? 0.65
-                  : 0.35;
-      return AlignByAnchorsResult(
-        alignedBytes: srcBytes,
-        refCanonicalBytes: refBytes,
-        homography: const [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
-        reprojError: pointError,
-        eccScore: 1.0,
-        confidence: confidence,
-        quality: quality,
-        refinedSrcPoints: List<Offset>.from(srcPoints),
-      );
-    }
-
     if (!_available) {
       return _dartAlignFallback(refBytes, srcBytes, refPoints, srcPoints);
     }
@@ -276,27 +248,8 @@ class OpenCvService {
       _available = false;
       return _dartAlignFallback(refBytes, srcBytes, refPoints, srcPoints);
     } catch (_) {
-      return null;
+      return _dartAlignFallback(refBytes, srcBytes, refPoints, srcPoints);
     }
-  }
-
-  static bool _bytesEqual(Uint8List a, Uint8List b) {
-    if (identical(a, b)) return true;
-    if (a.lengthInBytes != b.lengthInBytes) return false;
-    for (var i = 0; i < a.lengthInBytes; i++) {
-      if (a[i] != b[i]) return false;
-    }
-    return true;
-  }
-
-  static double _pointPairError(
-      List<Offset> refPoints, List<Offset> srcPoints) {
-    if (refPoints.isEmpty || refPoints.length != srcPoints.length) return 0.0;
-    var sum = 0.0;
-    for (var i = 0; i < refPoints.length; i++) {
-      sum += (refPoints[i] - srcPoints[i]).distance;
-    }
-    return sum / refPoints.length;
   }
 
   static Future<AlignByAnchorsResult?> _dartAlignFallback(
