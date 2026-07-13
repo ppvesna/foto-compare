@@ -132,6 +132,9 @@ class _CompareScreenState extends State<CompareScreen>
   String? _savedRefLabel;
   String? _activeReferenceId;
   List<SavedReferenceProfile> _savedReferences = [];
+  final _jobNumberCtrl = TextEditingController();
+  String _jobNumber = '';
+  int _sampleNo = 1;
 
   static const int _uiImageCacheWidth = 1600;
 
@@ -245,6 +248,10 @@ class _CompareScreenState extends State<CompareScreen>
       _loupeDraftRect = null;
       _loupeDragStart = null;
       _compareStatus = null;
+      _sampleNo = _nextSampleNumberFor(
+        referenceId: item.id,
+        referenceLabel: item.label,
+      );
     });
     if (showMessage) {
       xpDlg(
@@ -283,6 +290,11 @@ class _CompareScreenState extends State<CompareScreen>
 
   void _newSample() {
     setState(() {
+      _sampleNo = _nextSampleNumberFor(
+        referenceId: _activeReferenceId,
+        referenceLabel: _savedRefLabel,
+        minValue: _sampleNo + 1,
+      );
       _cmpImg = null;
       _cmpImgSize = null;
       _cmpAligned = null;
@@ -883,6 +895,7 @@ class _CompareScreenState extends State<CompareScreen>
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_handleCtrlKey);
     CalibrationSettingsService.notifier.removeListener(_onCalibrationSettings);
+    _jobNumberCtrl.dispose();
     _tabs.dispose();
     _overlayCtrl.dispose();
     _cmp2Ctrl.dispose();
@@ -1114,6 +1127,43 @@ class _CompareScreenState extends State<CompareScreen>
 
   bool get _canStartCompareAction =>
       _canRunAlignedCompare || _canCalculateAndCompare;
+
+  String get _currentJobNumber => _jobNumber.trim();
+
+  String get _currentJobId {
+    final raw = _currentJobNumber;
+    if (raw.isEmpty) return 'job-local';
+    final safe = raw
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
+        .replaceAll(RegExp(r'^-+|-+$'), '');
+    if (safe.isNotEmpty) return 'job-$safe';
+    final encoded =
+        raw.runes.take(24).map((r) => r.toRadixString(16)).join('-');
+    return encoded.isEmpty ? 'job-local' : 'job-$encoded';
+  }
+
+  String get _currentSampleLabel => 'Отпечаток $_sampleNo';
+
+  int _nextSampleNumberFor({
+    String? referenceId,
+    String? referenceLabel,
+    int minValue = 1,
+  }) {
+    final refId = referenceId ?? _activeReferenceId ?? '';
+    final refLabel = referenceLabel ?? _savedRefLabel ?? '';
+    final jobNumber = _currentJobNumber;
+    var maxNo = 0;
+    for (final p in CheckHistoryService.checks.value) {
+      final sameJob =
+          jobNumber.isEmpty ? p.jobNumber.isEmpty : p.jobNumber == jobNumber;
+      final sameRef = refId.isNotEmpty
+          ? p.referenceId == refId
+          : refLabel.isNotEmpty && p.referenceLabel == refLabel;
+      if (sameJob && sameRef) maxNo = max(maxNo, p.sampleNo);
+    }
+    return max(minValue, maxNo + 1);
+  }
 
   Future<void> _runCompare() async {
     final ref = _refAligned ?? _refImg;
@@ -1432,18 +1482,21 @@ class _CompareScreenState extends State<CompareScreen>
     if (r == null) return;
     final now = DateTime.now();
     final referenceId = _activeReferenceId ?? '';
-    final sampleNumber = CheckHistoryService.checks.value
-            .where(
-              (p) =>
-                  p.referenceId == referenceId ||
-                  (referenceId.isEmpty && p.referenceLabel == _savedRefLabel),
-            )
-            .length +
-        1;
+    final jobNumber = _currentJobNumber;
+    final sampleNumber = _nextSampleNumberFor(
+      referenceId: referenceId,
+      referenceLabel: _savedRefLabel,
+      minValue: _sampleNo,
+    );
+    final sampleImageId =
+        '$_currentJobId-sample-$sampleNumber-${now.millisecondsSinceEpoch}';
+    if (mounted) setState(() => _sampleNo = sampleNumber);
     await CheckHistoryService.saveLast(
       CheckProtocol(
         id: now.millisecondsSinceEpoch.toString(),
         createdAt: now,
+        jobId: _currentJobId,
+        jobNumber: jobNumber,
         score: r.score,
         verdict: _overallStatus(r.score),
         refSize: r.refSize,
@@ -1451,7 +1504,9 @@ class _CompareScreenState extends State<CompareScreen>
         labId: _shortLabId(_refLabFingerprint?.labId),
         referenceId: referenceId,
         referenceLabel: _savedRefLabel ?? _layoutProfile?.name ?? 'Эталон',
-        sampleLabel: 'Образец $sampleNumber',
+        sampleLabel: 'Отпечаток $sampleNumber',
+        sampleImageId: sampleImageId,
+        sampleNo: sampleNumber,
         labMatch: _labFingerprintMatch,
         stages: _checkProtocolStages(r),
       ),
@@ -1798,22 +1853,24 @@ class _CompareScreenState extends State<CompareScreen>
   }
 
   Widget _workflowRail({bool horizontal = false}) {
+    final hasJob = _currentJobNumber.isNotEmpty;
     final steps = [
-      _FlowStep('1', 'Эталон', _refImg != null, _refImg == null),
+      _FlowStep('1', 'Работа', hasJob, !hasJob),
+      _FlowStep('2', 'Эталон', _refImg != null, hasJob && _refImg == null),
       _FlowStep(
-        '2',
-        'Образец',
+        '3',
+        'Отпечаток',
         _cmpImg != null,
         _refImg != null && _cmpImg == null,
       ),
       _FlowStep(
-        '3',
+        '4',
         'Точки',
         _layoutProfile != null,
         _refImg != null && _cmpImg != null && _layoutProfile == null,
       ),
       _FlowStep(
-        '4',
+        '5',
         'Сравнение',
         _result != null,
         _refImg != null &&
@@ -2673,19 +2730,25 @@ class _CompareScreenState extends State<CompareScreen>
               ...list.asMap().entries.map((entry) {
                 final i = entry.key;
                 final p = entry.value;
+                final jobLabel = p.jobNumber.isEmpty
+                    ? 'Работа не задана'
+                    : 'Работа ${p.jobNumber}';
+                final imageId = p.sampleImageId.isEmpty
+                    ? '-'
+                    : _shortLabId(p.sampleImageId);
                 return ExpansionTile(
                   initiallyExpanded: i == 0,
                   tilePadding: const EdgeInsets.symmetric(horizontal: 10),
                   childrenPadding: EdgeInsets.zero,
                   title: Text(
-                    p.sampleLabel,
+                    '$jobLabel · ${p.sampleLabel}',
                     style: const TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                   subtitle: Text(
-                    '${p.referenceLabel} · ${p.verdict} · ${p.score.toStringAsFixed(1)}%',
+                    '${p.referenceLabel} · файл $imageId · ${p.verdict} · ${p.score.toStringAsFixed(1)}%',
                     style: const TextStyle(fontSize: 10),
                   ),
                   trailing: SimBadge(value: p.score, fontSize: 10),
@@ -3239,13 +3302,15 @@ class _CompareScreenState extends State<CompareScreen>
             const SizedBox(height: 8),
             _inspectorStatusCard(),
             const SizedBox(height: 8),
+            _jobInspectorSection(),
+            const SizedBox(height: 8),
             _referenceProfilesInspector(),
             const SizedBox(height: 8),
             _inspectorSection('Порядок действий', [
               SizedBox(
                 width: double.infinity,
                 child: XpBtn(
-                  label: '1. Загрузить эталон',
+                  label: '2. Загрузить эталон',
                   icon: Icons.upload_file,
                   primary: _refImg == null,
                   onPressed: _imageBusy ? null : () => _pickImage(true),
@@ -3255,7 +3320,7 @@ class _CompareScreenState extends State<CompareScreen>
               SizedBox(
                 width: double.infinity,
                 child: XpBtn(
-                  label: '2. Рамка эталона',
+                  label: '3. Рамка эталона',
                   icon: Icons.crop,
                   onPressed: _refImg != null && !_imageBusy
                       ? () => _cropImage(true)
@@ -3266,7 +3331,7 @@ class _CompareScreenState extends State<CompareScreen>
               SizedBox(
                 width: double.infinity,
                 child: XpBtn(
-                  label: '3. Загрузить образец',
+                  label: '4. Загрузить отпечаток',
                   icon: Icons.add_a_photo,
                   primary: _refImg != null && _cmpImg == null,
                   onPressed: _imageBusy ? null : () => _pickImage(false),
@@ -3277,7 +3342,7 @@ class _CompareScreenState extends State<CompareScreen>
                 SizedBox(
                   width: double.infinity,
                   child: XpBtn(
-                    label: 'Новый образец',
+                    label: 'Новый отпечаток',
                     icon: Icons.note_add,
                     onPressed: _imageBusy ? null : _newSample,
                   ),
@@ -3287,7 +3352,7 @@ class _CompareScreenState extends State<CompareScreen>
               SizedBox(
                 width: double.infinity,
                 child: XpBtn(
-                  label: '4. Рамка образца',
+                  label: '5. Рамка отпечатка',
                   icon: Icons.crop,
                   onPressed: _cmpImg != null && !_imageBusy
                       ? () => _cropImage(false)
@@ -3298,7 +3363,7 @@ class _CompareScreenState extends State<CompareScreen>
               SizedBox(
                 width: double.infinity,
                 child: XpBtn(
-                  label: '5. Калибровочные точки',
+                  label: '6. Калибровочные точки',
                   icon: Icons.tune,
                   primary: _refImg != null &&
                       _cmpImg != null &&
@@ -3313,10 +3378,10 @@ class _CompareScreenState extends State<CompareScreen>
                 width: double.infinity,
                 child: XpBtn(
                   label: _comparing
-                      ? '6. Сравнение...'
+                      ? '7. Сравнение...'
                       : _canCalculateAndCompare
-                          ? '6. Рассчитать и сравнить'
-                          : '6. Сравнить',
+                          ? '7. Рассчитать и сравнить'
+                          : '7. Сравнить',
                   icon: Icons.compare,
                   primary: _canStartCompareAction,
                   onPressed:
@@ -3329,7 +3394,7 @@ class _CompareScreenState extends State<CompareScreen>
               SizedBox(
                 width: double.infinity,
                 child: XpBtn(
-                  label: _aiLoading ? '7. AI анализ...' : '7. AI анализ',
+                  label: _aiLoading ? '8. AI анализ...' : '8. AI анализ',
                   icon: Icons.auto_awesome,
                   onPressed: _refImg != null && _cmpImg != null && !_aiLoading
                       ? _runAiAnalysis
@@ -3345,7 +3410,7 @@ class _CompareScreenState extends State<CompareScreen>
                 _refImg != null,
               ),
               _checkRow(
-                'Образец',
+                'Отпечаток',
                 _cmpImg != null ? 'готов' : 'не загружен',
                 _cmpImg != null,
               ),
@@ -3436,6 +3501,79 @@ class _CompareScreenState extends State<CompareScreen>
           ),
         ],
       ),
+    );
+  }
+
+  Widget _jobInspectorSection() {
+    final hasJob = _currentJobNumber.isNotEmpty;
+    return _inspectorSection('Работа', [
+      XpInput(
+        placeholder: 'Номер работы / заказа',
+        controller: _jobNumberCtrl,
+        keyboardType: TextInputType.text,
+        onChanged: (value) {
+          final next = value.trim();
+          setState(() {
+            _jobNumber = next;
+            _sampleNo = _nextSampleNumberFor(
+              referenceId: _activeReferenceId,
+              referenceLabel: _savedRefLabel,
+            );
+          });
+        },
+      ),
+      const SizedBox(height: 8),
+      Row(
+        children: [
+          Expanded(
+            child: _jobInfoTile(
+              'Работа',
+              hasJob ? _currentJobNumber : 'не задана',
+              hasJob,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: _jobInfoTile(
+              'Отпечаток',
+              _currentSampleLabel,
+              _cmpImg != null,
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 6),
+      _jobInfoTile('ID для базы', _currentJobId, hasJob),
+    ]);
+  }
+
+  Widget _jobInfoTile(String label, String value, bool active) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+      decoration: BoxDecoration(
+        color: active ? const Color(0xFFEAF6FC) : Colors.white,
+        border: Border.all(
+          color: active ? AppTheme.blue : AppTheme.border,
+        ),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 9,
+            color: Colors.black54,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          value,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w900),
+        ),
+      ]),
     );
   }
 

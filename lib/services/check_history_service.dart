@@ -66,6 +66,8 @@ class CheckHistoryService {
 class CheckProtocol {
   final String id;
   final DateTime createdAt;
+  final String jobId;
+  final String jobNumber;
   final double score;
   final String verdict;
   final String refSize;
@@ -74,12 +76,16 @@ class CheckProtocol {
   final String referenceId;
   final String referenceLabel;
   final String sampleLabel;
+  final String sampleImageId;
+  final int sampleNo;
   final double? labMatch;
   final List<CheckProtocolStage> stages;
 
   const CheckProtocol({
     required this.id,
     required this.createdAt,
+    this.jobId = '',
+    this.jobNumber = '',
     required this.score,
     required this.verdict,
     required this.refSize,
@@ -88,6 +94,8 @@ class CheckProtocol {
     this.referenceId = '',
     this.referenceLabel = 'Эталон',
     this.sampleLabel = 'Образец',
+    this.sampleImageId = '',
+    this.sampleNo = 1,
     required this.labMatch,
     required this.stages,
   });
@@ -95,6 +103,8 @@ class CheckProtocol {
   factory CheckProtocol.fromJson(Map<String, dynamic> json) => CheckProtocol(
         id: json['id'] as String,
         createdAt: DateTime.parse(json['createdAt'] as String),
+        jobId: json['jobId'] as String? ?? '',
+        jobNumber: json['jobNumber'] as String? ?? '',
         score: (json['score'] as num).toDouble(),
         verdict: json['verdict'] as String,
         refSize: json['refSize'] as String,
@@ -103,6 +113,8 @@ class CheckProtocol {
         referenceId: json['referenceId'] as String? ?? '',
         referenceLabel: json['referenceLabel'] as String? ?? 'Эталон',
         sampleLabel: json['sampleLabel'] as String? ?? 'Образец',
+        sampleImageId: json['sampleImageId'] as String? ?? '',
+        sampleNo: (json['sampleNo'] as num?)?.toInt() ?? 1,
         labMatch: (json['labMatch'] as num?)?.toDouble(),
         stages: (json['stages'] as List)
             .map((e) => CheckProtocolStage.fromJson(
@@ -114,6 +126,8 @@ class CheckProtocol {
   Map<String, dynamic> toJson() => {
         'id': id,
         'createdAt': createdAt.toIso8601String(),
+        'jobId': jobId,
+        'jobNumber': jobNumber,
         'score': score,
         'verdict': verdict,
         'refSize': refSize,
@@ -122,6 +136,8 @@ class CheckProtocol {
         'referenceId': referenceId,
         'referenceLabel': referenceLabel,
         'sampleLabel': sampleLabel,
+        'sampleImageId': sampleImageId,
+        'sampleNo': sampleNo,
         'labMatch': labMatch,
         'stages': stages.map((e) => e.toJson()).toList(),
       };
