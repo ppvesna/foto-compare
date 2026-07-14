@@ -1105,12 +1105,17 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         val refinedRef = refMat.toList()
         val refinedSrc = srcMat.toList()
 
-        // Manual crop + manual points should preserve the print plane. Use a
-        // similarity transform (rotation + uniform scale + translation) by
-        // default, not full perspective; homography can turn rectangles into
-        // trapezoids and shift the delta map.
+        // File/reference is a rectangular print plane. A camera photo can see
+        // the same plane as a four-sided trapezoid, so similarity/affine is not
+        // always enough. Start with affine, then use perspective only when it
+        // clearly reduces the anchor reprojection error.
         val affine = Calib3d.estimateAffinePartial2D(srcMat, refMat)
-        if (affine.empty()) {
+        val perspective = if (srcPts.size >= 4) {
+            Calib3d.findHomography(srcMat, refMat, Calib3d.RANSAC, 3.0)
+        } else {
+            Mat()
+        }
+        if (affine.empty() && perspective.empty()) {
             // Fallback: return src as-is
             return mapOf(
                 "alignedBytes" to matToBytes(src),
@@ -1123,21 +1128,77 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             )
         }
 
-        // Reprojection error
-        val projPts = refinedSrc.map { p ->
-            Point(
-                affine.get(0, 0)[0] * p.x + affine.get(0, 1)[0] * p.y + affine.get(0, 2)[0],
-                affine.get(1, 0)[0] * p.x + affine.get(1, 1)[0] * p.y + affine.get(1, 2)[0],
+        fun projectAffine(m: Mat, p: Point): Point {
+            return Point(
+                m.get(0, 0)[0] * p.x + m.get(0, 1)[0] * p.y + m.get(0, 2)[0],
+                m.get(1, 0)[0] * p.x + m.get(1, 1)[0] * p.y + m.get(1, 2)[0],
             )
         }
-        val reprojError = refinedRef.zip(projPts).map { (r, p) ->
-            val dx = r.x - p.x; val dy = r.y - p.y
-            sqrt(dx * dx + dy * dy)
-        }.average()
 
-        // warpAffine src → ref size
+        fun projectHomography(m: Mat, p: Point): Point {
+            val w = m.get(2, 0)[0] * p.x + m.get(2, 1)[0] * p.y + m.get(2, 2)[0]
+            if (abs(w) < 1e-9) return Point(Double.NaN, Double.NaN)
+            return Point(
+                (m.get(0, 0)[0] * p.x + m.get(0, 1)[0] * p.y + m.get(0, 2)[0]) / w,
+                (m.get(1, 0)[0] * p.x + m.get(1, 1)[0] * p.y + m.get(1, 2)[0]) / w,
+            )
+        }
+
+        fun reprojectionError(m: Mat, projective: Boolean): Double {
+            val values = refinedRef.zip(refinedSrc).map { (r, s) ->
+                val p = if (projective) projectHomography(m, s) else projectAffine(m, s)
+                if (!p.x.isFinite() || !p.y.isFinite()) Double.POSITIVE_INFINITY
+                else {
+                    val dx = r.x - p.x; val dy = r.y - p.y
+                    sqrt(dx * dx + dy * dy)
+                }
+            }
+            return values.average()
+        }
+
+        fun homographyIsUsable(h: Mat): Boolean {
+            if (h.empty()) return false
+            val err = reprojectionError(h, true)
+            if (!err.isFinite()) return false
+            val srcCorners = MatOfPoint2f(
+                Point(0.0, 0.0),
+                Point(src.cols().toDouble(), 0.0),
+                Point(src.cols().toDouble(), src.rows().toDouble()),
+                Point(0.0, src.rows().toDouble()),
+            )
+            val dstCorners = MatOfPoint2f()
+            Core.perspectiveTransform(srcCorners, dstCorners, h)
+            val rect = Imgproc.boundingRect(MatOfPoint(*dstCorners.toArray()))
+            val refArea = max(1.0, ref.cols().toDouble() * ref.rows().toDouble())
+            val mappedArea = rect.width.toDouble() * rect.height.toDouble()
+            return mappedArea > refArea * 0.05 && mappedArea < refArea * 20.0
+        }
+
+        val affineError = if (affine.empty()) Double.POSITIVE_INFINITY else reprojectionError(affine, false)
+        val perspectiveError = if (homographyIsUsable(perspective)) reprojectionError(perspective, true) else Double.POSITIVE_INFINITY
+        val usePerspective = perspectiveError.isFinite() &&
+                (affineError > 3.0 || perspectiveError > 0.5) &&
+                perspectiveError < affineError * 0.55
+        val reprojError = if (usePerspective) perspectiveError else affineError
+        if (!reprojError.isFinite()) {
+            return mapOf(
+                "alignedBytes" to matToBytes(src),
+                "homography"   to List(9) { i -> if (i % 4 == 0) 1.0 else 0.0 },
+                "reprojError"  to -1.0,
+                "eccScore"     to 0.0,
+                "confidence"   to 0.0,
+                "quality"      to "fail",
+                "refinedSrcPoints" to refinedSrc.map { mapOf("x" to it.x, "y" to it.y) },
+            )
+        }
+
+        // Warp src → ref size
         val aligned = Mat()
-        Imgproc.warpAffine(src, aligned, affine, ref.size(), Imgproc.INTER_LINEAR)
+        if (usePerspective) {
+            Imgproc.warpPerspective(src, aligned, perspective, ref.size(), Imgproc.INTER_LINEAR)
+        } else {
+            Imgproc.warpAffine(src, aligned, affine, ref.size(), Imgproc.INTER_LINEAR)
+        }
 
         // ECC local refinement (Euclidean only, small residual after anchors)
         val refGray = Mat(); Imgproc.cvtColor(ref, refGray, Imgproc.COLOR_BGR2GRAY)
@@ -1160,21 +1221,40 @@ class OpenCvPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         val finalAligned = Mat()
         Imgproc.warpAffine(aligned, finalAligned, eccWarp, ref.size(), Imgproc.INTER_LINEAR)
 
-        // Store affine as a 3×3 row-major matrix for compatibility.
-        val hVals = listOf(
-            affine.get(0, 0)[0], affine.get(0, 1)[0], affine.get(0, 2)[0],
-            affine.get(1, 0)[0], affine.get(1, 1)[0], affine.get(1, 2)[0],
+        val baseH = if (usePerspective) {
+            (0 until 3).flatMap { r -> (0 until 3).map { c -> perspective.get(r, c)[0] } }
+        } else {
+            listOf(
+                affine.get(0, 0)[0], affine.get(0, 1)[0], affine.get(0, 2)[0],
+                affine.get(1, 0)[0], affine.get(1, 1)[0], affine.get(1, 2)[0],
+                0.0, 0.0, 1.0,
+            )
+        }
+        val eccH = listOf(
+            eccWarp.get(0, 0)[0], eccWarp.get(0, 1)[0], eccWarp.get(0, 2)[0],
+            eccWarp.get(1, 0)[0], eccWarp.get(1, 1)[0], eccWarp.get(1, 2)[0],
             0.0, 0.0, 1.0,
         )
+        // Store the final transform as ECC × anchor transform.
+        val hVals = List(9) { i ->
+            val r = i / 3
+            val c = i % 3
+            eccH[r * 3] * baseH[c] +
+                    eccH[r * 3 + 1] * baseH[3 + c] +
+                    eccH[r * 3 + 2] * baseH[6 + c]
+        }
 
         // Quality classification
+        val fourPointPerspective = usePerspective && srcPts.size <= 4
         val quality = when {
-            eccScore >= 0.95 && reprojError < 1.5 -> "excellent"
-            eccScore >= 0.90 && reprojError < 3.0 -> "good"
-            eccScore >= 0.80 && reprojError < 5.0 -> "warning"
+            fourPointPerspective && reprojError < 18.0 -> "warning"
+            reprojError < 1.5 && (eccScore >= 0.85 || usePerspective) -> "excellent"
+            reprojError < 3.0 -> "good"
+            reprojError < 18.0 -> "warning"
             else -> "fail"
         }
-        val confidence = (eccScore * 0.6 + (1.0 - (reprojError / 10.0).coerceIn(0.0, 1.0)) * 0.4).coerceIn(0.0, 1.0)
+        val confidenceRaw = (eccScore * 0.45 + (1.0 - (reprojError / 18.0).coerceIn(0.0, 1.0)) * 0.55).coerceIn(0.0, 1.0)
+        val confidence = if (fourPointPerspective) min(confidenceRaw, 0.55) else confidenceRaw
 
         return mapOf(
             "alignedBytes"     to matToBytes(finalAligned),

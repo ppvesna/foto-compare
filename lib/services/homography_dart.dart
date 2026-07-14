@@ -18,7 +18,7 @@ int canonicalDim(double mm) {
 }
 
 /// Pure-Dart fallback for alignByAnchors (web / no OpenCV).
-/// Computes similarity alignment, then warps srcBytes → ref space.
+/// Warps srcBytes → the rectangular reference plane.
 Future<DartAlignResult?> dartAlignByAnchors(
   Uint8List refBytes,
   Uint8List srcBytes,
@@ -60,8 +60,16 @@ Future<DartAlignResult?> dartAlignByAnchors(
   // Начинаем с мягкого similarity, но для фото под углом этого мало:
   // правильно поставленные точки могут дать десятки пикселей ошибки.
   // Поэтому выбираем самый слабый transform, который реально снижает ошибку.
-  final H = _chooseAlignmentHomography(scaledSrc, scaledRef);
-  if (H == null) return null;
+  final alignment = _chooseAlignmentHomography(
+    scaledSrc,
+    scaledRef,
+    srcWidth: srcW * srcScale,
+    srcHeight: srcH * srcScale,
+    dstWidth: canonW.toDouble(),
+    dstHeight: canonH.toDouble(),
+  );
+  if (alignment == null) return null;
+  final H = alignment.h;
 
   // Resize source for warping
   final srcResized = img.copyResize(srcImg,
@@ -85,6 +93,8 @@ Future<DartAlignResult?> dartAlignByAnchors(
     refCanonicalBytes: refCanonicalBytes,
     homography: H,
     reprojError: reproj,
+    usedProjective: alignment.projective,
+    pointCount: srcPoints.length,
   );
 }
 
@@ -93,23 +103,34 @@ class DartAlignResult {
   final Uint8List refCanonicalBytes;
   final List<double> homography; // 9-element row-major 3×3
   final double reprojError;
+  final bool usedProjective;
+  final int pointCount;
   const DartAlignResult({
     required this.alignedBytes,
     required this.refCanonicalBytes,
     required this.homography,
     required this.reprojError,
+    required this.usedProjective,
+    required this.pointCount,
   });
 }
 
 // ── Alignment models ─────────────────────────────────
 
-List<double>? _chooseAlignmentHomography(
-    List<Offset> srcPts, List<Offset> dstPts) {
+({List<double> h, bool projective})? _chooseAlignmentHomography(
+  List<Offset> srcPts,
+  List<Offset> dstPts, {
+  required double srcWidth,
+  required double srcHeight,
+  required double dstWidth,
+  required double dstHeight,
+}) {
   final similarity = _computeSimilarityHomography(srcPts, dstPts);
   if (similarity == null) return null;
   var best = similarity;
   var bestError = _reprojError(best, srcPts, dstPts);
-  if (bestError <= 3.0) return best;
+  var bestProjective = false;
+  if (bestError <= 3.0) return (h: best, projective: bestProjective);
 
   final affine = _computeAffineHomography(srcPts, dstPts);
   if (affine != null) {
@@ -117,19 +138,27 @@ List<double>? _chooseAlignmentHomography(
     if (affineError <= 3.0 || affineError < bestError * 0.70) {
       best = affine;
       bestError = affineError;
+      bestProjective = false;
     }
   }
 
-  final perspective = _computeProjectiveHomography(srcPts, dstPts);
+  final perspective = _computeProjectiveHomography(
+    srcPts,
+    dstPts,
+    srcWidth: srcWidth,
+    srcHeight: srcHeight,
+    dstWidth: dstWidth,
+    dstHeight: dstHeight,
+  );
   if (perspective != null) {
     final perspectiveError = _reprojError(perspective, srcPts, dstPts);
-    final needsPerspective = bestError > 6.0 || perspectiveError > 0.5;
+    final needsPerspective = bestError > 3.0 || perspectiveError > 0.5;
     if (needsPerspective && perspectiveError < bestError * 0.55) {
-      return perspective;
+      return (h: perspective, projective: true);
     }
   }
 
-  return best;
+  return (h: best, projective: bestProjective);
 }
 
 List<double>? _computeSimilarityHomography(
@@ -194,7 +223,13 @@ List<double>? _computeAffineHomography(
 }
 
 List<double>? _computeProjectiveHomography(
-    List<Offset> srcPts, List<Offset> dstPts) {
+  List<Offset> srcPts,
+  List<Offset> dstPts, {
+  required double srcWidth,
+  required double srcHeight,
+  required double dstWidth,
+  required double dstHeight,
+}) {
   if (srcPts.length < 4 || srcPts.length != dstPts.length) return null;
 
   final rows = 2 * srcPts.length;
@@ -215,7 +250,15 @@ List<double>? _computeProjectiveHomography(
   final p = _solveLeastSquares(a, b, 8);
   if (p == null) return null;
   final H = [p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], 1.0];
-  return _isUsableHomography(H, srcPts, dstPts) ? H : null;
+  return _isUsableHomography(
+    H,
+    srcWidth: srcWidth,
+    srcHeight: srcHeight,
+    dstWidth: dstWidth,
+    dstHeight: dstHeight,
+  )
+      ? H
+      : null;
 }
 
 List<double>? _solveLeastSquares(
@@ -237,14 +280,20 @@ List<double>? _solveLeastSquares(
 }
 
 bool _isUsableHomography(
-  List<double> H,
-  List<Offset> srcPts,
-  List<Offset> dstPts,
-) {
-  final err = _reprojError(H, srcPts, dstPts);
-  if (!err.isFinite) return false;
+  List<double> H, {
+  required double srcWidth,
+  required double srcHeight,
+  required double dstWidth,
+  required double dstHeight,
+}) {
   final mapped = <Offset>[];
-  for (final p in srcPts) {
+  final corners = [
+    Offset.zero,
+    Offset(srcWidth, 0),
+    Offset(srcWidth, srcHeight),
+    Offset(0, srcHeight),
+  ];
+  for (final p in corners) {
     final wz = H[6] * p.dx + H[7] * p.dy + H[8];
     if (wz.abs() < 1e-9) return false;
     final x = (H[0] * p.dx + H[1] * p.dy + H[2]) / wz;
@@ -253,9 +302,8 @@ bool _isUsableHomography(
     mapped.add(Offset(x, y));
   }
 
-  final dstBox = _pointBounds(dstPts);
   final mappedBox = _pointBounds(mapped);
-  final dstArea = math.max(1.0, dstBox.width * dstBox.height);
+  final dstArea = math.max(1.0, dstWidth * dstHeight);
   final mappedArea = mappedBox.width * mappedBox.height;
   return mappedArea > dstArea * 0.05 && mappedArea < dstArea * 20;
 }

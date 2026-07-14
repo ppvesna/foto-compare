@@ -283,24 +283,29 @@ class OpenCvService {
     final r =
         await dartAlignByAnchors(refBytes, srcBytes, refPoints, srcPoints);
     if (r == null) return null;
-    final q = r.reprojError < 3
-        ? 'excellent'
-        : r.reprojError < 6
-            ? 'good'
-            : r.reprojError < 18
-                ? 'warning'
-                : 'fail';
+    final fourPointPerspective = r.usedProjective && r.pointCount <= 4;
+    final q = fourPointPerspective
+        ? (r.reprojError < 18 ? 'warning' : 'fail')
+        : r.reprojError < 3
+            ? 'excellent'
+            : r.reprojError < 6
+                ? 'good'
+                : r.reprojError < 18
+                    ? 'warning'
+                    : 'fail';
     return AlignByAnchorsResult(
       alignedBytes: r.alignedBytes,
       refCanonicalBytes: r.refCanonicalBytes,
       homography: r.homography,
       reprojError: r.reprojError,
       eccScore: 0.0,
-      confidence: r.reprojError < 6
-          ? 0.75
-          : r.reprojError < 18
-              ? 0.5
-              : 0.25,
+      confidence: fourPointPerspective
+          ? 0.5
+          : r.reprojError < 6
+              ? 0.75
+              : r.reprojError < 18
+                  ? 0.5
+                  : 0.25,
       quality: q,
       refinedSrcPoints: srcPoints,
     );

@@ -6,10 +6,10 @@ class AlignmentResult {
   final bool success;
   final Uint8List alignedBytes;
   final double reprojectionError; // px
-  final double eccScore;          // 0..1
-  final double confidence;        // 0..1
-  final List<double> homography;  // 3×3 row-major, 9 значений
-  final String quality;           // "excellent" | "good" | "warning" | "fail"
+  final double eccScore; // 0..1
+  final double confidence; // 0..1
+  final List<double> homography; // 3×3 row-major, 9 значений
+  final String quality; // "excellent" | "good" | "warning" | "fail"
   final List<Offset> refinedSrcPoints;
 
   const AlignmentResult({
@@ -26,23 +26,28 @@ class AlignmentResult {
   static String computeQuality(double reprojError, double eccScore) {
     if (eccScore >= 0.95 && reprojError < 1.5) return 'excellent';
     if (eccScore >= 0.90 && reprojError < 3.0) return 'good';
-    if (eccScore >= 0.80 && reprojError < 5.0) return 'warning';
+    if (reprojError < 18.0) return 'warning';
     return 'fail';
   }
 
   static double computeConfidence(double reprojError, double eccScore) {
-    final reproj = (1.0 - (reprojError / 10.0)).clamp(0.0, 1.0);
-    return (eccScore * 0.6 + reproj * 0.4).clamp(0.0, 1.0);
+    final reproj = (1.0 - (reprojError / 18.0)).clamp(0.0, 1.0);
+    return (eccScore * 0.45 + reproj * 0.55).clamp(0.0, 1.0);
   }
 
-  bool get isAcceptable => quality == 'excellent' || quality == 'good';
+  bool get isAcceptable =>
+      quality == 'excellent' || quality == 'good' || quality == 'warning';
 
   String get qualityLabel {
     switch (quality) {
-      case 'excellent': return 'Отлично';
-      case 'good':      return 'Хорошо';
-      case 'warning':   return 'Слабо';
-      default:          return 'Ошибка';
+      case 'excellent':
+        return 'Отлично';
+      case 'good':
+        return 'Хорошо';
+      case 'warning':
+        return 'Слабо';
+      default:
+        return 'Ошибка';
     }
   }
 }
