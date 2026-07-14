@@ -57,10 +57,10 @@ Future<DartAlignResult?> dartAlignByAnchors(
   final scaledSrc =
       srcPoints.map((p) => Offset(p.dx * srcScale, p.dy * srcScale)).toList();
 
-  // Similarity maps src coords → ref coords. We intentionally avoid full
-  // perspective/affine here: after manual crop + manual points, those warps
-  // can deform rectangular artwork and shift the diff map.
-  final H = _computeSimilarityHomography(scaledSrc, scaledRef);
+  // Начинаем с мягкого similarity, но для фото под углом этого мало:
+  // правильно поставленные точки могут дать десятки пикселей ошибки.
+  // Поэтому выбираем самый слабый transform, который реально снижает ошибку.
+  final H = _chooseAlignmentHomography(scaledSrc, scaledRef);
   if (H == null) return null;
 
   // Resize source for warping
@@ -101,7 +101,36 @@ class DartAlignResult {
   });
 }
 
-// ── Similarity alignment ─────────────────────────────
+// ── Alignment models ─────────────────────────────────
+
+List<double>? _chooseAlignmentHomography(
+    List<Offset> srcPts, List<Offset> dstPts) {
+  final similarity = _computeSimilarityHomography(srcPts, dstPts);
+  if (similarity == null) return null;
+  var best = similarity;
+  var bestError = _reprojError(best, srcPts, dstPts);
+  if (bestError <= 3.0) return best;
+
+  final affine = _computeAffineHomography(srcPts, dstPts);
+  if (affine != null) {
+    final affineError = _reprojError(affine, srcPts, dstPts);
+    if (affineError <= 3.0 || affineError < bestError * 0.70) {
+      best = affine;
+      bestError = affineError;
+    }
+  }
+
+  final perspective = _computeProjectiveHomography(srcPts, dstPts);
+  if (perspective != null) {
+    final perspectiveError = _reprojError(perspective, srcPts, dstPts);
+    final needsPerspective = bestError > 6.0 || perspectiveError > 0.5;
+    if (needsPerspective && perspectiveError < bestError * 0.55) {
+      return perspective;
+    }
+  }
+
+  return best;
+}
 
 List<double>? _computeSimilarityHomography(
     List<Offset> srcPts, List<Offset> dstPts) {
@@ -138,6 +167,114 @@ List<double>? _computeSimilarityHomography(
   final p = _solveLinear(ata, atb);
   if (p == null) return null;
   return [p[0], -p[1], p[2], p[1], p[0], p[3], 0.0, 0.0, 1.0];
+}
+
+List<double>? _computeAffineHomography(
+    List<Offset> srcPts, List<Offset> dstPts) {
+  if (srcPts.length < 3 || srcPts.length != dstPts.length) return null;
+
+  final rows = 2 * srcPts.length;
+  final a = List.generate(rows, (_) => List.filled(6, 0.0));
+  final b = List.filled(rows, 0.0);
+
+  for (int i = 0; i < srcPts.length; i++) {
+    final x = srcPts[i].dx;
+    final y = srcPts[i].dy;
+    final u = dstPts[i].dx;
+    final v = dstPts[i].dy;
+    a[2 * i] = [x, y, 1, 0, 0, 0];
+    b[2 * i] = u;
+    a[2 * i + 1] = [0, 0, 0, x, y, 1];
+    b[2 * i + 1] = v;
+  }
+
+  final p = _solveLeastSquares(a, b, 6);
+  if (p == null) return null;
+  return [p[0], p[1], p[2], p[3], p[4], p[5], 0.0, 0.0, 1.0];
+}
+
+List<double>? _computeProjectiveHomography(
+    List<Offset> srcPts, List<Offset> dstPts) {
+  if (srcPts.length < 4 || srcPts.length != dstPts.length) return null;
+
+  final rows = 2 * srcPts.length;
+  final a = List.generate(rows, (_) => List.filled(8, 0.0));
+  final b = List.filled(rows, 0.0);
+
+  for (int i = 0; i < srcPts.length; i++) {
+    final x = srcPts[i].dx;
+    final y = srcPts[i].dy;
+    final u = dstPts[i].dx;
+    final v = dstPts[i].dy;
+    a[2 * i] = [x, y, 1, 0, 0, 0, -u * x, -u * y];
+    b[2 * i] = u;
+    a[2 * i + 1] = [0, 0, 0, x, y, 1, -v * x, -v * y];
+    b[2 * i + 1] = v;
+  }
+
+  final p = _solveLeastSquares(a, b, 8);
+  if (p == null) return null;
+  final H = [p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], 1.0];
+  return _isUsableHomography(H, srcPts, dstPts) ? H : null;
+}
+
+List<double>? _solveLeastSquares(
+  List<List<double>> a,
+  List<double> b,
+  int cols,
+) {
+  final ata = List.generate(cols, (_) => List.filled(cols, 0.0));
+  final atb = List.filled(cols, 0.0);
+  for (int i = 0; i < a.length; i++) {
+    for (int j = 0; j < cols; j++) {
+      atb[j] += a[i][j] * b[i];
+      for (int k = 0; k < cols; k++) {
+        ata[j][k] += a[i][j] * a[i][k];
+      }
+    }
+  }
+  return _solveLinear(ata, atb);
+}
+
+bool _isUsableHomography(
+  List<double> H,
+  List<Offset> srcPts,
+  List<Offset> dstPts,
+) {
+  final err = _reprojError(H, srcPts, dstPts);
+  if (!err.isFinite) return false;
+  final mapped = <Offset>[];
+  for (final p in srcPts) {
+    final wz = H[6] * p.dx + H[7] * p.dy + H[8];
+    if (wz.abs() < 1e-9) return false;
+    final x = (H[0] * p.dx + H[1] * p.dy + H[2]) / wz;
+    final y = (H[3] * p.dx + H[4] * p.dy + H[5]) / wz;
+    if (!x.isFinite || !y.isFinite) return false;
+    mapped.add(Offset(x, y));
+  }
+
+  final dstBox = _pointBounds(dstPts);
+  final mappedBox = _pointBounds(mapped);
+  final dstArea = math.max(1.0, dstBox.width * dstBox.height);
+  final mappedArea = mappedBox.width * mappedBox.height;
+  return mappedArea > dstArea * 0.05 && mappedArea < dstArea * 20;
+}
+
+({double width, double height}) _pointBounds(List<Offset> pts) {
+  var minX = double.infinity;
+  var maxX = double.negativeInfinity;
+  var minY = double.infinity;
+  var maxY = double.negativeInfinity;
+  for (final p in pts) {
+    minX = math.min(minX, p.dx);
+    maxX = math.max(maxX, p.dx);
+    minY = math.min(minY, p.dy);
+    maxY = math.max(maxY, p.dy);
+  }
+  return (
+    width: math.max(0.0, maxX - minX),
+    height: math.max(0.0, maxY - minY)
+  );
 }
 
 List<double>? _solveLinear(List<List<double>> A, List<double> b) {

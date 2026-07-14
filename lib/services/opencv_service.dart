@@ -287,7 +287,7 @@ class OpenCvService {
         ? 'excellent'
         : r.reprojError < 6
             ? 'good'
-            : r.reprojError < 10
+            : r.reprojError < 18
                 ? 'warning'
                 : 'fail';
     return AlignByAnchorsResult(
@@ -298,7 +298,7 @@ class OpenCvService {
       eccScore: 0.0,
       confidence: r.reprojError < 6
           ? 0.75
-          : r.reprojError < 10
+          : r.reprojError < 18
               ? 0.5
               : 0.25,
       quality: q,
@@ -332,7 +332,8 @@ class AlignByAnchorsResult {
     required this.refinedSrcPoints,
   });
 
-  bool get isAcceptable => quality == 'excellent' || quality == 'good';
+  bool get isAcceptable =>
+      quality == 'excellent' || quality == 'good' || quality == 'warning';
 
   String get qualityLabel {
     switch (quality) {
