@@ -65,6 +65,8 @@ class _CompareScreenState extends State<CompareScreen>
   bool _comparing = false;
   String? _compareStatus;
   final List<String> _compareSteps = [];
+  final List<_TimedStep> _timedSteps = [];
+  Stopwatch? _stageWatch;
   bool _aiLoading = false;
   CompareResult? _result;
   AiAnalysis? _aiResult;
@@ -111,7 +113,7 @@ class _CompareScreenState extends State<CompareScreen>
   List<Offset> _tempCmpPts = [];
   bool _anchorRefining = false;
   static const int _minAnchorPts = 4;
-  static const int _maxAnchorPts = 5;
+  static const int _maxAnchorPts = 8;
 
   // Отступ рамки (10% с каждой стороны = 80% центральная зона)
   static const double _framePad = 0.10;
@@ -310,6 +312,8 @@ class _CompareScreenState extends State<CompareScreen>
       _loupeDragStart = null;
       _compareStatus = null;
       _compareSteps.clear();
+      _timedSteps.clear();
+      _stageWatch = null;
       _calStep = 0;
       _tempCmpPts = [];
     });
@@ -374,6 +378,8 @@ class _CompareScreenState extends State<CompareScreen>
       _loupeDragStart = null;
       _compareStatus = null;
       _compareSteps.clear();
+      _timedSteps.clear();
+      _stageWatch = null;
       _refAlignCtrl.value = Matrix4.identity();
       _cmpAlignCtrl.value = Matrix4.identity();
       if (storedRefPts != null) _refAnchorPts = storedRefPts;
@@ -385,6 +391,7 @@ class _CompareScreenState extends State<CompareScreen>
       _calStep = 0;
       _tempRefPts = [];
       _tempCmpPts = [];
+      _stageWatch = null;
     });
   }
 
@@ -483,6 +490,8 @@ class _CompareScreenState extends State<CompareScreen>
       _loupeDragStart = null;
       _compareStatus = null;
       _compareSteps.clear();
+      _timedSteps.clear();
+      _stageWatch = null;
     });
   }
 
@@ -546,12 +555,14 @@ class _CompareScreenState extends State<CompareScreen>
       _calibrating = true;
     });
     try {
+      _startTimedStage('Расчёт совмещения по ${refPts.length} точкам...');
       final alignResult = await OpenCvService.alignByAnchors(
         _refImg!,
         _cmpImg!,
         refPts,
         cmpPts,
       );
+      _finishTimedStage(label: 'Расчёт совмещения');
       if (!mounted) return;
       if (alignResult == null) {
         xpDlg(
@@ -662,6 +673,7 @@ class _CompareScreenState extends State<CompareScreen>
         );
       }
     } finally {
+      _finishTimedStage(label: 'Расчёт совмещения');
       if (mounted)
         setState(() {
           _calibrating = false;
@@ -1098,6 +1110,34 @@ class _CompareScreenState extends State<CompareScreen>
   }
 
   // ── Сравнение ─────────────────────────────────────
+  String _fmtDuration(Duration d) {
+    final ms = d.inMilliseconds;
+    if (ms < 1000) return '$ms мс';
+    final seconds = ms / 1000;
+    if (seconds < 60) return '${seconds.toStringAsFixed(1)} сек';
+    final minutes = seconds ~/ 60;
+    final rest = seconds % 60;
+    return '$minutes мин ${rest.toStringAsFixed(0)} сек';
+  }
+
+  void _finishTimedStage({String? label}) {
+    final watch = _stageWatch;
+    final title = label ?? _compareStatus;
+    if (watch == null || title == null) return;
+    watch.stop();
+    _stageWatch = null;
+    if (!mounted) return;
+    setState(() {
+      _timedSteps.add(_TimedStep(title, watch.elapsed));
+    });
+  }
+
+  void _startTimedStage(String message) {
+    _finishTimedStage();
+    _stageWatch = Stopwatch()..start();
+    _setCompareStatus(message);
+  }
+
   void _setCompareStatus(String message) {
     if (!mounted) return;
     setState(() {
@@ -1187,6 +1227,9 @@ class _CompareScreenState extends State<CompareScreen>
       );
       return;
     }
+    final preservedTimedSteps = _timedSteps
+        .where((s) => s.label.startsWith('Расчёт совмещения'))
+        .toList();
     setState(() {
       _comparing = true;
       _aiResult = null;
@@ -1206,12 +1249,16 @@ class _CompareScreenState extends State<CompareScreen>
       _compareSteps
         ..clear()
         ..add('Готовлю изображения к проверке...');
+      _timedSteps
+        ..clear()
+        ..addAll(preservedTimedSteps);
+      _stageWatch = null;
       _compareStatus = 'Готовлю изображения к проверке...';
       _resultMapMode = _ResultMapMode.deltaE;
     });
     _resultCmpCtrl.value = Matrix4.identity();
     try {
-      _setCompareStatus(
+      _startTimedStage(
         'Этап 1/5: проверяю ч/б геометрию и базовую карту отличий...',
       );
       await _yieldUi();
@@ -1224,11 +1271,12 @@ class _CompareScreenState extends State<CompareScreen>
       setState(() {
         _result = compareResult;
       });
+      _finishTimedStage(label: 'ЧБ геометрия и базовая карта');
       _setCompareStatus(_geometryStatusLine(compareResult));
       _tabs.animateTo(3);
 
       // Lab-пирамида — точнее MAE, обновляем результат если OpenCV доступен.
-      _setCompareStatus('Этап 2/5: рассчитываю цветовую карту Delta E...');
+      _startTimedStage('Этап 2/5: рассчитываю цветовую карту Delta E...');
       await _yieldUi();
       final lab = await OpenCvService.compareImages(ref, cmp);
       if (lab != null && mounted && _result != null) {
@@ -1276,8 +1324,9 @@ class _CompareScreenState extends State<CompareScreen>
           'Delta E: используется базовая карта отличий без OpenCV Lab-пирамиды.',
         );
       }
+      _finishTimedStage(label: 'Цветовая карта Delta E');
 
-      _setCompareStatus('Этап 3/5: проверяю штрихкоды и QR...');
+      _startTimedStage('Этап 3/5: проверяю штрихкоды и QR...');
       await _yieldUi();
       final barcodeResults = await Future.wait([
         BarcodeService.scanImage(
@@ -1295,7 +1344,8 @@ class _CompareScreenState extends State<CompareScreen>
       _setCompareStatus(
         'Штрихкоды проверены: эталон ${_refBarcodes.length}, образец ${_cmpBarcodes.length}.',
       );
-      _setCompareStatus('Этап 4/5: проверяю текст OCR...');
+      _finishTimedStage(label: 'Штрихкоды и QR');
+      _startTimedStage('Этап 4/5: проверяю текст OCR...');
       await _yieldUi();
 
       Future<OcrResult> ocrSafe(Uint8List b) async {
@@ -1325,8 +1375,9 @@ class _CompareScreenState extends State<CompareScreen>
             ? 'OCR: распознанного текста для вычитки нет.'
             : 'OCR: совпадение текста ${_textDiff!.similarity.toStringAsFixed(1)}%.',
       );
+      _finishTimedStage(label: 'OCR / текст');
 
-      _setCompareStatus('Этап 5/5: строю Lab ID и сохраняю протокол...');
+      _startTimedStage('Этап 5/5: строю Lab ID и сохраняю протокол...');
       await _yieldUi();
       final fingerprints = await Future.wait([
         LabFingerprintService.create(ref),
@@ -1344,6 +1395,7 @@ class _CompareScreenState extends State<CompareScreen>
       _setCompareStatus(
         'Lab ID готов: совпадение ${_fmt(_labFingerprintMatch)}%.',
       );
+      _finishTimedStage(label: 'Lab ID');
 
       try {
         await _saveCheckResult();
@@ -1356,6 +1408,7 @@ class _CompareScreenState extends State<CompareScreen>
     } catch (e) {
       if (mounted) xpDlg(context, 'Ошибка сравнения', e.toString());
     } finally {
+      _finishTimedStage();
       if (mounted) setState(() => _comparing = false);
     }
   }
@@ -1459,6 +1512,13 @@ class _CompareScreenState extends State<CompareScreen>
             '${_shortLabId(_refLabFingerprint?.labId)} · ${_fmt(_labFingerprintMatch)}%',
         comment: 'Сохранён локальный Lab-паспорт последней проверки.',
       ),
+      if (_timedSteps.isNotEmpty)
+        CheckProtocolStage(
+          name: 'Время обработки',
+          status: 'INFO',
+          metric: _timingSummary(),
+          comment: 'Локальные замеры этапов этой проверки.',
+        ),
       CheckProtocolStage(
         name: 'Итог',
         status: _overallStatus(r.score),
@@ -1466,6 +1526,13 @@ class _CompareScreenState extends State<CompareScreen>
         comment: 'Общий результат без отправки в базу.',
       ),
     ];
+  }
+
+  String _timingSummary() {
+    if (_timedSteps.isEmpty) return '-';
+    return _timedSteps
+        .map((s) => '${s.label}: ${_fmtDuration(s.duration)}')
+        .join(' · ');
   }
 
   String _fmt(num? value) => value == null ? '-' : value.toStringAsFixed(1);
@@ -2267,6 +2334,9 @@ class _CompareScreenState extends State<CompareScreen>
     final visibleSteps = compact && _compareSteps.length > 4
         ? _compareSteps.sublist(_compareSteps.length - 4)
         : _compareSteps;
+    final visibleTimedSteps = compact && _timedSteps.length > 6
+        ? _timedSteps.sublist(_timedSteps.length - 6)
+        : _timedSteps;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
@@ -2301,6 +2371,53 @@ class _CompareScreenState extends State<CompareScreen>
               ),
             ],
           ),
+          if (visibleTimedSteps.isNotEmpty) ...[
+            const SizedBox(height: 7),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.62),
+                borderRadius: BorderRadius.circular(7),
+                border: Border.all(color: const Color(0xFFD6E0EA)),
+              ),
+              child: Column(
+                children: visibleTimedSteps
+                    .map(
+                      (s) => Padding(
+                        padding: const EdgeInsets.only(bottom: 3),
+                        child: Row(children: [
+                          const Icon(
+                            Icons.timer_outlined,
+                            size: 12,
+                            color: Colors.black54,
+                          ),
+                          const SizedBox(width: 5),
+                          Expanded(
+                            child: Text(
+                              s.label,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 10,
+                                color: Colors.black87,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          Text(
+                            _fmtDuration(s.duration),
+                            style: const TextStyle(
+                              fontSize: 10,
+                              color: Colors.black54,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ]),
+                      ),
+                    )
+                    .toList(),
+              ),
+            ),
+          ],
           if (visibleSteps.length > 1) ...[
             const SizedBox(height: 7),
             ...visibleSteps.map(
@@ -2889,7 +3006,7 @@ class _CompareScreenState extends State<CompareScreen>
             ? 'Калибровка: точки на образце'
             : 'Калибровка: расчёт совмещения';
     final message = _calStep == 1
-        ? 'Быстрый режим: поставьте 4 точки по понятным местам. 5-я точка только как контрольная, если фото сильно снято под углом.'
+        ? 'Быстрый режим: 4 точки достаточно. 5-8 точки оператор добавляет сам как контрольные, если фото снято под углом.'
         : _calStep == 2
             ? 'Перенесите те же ${_tempRefPts.length} точки на образец в том же порядке. Мини-эталон сверху показывает, куда ставили точки.'
             : 'OpenCV рассчитывает гомографию и проверяет качество совмещения.';
@@ -3217,7 +3334,7 @@ class _CompareScreenState extends State<CompareScreen>
       ),
       child: Text(
         label == 'Эталон'
-            ? '$label: $count / $required точки · +1 контроль'
+            ? '$label: $count / $required точки · до $_maxAnchorPts по выбору'
             : '$label: $count / $required точек',
         style: TextStyle(
           fontSize: 11,
@@ -3391,10 +3508,10 @@ class _CompareScreenState extends State<CompareScreen>
                       : _calibrationSettings.loupeEnabled
                           ? (minPts > _minAnchorPts
                               ? 'Клик - открыть лупу. Перенесите все выбранные точки. Ctrl+скролл/драг - зум и сдвиг.'
-                              : 'Клик - открыть лупу. 4 точки достаточно, 5-я только контрольная. Ctrl+скролл/драг - зум и сдвиг.')
+                              : 'Клик - открыть лупу. 4 точки достаточно, 5-8 точки контрольные по выбору. Ctrl+скролл/драг - зум и сдвиг.')
                           : (minPts > _minAnchorPts
                               ? 'Клик - точка без лупы. Перенесите все выбранные точки. Ctrl+скролл/драг - зум и сдвиг.'
-                              : 'Клик - точка без лупы. 4 точки достаточно, 5-я только контрольная. Ctrl+скролл/драг - зум и сдвиг.')
+                              : 'Клик - точка без лупы. 4 точки достаточно, 5-8 точки контрольные по выбору. Ctrl+скролл/драг - зум и сдвиг.')
                   : 'Ctrl+скролл/драг - зум и перемещение.',
               style: const TextStyle(fontSize: 10, color: Colors.black54),
             ),
@@ -3807,7 +3924,7 @@ class _CompareScreenState extends State<CompareScreen>
 
   Widget _calibrationInspector() {
     final text = _calStep == 1
-        ? 'Эталон: ${_tempRefPts.length} / $_minAnchorPts точки (+1 контрольная по желанию)'
+        ? 'Эталон: ${_tempRefPts.length} / $_minAnchorPts точки, до $_maxAnchorPts по выбору оператора'
         : _calStep == 2
             ? 'Образец: ${_tempCmpPts.length} / ${_tempRefPts.length} точек'
             : 'Расчёт совмещения...';
@@ -7132,6 +7249,13 @@ class _FlowStep {
   final bool active;
 
   const _FlowStep(this.num, this.label, this.done, this.active);
+}
+
+class _TimedStep {
+  final String label;
+  final Duration duration;
+
+  const _TimedStep(this.label, this.duration);
 }
 
 class _LevelConclusion {
