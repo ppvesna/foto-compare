@@ -111,7 +111,7 @@ class _CompareScreenState extends State<CompareScreen>
   List<Offset> _tempCmpPts = [];
   bool _anchorRefining = false;
   static const int _minAnchorPts = 4;
-  static const int _maxAnchorPts = 8;
+  static const int _maxAnchorPts = 5;
 
   // Отступ рамки (10% с каждой стороны = 80% центральная зона)
   static const double _framePad = 0.10;
@@ -349,11 +349,14 @@ class _CompareScreenState extends State<CompareScreen>
     if (cmpSize == null) {
       cmpSize = await _readImageSize(_cmpImg!);
     }
-    final storedRefPts = _layoutProfile == null
+    final storedRefPtsRaw = _layoutProfile == null
         ? null
         : _layoutProfile!.refAnchors
             .map((a) => Offset(a.x * refSize!.width, a.y * refSize.height))
             .toList();
+    final storedRefPts = storedRefPtsRaw == null
+        ? null
+        : storedRefPtsRaw.take(_maxAnchorPts).toList();
     if (!mounted) return;
     setState(() {
       _calStep =
@@ -2886,9 +2889,9 @@ class _CompareScreenState extends State<CompareScreen>
             ? 'Калибровка: точки на образце'
             : 'Калибровка: расчёт совмещения';
     final message = _calStep == 1
-        ? 'Поставьте $_minAnchorPts-$_maxAnchorPts одинаковых контрольных точек на эталоне. Точка мягко притягивается к ближайшему ч/б контрасту.'
+        ? 'Быстрый режим: поставьте 4 точки по понятным местам. 5-я точка только как контрольная, если фото сильно снято под углом.'
         : _calStep == 2
-            ? 'Поставьте те же ${_tempRefPts.length} точек на образце в том же порядке. Магнит работает только рядом с кликом, без дальнего прыжка.'
+            ? 'Перенесите те же ${_tempRefPts.length} точки на образец в том же порядке. Мини-эталон сверху показывает, куда ставили точки.'
             : 'OpenCV рассчитывает гомографию и проверяет качество совмещения.';
 
     return _xpWindow(
@@ -2914,20 +2917,32 @@ class _CompareScreenState extends State<CompareScreen>
             final viewportHeight = MediaQuery.sizeOf(context).height;
             final panelHeight = (viewportHeight - 245).clamp(460.0, 980.0);
             if (_calStep == 2) {
-              return _calibrationPointPanel(
-                label: 'Образец - ставьте точки',
-                bytes: _cmpImg!,
-                imgSize: _cmpImgSize,
-                anchorPts: _cmpAnchorPts,
-                ctrl: _cmpAlignCtrl,
-                availableWidth: panelWidth,
-                panelHeightOverride: panelHeight,
-                placing: true,
-                tempPts: _tempCmpPts,
-                onTap: _addPanelPoint,
-                onUndo: _undoLastPoint,
-                minPts:
-                    _tempRefPts.isEmpty ? _minAnchorPts : _tempRefPts.length,
+              final guideHeight = panelHeight < 560 ? 112.0 : 146.0;
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _referencePointGuide(
+                    height: guideHeight,
+                    nextIndex: _tempCmpPts.length + 1,
+                  ),
+                  const SizedBox(height: 8),
+                  _calibrationPointPanel(
+                    label: 'Образец - ставьте точки',
+                    bytes: _cmpImg!,
+                    imgSize: _cmpImgSize,
+                    anchorPts: _cmpAnchorPts,
+                    ctrl: _cmpAlignCtrl,
+                    availableWidth: panelWidth,
+                    panelHeightOverride: panelHeight - guideHeight - 8,
+                    placing: true,
+                    tempPts: _tempCmpPts,
+                    onTap: _addPanelPoint,
+                    onUndo: _undoLastPoint,
+                    minPts: _tempRefPts.isEmpty
+                        ? _minAnchorPts
+                        : _tempRefPts.length,
+                  ),
+                ],
               );
             }
             if (_calStep == 3) {
@@ -2950,6 +2965,147 @@ class _CompareScreenState extends State<CompareScreen>
           }),
         ]),
       ),
+    );
+  }
+
+  Widget _referencePointGuide({
+    required double height,
+    required int nextIndex,
+  }) {
+    final bytes = _refImg;
+    final imageSize = _refImgSize;
+    if (bytes == null || imageSize == null || _tempRefPts.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final activeIndex = nextIndex.clamp(1, _tempRefPts.length);
+    return Container(
+      height: height,
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        border: Border.all(color: const Color(0xFFC9E2F0)),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Row(children: [
+        Expanded(
+          flex: 3,
+          child: LayoutBuilder(builder: (_, constraints) {
+            final boxSize = Size(constraints.maxWidth, height);
+            final scale = min(
+              boxSize.width / imageSize.width,
+              boxSize.height / imageSize.height,
+            );
+            final w = imageSize.width * scale;
+            final h = imageSize.height * scale;
+            final rect = Rect.fromLTWH(
+              (boxSize.width - w) / 2,
+              (boxSize.height - h) / 2,
+              w,
+              h,
+            );
+            return Stack(children: [
+              Positioned.fill(child: _uiImage(bytes, fit: BoxFit.contain)),
+              ..._tempRefPts.asMap().entries.map((entry) {
+                final pointNo = entry.key + 1;
+                final p = entry.value;
+                final done = pointNo < nextIndex;
+                final active =
+                    pointNo == activeIndex && nextIndex <= _tempRefPts.length;
+                final x = rect.left + p.dx / imageSize.width * rect.width;
+                final y = rect.top + p.dy / imageSize.height * rect.height;
+                final color = done
+                    ? AppTheme.simHigh
+                    : active
+                        ? AppTheme.blue
+                        : Colors.orange;
+                return Positioned(
+                  left: x - 8,
+                  top: y - 8,
+                  child: Container(
+                    width: 17,
+                    height: 17,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: color,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 1.2),
+                      boxShadow: AppTheme.shadowSubtle,
+                    ),
+                    child: Text(
+                      '$pointNo',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                );
+              }),
+            ]);
+          }),
+        ),
+        Expanded(
+          flex: 2,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(9, 8, 9, 8),
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text(
+                'Карта точек эталона',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 5),
+              Text(
+                nextIndex <= _tempRefPts.length
+                    ? 'Сейчас поставьте точку $nextIndex на образце.'
+                    : 'Все точки перенесены. Можно рассчитывать.',
+                style: const TextStyle(
+                  fontSize: 11,
+                  height: 1.3,
+                  color: Colors.black54,
+                ),
+              ),
+              const Spacer(),
+              Wrap(
+                spacing: 4,
+                runSpacing: 4,
+                children: _tempRefPts.asMap().entries.map((entry) {
+                  final pointNo = entry.key + 1;
+                  final done = pointNo <= _tempCmpPts.length;
+                  final active =
+                      pointNo == activeIndex && nextIndex <= _tempRefPts.length;
+                  return Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: done
+                          ? AppTheme.simHigh
+                          : active
+                              ? AppTheme.blue
+                              : Colors.white,
+                      border: Border.all(
+                        color: done || active
+                            ? Colors.transparent
+                            : AppTheme.border,
+                      ),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      '$pointNo',
+                      style: TextStyle(
+                        color: done || active ? Colors.white : Colors.black54,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ]),
+          ),
+        ),
+      ]),
     );
   }
 
@@ -2999,7 +3155,7 @@ class _CompareScreenState extends State<CompareScreen>
         back:
             XpBtn(label: 'Отмена', danger: true, onPressed: _cancelCalibration),
         next: XpBtn(
-          label: 'Далее ›',
+          label: 'Далее к образцу ›',
           primary: true,
           onPressed: _tempRefPts.length >= _minAnchorPts
               ? () => _advanceToStep2()
@@ -3060,7 +3216,9 @@ class _CompareScreenState extends State<CompareScreen>
         border: Border.all(color: ok ? AppTheme.simHigh : AppTheme.silverDark),
       ),
       child: Text(
-        '$label: $count / $required точек',
+        label == 'Эталон'
+            ? '$label: $count / $required точки · +1 контроль'
+            : '$label: $count / $required точек',
         style: TextStyle(
           fontSize: 11,
           fontWeight: FontWeight.bold,
@@ -3153,7 +3311,9 @@ class _CompareScreenState extends State<CompareScreen>
           ),
           if (placing)
             Text(
-              '${tempPts.length} / $minPts',
+              minPts == _minAnchorPts && tempPts.length > minPts
+                  ? '${tempPts.length} / $_maxAnchorPts'
+                  : '${tempPts.length} / $minPts',
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 11,
@@ -3229,8 +3389,12 @@ class _CompareScreenState extends State<CompareScreen>
                   ? _anchorRefining
                       ? 'Ищу ближайший ч/б контраст рядом с кликом...'
                       : _calibrationSettings.loupeEnabled
-                          ? 'Клик - открыть лупу. В лупе поставьте точную точку. Ctrl+скролл/драг - зум и сдвиг.'
-                          : 'Клик - точка без лупы. Ctrl+скролл/драг - зум и сдвиг.'
+                          ? (minPts > _minAnchorPts
+                              ? 'Клик - открыть лупу. Перенесите все выбранные точки. Ctrl+скролл/драг - зум и сдвиг.'
+                              : 'Клик - открыть лупу. 4 точки достаточно, 5-я только контрольная. Ctrl+скролл/драг - зум и сдвиг.')
+                          : (minPts > _minAnchorPts
+                              ? 'Клик - точка без лупы. Перенесите все выбранные точки. Ctrl+скролл/драг - зум и сдвиг.'
+                              : 'Клик - точка без лупы. 4 точки достаточно, 5-я только контрольная. Ctrl+скролл/драг - зум и сдвиг.')
                   : 'Ctrl+скролл/драг - зум и перемещение.',
               style: const TextStyle(fontSize: 10, color: Colors.black54),
             ),
@@ -3643,7 +3807,7 @@ class _CompareScreenState extends State<CompareScreen>
 
   Widget _calibrationInspector() {
     final text = _calStep == 1
-        ? 'Эталон: ${_tempRefPts.length} / $_minAnchorPts точек'
+        ? 'Эталон: ${_tempRefPts.length} / $_minAnchorPts точки (+1 контрольная по желанию)'
         : _calStep == 2
             ? 'Образец: ${_tempCmpPts.length} / ${_tempRefPts.length} точек'
             : 'Расчёт совмещения...';
@@ -3652,9 +3816,9 @@ class _CompareScreenState extends State<CompareScreen>
       const SizedBox(height: 6),
       Text(
         _calStep == 1
-            ? 'Кнопка «Далее» находится между эталоном и образцом.'
+            ? 'Ставьте четыре быстрые точки по понятным местам. Пятую добавляйте только при сильной перспективе.'
             : _calStep == 2
-                ? 'Кнопка «Рассчитать» находится между эталоном и образцом.'
+                ? 'Сверху показан мини-эталон: переносите точки по номерам, без запоминания на память.'
                 : 'Идёт расчёт совмещения.',
         style: const TextStyle(fontSize: 11, color: Colors.black54),
       ),
