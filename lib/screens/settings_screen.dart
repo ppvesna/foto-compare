@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/app_theme.dart';
 import '../services/calibration_settings_service.dart';
-import '../services/check_history_service.dart';
+import '../features/protocols/protocols.dart';
 import '../services/compare_settings_service.dart';
 import '../widgets/xp_widgets.dart';
 

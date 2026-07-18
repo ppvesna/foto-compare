@@ -8,7 +8,7 @@ import 'screens/compare_screen.dart';
 import 'screens/chat_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/settings_screen.dart';
-import 'services/check_history_service.dart';
+import 'features/protocols/protocols.dart';
 import 'services/sync_service.dart';
 
 void main() async {
