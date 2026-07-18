@@ -4,9 +4,23 @@ import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
 import '../config/app_theme.dart';
 
+class CropSelection {
+  final int x;
+  final int y;
+  final int width;
+  final int height;
+
+  const CropSelection({
+    required this.x,
+    required this.y,
+    required this.width,
+    required this.height,
+  });
+}
+
 /// Экран выбора области на изображении.
 /// Показывает фото, поверх него — перемещаемую/масштабируемую рамку.
-/// Возвращает обрезанные байты (PNG) при нажатии "Готово".
+/// Возвращает только границу обработки; пиксели применяются после закрытия.
 class CropFrameScreen extends StatefulWidget {
   final Uint8List imageBytes;
   final String title;
@@ -17,14 +31,23 @@ class CropFrameScreen extends StatefulWidget {
     this.title = 'Выберите область',
   });
 
-  /// Открывает экран и возвращает обрезанные байты или null если отменено.
-  static Future<Uint8List?> show(BuildContext context, Uint8List bytes,
+  static Future<CropSelection?> show(BuildContext context, Uint8List bytes,
       {String title = 'Выберите область'}) {
-    return Navigator.push<Uint8List>(
+    return Navigator.push<CropSelection>(
       context,
       MaterialPageRoute(
         builder: (_) => CropFrameScreen(imageBytes: bytes, title: title),
       ),
+    );
+  }
+
+  static Future<Uint8List> apply(
+    Uint8List bytes,
+    CropSelection selection,
+  ) {
+    return compute(
+      _performPixelCrop,
+      _PixelCropTask(bytes: bytes, selection: selection),
     );
   }
 
@@ -216,21 +239,19 @@ class _CropFrameScreenState extends State<CropFrameScreen> {
   }
 
   Future<void> _onConfirm() async {
-    setState(() => _loading = true);
-    final bytes = await compute(
-        _performCrop,
-        _CropTask(
-          bytes: widget.imageBytes,
-          imgWidth: _imgSize.width,
-          imgHeight: _imgSize.height,
-          viewWidth: _viewSize.width,
-          viewHeight: _viewSize.height,
-          frameLeft: _frame.left,
-          frameTop: _frame.top,
-          frameWidth: _frame.width,
-          frameHeight: _frame.height,
-        ));
-    if (mounted) Navigator.pop(context, bytes);
+    final selection = _selectionFromTask(
+      _CropTask(
+        imgWidth: _imgSize.width,
+        imgHeight: _imgSize.height,
+        viewWidth: _viewSize.width,
+        viewHeight: _viewSize.height,
+        frameLeft: _frame.left,
+        frameTop: _frame.top,
+        frameWidth: _frame.width,
+        frameHeight: _frame.height,
+      ),
+    );
+    if (mounted) Navigator.pop(context, selection);
   }
 
   @override
@@ -296,13 +317,11 @@ enum _DragTarget {
 }
 
 class _CropTask {
-  final Uint8List bytes;
   final double imgWidth, imgHeight;
   final double viewWidth, viewHeight;
   final double frameLeft, frameTop, frameWidth, frameHeight;
 
   const _CropTask({
-    required this.bytes,
     required this.imgWidth,
     required this.imgHeight,
     required this.viewWidth,
@@ -314,15 +333,19 @@ class _CropTask {
   });
 }
 
+class _PixelCropTask {
+  final Uint8List bytes;
+  final CropSelection selection;
+
+  const _PixelCropTask({required this.bytes, required this.selection});
+}
+
 ({int width, int height}) _decodeCropSize(Uint8List bytes) {
   final decoded = img.decodeImage(bytes);
   return (width: decoded?.width ?? 0, height: decoded?.height ?? 0);
 }
 
-Uint8List _performCrop(_CropTask task) {
-  final decoded = img.decodeImage(task.bytes);
-  if (decoded == null) return task.bytes;
-
+CropSelection _selectionFromTask(_CropTask task) {
   final imgAspect = task.imgWidth / task.imgHeight;
   final viewAspect = task.viewWidth / task.viewHeight;
   double imgX, imgY, imgW, imgH;
@@ -349,12 +372,27 @@ Uint8List _performCrop(_CropTask task) {
 
   final scaleX = task.imgWidth / imgW;
   final scaleY = task.imgHeight / imgH;
-  final cx = ((clipped.left - imgX) * scaleX).round().clamp(0, decoded.width);
-  final cy = ((clipped.top - imgY) * scaleY).round().clamp(0, decoded.height);
-  final cw = (clipped.width * scaleX).round().clamp(1, decoded.width - cx);
-  final ch = (clipped.height * scaleY).round().clamp(1, decoded.height - cy);
+  final imageWidth = task.imgWidth.round();
+  final imageHeight = task.imgHeight.round();
+  final cx = ((clipped.left - imgX) * scaleX).round().clamp(0, imageWidth - 1);
+  final cy = ((clipped.top - imgY) * scaleY).round().clamp(0, imageHeight - 1);
+  final cw = (clipped.width * scaleX).round().clamp(1, imageWidth - cx);
+  final ch = (clipped.height * scaleY).round().clamp(1, imageHeight - cy);
+  return CropSelection(x: cx, y: cy, width: cw, height: ch);
+}
 
-  final cropped = img.copyCrop(decoded, x: cx, y: cy, width: cw, height: ch);
+Uint8List _performPixelCrop(_PixelCropTask task) {
+  final decoded = img.decodeImage(task.bytes);
+  if (decoded == null) return task.bytes;
+  final crop = task.selection;
+
+  final cropped = img.copyCrop(
+    decoded,
+    x: crop.x,
+    y: crop.y,
+    width: crop.width,
+    height: crop.height,
+  );
   // level: 1 — быстрое сжатие вместо дефолтного (6), на больших фото
   // экономит большую часть времени кодирования PNG в чистом Dart.
   return Uint8List.fromList(img.encodePng(cropped, level: 1));

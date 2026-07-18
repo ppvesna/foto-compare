@@ -17,6 +17,9 @@ import '../services/calibration_settings_service.dart';
 import '../services/lab_fingerprint_service.dart';
 import '../services/ocr_service.dart';
 import '../services/check_history_service.dart';
+import '../services/web_compare_worker_stub.dart'
+    if (dart.library.html) '../services/web_compare_worker_web.dart'
+    as web_worker;
 import '../config/app_config.dart';
 import '../widgets/crop_frame_screen.dart';
 import '../widgets/anchor_point_screen.dart';
@@ -123,6 +126,9 @@ class _CompareScreenState extends State<CompareScreen>
   String _imageBusyLabel = 'Обработка изображения...';
   double _diffSlider = 0.5;
   _ResultMapMode _resultMapMode = _ResultMapMode.deltaE;
+  bool _exactDeltaEReady = false;
+  bool _exactDeltaEComputing = false;
+  bool _exactDeltaERequested = false;
   _InspectionTool _inspectionTool = _InspectionTool.point;
   final _resultCmpCtrl = TransformationController();
   _PointProbe? _pointProbe;
@@ -137,6 +143,10 @@ class _CompareScreenState extends State<CompareScreen>
   final _jobNumberCtrl = TextEditingController();
   String _jobNumber = '';
   int _sampleNo = 1;
+  String? _activeProtocolId;
+  DateTime? _activeProtocolCreatedAt;
+  String? _activeProtocolSampleImageId;
+  int? _activeProtocolSampleNo;
 
   static const int _uiImageCacheWidth = 1600;
 
@@ -305,6 +315,13 @@ class _CompareScreenState extends State<CompareScreen>
       _cmp1Sharpness = null;
       _cmp2Sharpness = null;
       _result = null;
+      _exactDeltaEReady = false;
+      _exactDeltaEComputing = false;
+      _exactDeltaERequested = false;
+      _activeProtocolId = null;
+      _activeProtocolCreatedAt = null;
+      _activeProtocolSampleImageId = null;
+      _activeProtocolSampleNo = null;
       _aiResult = null;
       _pointProbe = null;
       _areaLoupe = null;
@@ -362,6 +379,8 @@ class _CompareScreenState extends State<CompareScreen>
         ? null
         : storedRefPtsRaw.take(_maxAnchorPts).toList();
     if (!mounted) return;
+    final cropTimedSteps =
+        _timedSteps.where((step) => step.label.startsWith('Обрезка ')).toList();
     setState(() {
       _calStep =
           storedRefPts == null || storedRefPts.length < _minAnchorPts ? 1 : 2;
@@ -372,13 +391,22 @@ class _CompareScreenState extends State<CompareScreen>
       _cmpAligned = null;
       _cmpAnchorPts = null;
       _result = null;
+      _exactDeltaEReady = false;
+      _exactDeltaEComputing = false;
+      _exactDeltaERequested = false;
+      _activeProtocolId = null;
+      _activeProtocolCreatedAt = null;
+      _activeProtocolSampleImageId = null;
+      _activeProtocolSampleNo = null;
       _pointProbe = null;
       _areaLoupe = null;
       _loupeDraftRect = null;
       _loupeDragStart = null;
       _compareStatus = null;
       _compareSteps.clear();
-      _timedSteps.clear();
+      _timedSteps
+        ..clear()
+        ..addAll(cropTimedSteps);
       _stageWatch = null;
       _refAlignCtrl.value = Matrix4.identity();
       _cmpAlignCtrl.value = Matrix4.identity();
@@ -478,6 +506,8 @@ class _CompareScreenState extends State<CompareScreen>
     if (_tempRefPts.length < _minAnchorPts) return;
     final saved = await _saveReferenceAnchorsFromPoints(_tempRefPts);
     if (!saved || !mounted) return;
+    final cropTimedSteps =
+        _timedSteps.where((step) => step.label.startsWith('Обрезка ')).toList();
     setState(() {
       _calStep = 2;
       _tempCmpPts = [];
@@ -490,7 +520,9 @@ class _CompareScreenState extends State<CompareScreen>
       _loupeDragStart = null;
       _compareStatus = null;
       _compareSteps.clear();
-      _timedSteps.clear();
+      _timedSteps
+        ..clear()
+        ..addAll(cropTimedSteps);
       _stageWatch = null;
     });
   }
@@ -669,7 +701,7 @@ class _CompareScreenState extends State<CompareScreen>
         xpDlg(
           context,
           'Профиль сохранён',
-          '"$name"\n${alignResult.qualityLabel}  ·  ошибка ${alignResult.reprojError.toStringAsFixed(1)} пкс',
+          '"$name"\nТочность точек: ${alignResult.reprojError.toStringAsFixed(1)} пкс. Профиль готов к работе.',
         );
       }
     } finally {
@@ -767,13 +799,21 @@ class _CompareScreenState extends State<CompareScreen>
     bool confirmOnly = false,
     bool canAccept = true,
   }) async {
-    final color = r.quality == 'excellent'
-        ? Colors.green
-        : r.quality == 'good'
-            ? Colors.lightGreen
-            : r.quality == 'warning'
-                ? Colors.orange
-                : Colors.red;
+    final status = !canAccept
+        ? 'Точки не совпадают'
+        : r.reprojError < 3.0
+            ? 'Точки совмещены точно'
+            : r.reprojError < 6.0
+                ? 'Точки совмещены'
+                : 'Проверьте точки';
+    final color = !canAccept
+        ? Colors.red
+        : r.reprojError < 3.0
+            ? Colors.green
+            : r.reprojError < 6.0
+                ? Colors.lightGreen
+                : Colors.orange;
+    final hasImageCorrelation = r.eccScore > 0.0;
 
     return await showDialog<bool>(
           context: context,
@@ -783,7 +823,7 @@ class _CompareScreenState extends State<CompareScreen>
                 Icon(Icons.tune, color: color, size: 20),
                 const SizedBox(width: 8),
                 Text(
-                  'Выравнивание: ${r.qualityLabel}',
+                  status,
                   style: TextStyle(fontSize: 15, color: color),
                 ),
               ],
@@ -792,20 +832,16 @@ class _CompareScreenState extends State<CompareScreen>
               mainAxisSize: MainAxisSize.min,
               children: [
                 _validationRow(
-                  'Ошибка репроекции',
+                  'Точность точек',
                   '${r.reprojError.toStringAsFixed(2)} пкс',
                   r.reprojError < 3.0 ? Colors.green : Colors.orange,
                 ),
-                _validationRow(
-                  'ECC Score',
-                  '${(r.eccScore * 100).toStringAsFixed(1)}%',
-                  r.eccScore > 0.9 ? Colors.green : Colors.orange,
-                ),
-                _validationRow(
-                  'Уверенность',
-                  '${(r.confidence * 100).toStringAsFixed(0)}%',
-                  r.confidence > 0.85 ? Colors.green : Colors.orange,
-                ),
+                if (hasImageCorrelation)
+                  _validationRow(
+                    'Сходство структуры',
+                    '${(r.eccScore * 100).toStringAsFixed(1)}%',
+                    r.eccScore > 0.9 ? Colors.green : Colors.orange,
+                  ),
                 if (r.reprojError >= 3.0) ...[
                   const SizedBox(height: 10),
                   Text(
@@ -1228,7 +1264,11 @@ class _CompareScreenState extends State<CompareScreen>
       return;
     }
     final preservedTimedSteps = _timedSteps
-        .where((s) => s.label.startsWith('Расчёт совмещения'))
+        .where(
+          (s) =>
+              s.label.startsWith('Обрезка ') ||
+              s.label.startsWith('Расчёт совмещения'),
+        )
         .toList();
     setState(() {
       _comparing = true;
@@ -1242,6 +1282,13 @@ class _CompareScreenState extends State<CompareScreen>
       _cmpLabFingerprint = null;
       _labFingerprintMatch = null;
       _result = null;
+      _exactDeltaEReady = false;
+      _exactDeltaEComputing = false;
+      _exactDeltaERequested = false;
+      _activeProtocolId = null;
+      _activeProtocolCreatedAt = null;
+      _activeProtocolSampleImageId = null;
+      _activeProtocolSampleNo = null;
       _pointProbe = null;
       _areaLoupe = null;
       _loupeDraftRect = null;
@@ -1254,79 +1301,29 @@ class _CompareScreenState extends State<CompareScreen>
         ..addAll(preservedTimedSteps);
       _stageWatch = null;
       _compareStatus = 'Готовлю изображения к проверке...';
-      _resultMapMode = _ResultMapMode.deltaE;
+      _resultMapMode = _ResultMapMode.geometry;
     });
     _resultCmpCtrl.value = Matrix4.identity();
     try {
       _startTimedStage(
-        'Этап 1/5: проверяю ч/б геометрию и базовую карту отличий...',
+        'Этап 1/4: проверяю ч/б геометрию и Delta E уровня 2...',
       );
       await _yieldUi();
       final compareResult = await CompareService.compare(
         ref,
         cmp,
+        pixelStep: 2,
         onProgress: (message) => _setCompareStatus(message),
       );
       if (!mounted) return;
       setState(() {
         _result = compareResult;
       });
-      _finishTimedStage(label: 'ЧБ геометрия и базовая карта');
+      _finishTimedStage(label: 'ЧБ геометрия и Delta E (уровень 2)');
       _setCompareStatus(_geometryStatusLine(compareResult));
       _tabs.animateTo(3);
 
-      // Lab-пирамида — точнее MAE, обновляем результат если OpenCV доступен.
-      _startTimedStage('Этап 2/5: рассчитываю цветовую карту Delta E...');
-      await _yieldUi();
-      final lab = await OpenCvService.compareImages(ref, cmp);
-      if (lab != null && mounted && _result != null) {
-        final r = _result!;
-        setState(
-          () => _result = CompareResult(
-            similarity: r.similarity,
-            labScore: lab.score,
-            labLevel0: lab.level0,
-            labLevel1: lab.level1,
-            labLevel2: lab.level2,
-            labLevel3: lab.level3,
-            shiftDL: lab.shiftDL,
-            shiftDA: lab.shiftDA,
-            shiftDB: lab.shiftDB,
-            meanDeltaE: _meanOf(lab.level3) ?? r.meanDeltaE,
-            maxDeltaE: _maxOf(lab.level3) ?? r.maxDeltaE,
-            defectZoneCount: _countAbove(lab.level3, 6.0) ?? r.defectZoneCount,
-            defectAreaPercent:
-                _percentAbove(lab.level3, 6.0) ?? r.defectAreaPercent,
-            refCanonical: lab.refCanonical,
-            cmpCanonical: lab.cmpCanonical,
-            diffPixels: r.diffPixels,
-            totalPixels: r.totalPixels,
-            refSize: r.refSize,
-            cmpSize: r.cmpSize,
-            diffL3: lab.diffL3,
-            geometryScore: r.geometryScore,
-            geometryShiftPx: r.geometryShiftPx,
-            geometryMissingPercent: r.geometryMissingPercent,
-            geometryExtraPercent: r.geometryExtraPercent,
-            geometryOverlapPixels: r.geometryOverlapPixels,
-            geometryMissingPixels: r.geometryMissingPixels,
-            geometryExtraPixels: r.geometryExtraPixels,
-            geometryDiff: r.geometryDiff,
-            geometryRefCanonical: r.geometryRefCanonical,
-            geometryCmpCanonical: r.geometryCmpCanonical,
-          ),
-        );
-        _setCompareStatus(
-          'Delta E рассчитана: max ${_fmt(_maxOf(lab.level3))}, среднее ${_fmt(_meanOf(lab.level3))}.',
-        );
-      } else {
-        _setCompareStatus(
-          'Delta E: используется базовая карта отличий без OpenCV Lab-пирамиды.',
-        );
-      }
-      _finishTimedStage(label: 'Цветовая карта Delta E');
-
-      _startTimedStage('Этап 3/5: проверяю штрихкоды и QR...');
+      _startTimedStage('Этап 2/4: проверяю штрихкоды и QR...');
       await _yieldUi();
       final barcodeResults = await Future.wait([
         BarcodeService.scanImage(
@@ -1345,7 +1342,7 @@ class _CompareScreenState extends State<CompareScreen>
         'Штрихкоды проверены: эталон ${_refBarcodes.length}, образец ${_cmpBarcodes.length}.',
       );
       _finishTimedStage(label: 'Штрихкоды и QR');
-      _startTimedStage('Этап 4/5: проверяю текст OCR...');
+      _startTimedStage('Этап 3/4: проверяю текст OCR...');
       await _yieldUi();
 
       Future<OcrResult> ocrSafe(Uint8List b) async {
@@ -1377,7 +1374,7 @@ class _CompareScreenState extends State<CompareScreen>
       );
       _finishTimedStage(label: 'OCR / текст');
 
-      _startTimedStage('Этап 5/5: строю Lab ID и сохраняю протокол...');
+      _startTimedStage('Этап 4/4: строю Lab ID и сохраняю протокол...');
       await _yieldUi();
       final fingerprints = await Future.wait([
         LabFingerprintService.create(ref),
@@ -1399,7 +1396,10 @@ class _CompareScreenState extends State<CompareScreen>
 
       try {
         await _saveCheckResult();
-        _setCompareStatus('Проверка завершена.');
+        _setCompareStatus(
+          'Предварительная проверка готова. '
+          'Откройте «ΔE цвет» для точного расчёта.',
+        );
       } catch (_) {
         _setCompareStatus(
           'Проверка завершена. Локальный протокол не сохранён.',
@@ -1410,10 +1410,120 @@ class _CompareScreenState extends State<CompareScreen>
     } finally {
       _finishTimedStage();
       if (mounted) setState(() => _comparing = false);
+      if (mounted && _exactDeltaERequested && _result != null) {
+        setState(() => _exactDeltaERequested = false);
+        await _runExactDeltaE();
+      }
     }
   }
 
   // ── Сводные значения по Lab-зонам ────────────────
+  Future<void> _selectResultMapMode(_ResultMapMode mode) async {
+    if (mounted) {
+      setState(() {
+        _resultMapMode = mode;
+        if (mode != _ResultMapMode.deltaE) {
+          _exactDeltaERequested = false;
+        }
+      });
+    }
+    if (mode != _ResultMapMode.deltaE ||
+        _result == null ||
+        _exactDeltaEReady ||
+        _exactDeltaEComputing) {
+      return;
+    }
+    if (_comparing) {
+      setState(() => _exactDeltaERequested = true);
+      _setCompareStatus(
+        'Точная Delta E добавлена в очередь после OCR и Lab ID.',
+      );
+      return;
+    }
+    await _runExactDeltaE();
+  }
+
+  Future<void> _runExactDeltaE() async {
+    final ref = _refAligned ?? _refImg;
+    final cmp = _cmpAligned ?? _cmpImg;
+    final preliminary = _result;
+    if (ref == null || cmp == null || preliminary == null) return;
+
+    setState(() => _exactDeltaEComputing = true);
+    _startTimedStage('Точная Delta E: проверяю каждый пиксель...');
+    try {
+      await _yieldUi();
+      final exactFuture = CompareService.compare(
+        ref,
+        cmp,
+        pixelStep: 1,
+        includeGeometry: false,
+        includeCanonical: false,
+        onProgress: (message) => _setCompareStatus(message),
+      );
+      final labFuture = OpenCvService.compareImages(ref, cmp);
+      final exact = await exactFuture;
+      final lab = await labFuture;
+      if (!mounted) return;
+      final current = _result ?? preliminary;
+      setState(() {
+        _result = CompareResult(
+          similarity: exact.similarity,
+          ssim: current.ssim,
+          labScore: lab?.score ?? current.labScore,
+          labLevel0: lab?.level0 ?? current.labLevel0,
+          labLevel1: lab?.level1 ?? current.labLevel1,
+          labLevel2: lab?.level2 ?? current.labLevel2,
+          labLevel3: lab?.level3 ?? current.labLevel3,
+          shiftDL: lab?.shiftDL ?? current.shiftDL,
+          shiftDA: lab?.shiftDA ?? current.shiftDA,
+          shiftDB: lab?.shiftDB ?? current.shiftDB,
+          meanDeltaE: exact.meanDeltaE,
+          maxDeltaE: exact.maxDeltaE,
+          defectZoneCount: exact.defectZoneCount,
+          defectAreaPercent: exact.defectAreaPercent,
+          refCanonical: exact.refCanonical ?? current.refCanonical,
+          cmpCanonical: exact.cmpCanonical ?? current.cmpCanonical,
+          diffPixels: exact.diffPixels,
+          totalPixels: exact.totalPixels,
+          refSize: exact.refSize,
+          cmpSize: exact.cmpSize,
+          diffL3: exact.diffL3,
+          geometryScore: current.geometryScore,
+          geometryShiftPx: current.geometryShiftPx,
+          geometryMissingPercent: current.geometryMissingPercent,
+          geometryExtraPercent: current.geometryExtraPercent,
+          geometryOverlapPixels: current.geometryOverlapPixels,
+          geometryMissingPixels: current.geometryMissingPixels,
+          geometryExtraPixels: current.geometryExtraPixels,
+          geometryDiff: current.geometryDiff,
+          geometryRefCanonical: current.geometryRefCanonical,
+          geometryCmpCanonical: current.geometryCmpCanonical,
+        );
+        _exactDeltaEReady = true;
+      });
+      _finishTimedStage(label: 'Точная Delta E (все пиксели)');
+      _setCompareStatus(
+        'Точная Delta E готова: max ${_fmt(exact.maxDeltaE)}, '
+        'среднее ${_fmt(exact.meanDeltaE)}.',
+      );
+      try {
+        await _saveCheckResult();
+      } catch (_) {
+        _setCompareStatus(
+          'Точная Delta E готова. Локальный протокол не обновлён.',
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        xpDlg(context, 'Ошибка Delta E', e.toString());
+      }
+    } finally {
+      _finishTimedStage();
+      if (mounted) setState(() => _exactDeltaEComputing = false);
+    }
+  }
+
   double? _meanOf(List<double>? values) {
     if (values == null || values.isEmpty) return null;
     final active = values.where((v) => v.isFinite).toList();
@@ -1431,13 +1541,6 @@ class _CompareScreenState extends State<CompareScreen>
   int? _countAbove(List<double>? values, double threshold) {
     if (values == null || values.isEmpty) return null;
     return values.where((v) => v.isFinite && v >= threshold).length;
-  }
-
-  double? _percentAbove(List<double>? values, double threshold) {
-    if (values == null || values.isEmpty) return null;
-    final count = _countAbove(values, threshold);
-    if (count == null) return null;
-    return count / values.length * 100;
   }
 
   String _overallStatus(double score) {
@@ -1470,13 +1573,19 @@ class _CompareScreenState extends State<CompareScreen>
         comment: 'Изображения загружены, обрезка и калибровка применены.',
       ),
       CheckProtocolStage(
-        name: 'Цветовая карта ΔE',
-        status: colorOk ? 'OK' : 'Внимание',
+        name: _exactDeltaEReady
+            ? 'Цветовая карта ΔE'
+            : 'Цветовая карта ΔE (уровень 2)',
+        status: _exactDeltaEReady
+            ? (colorOk ? 'OK' : 'Внимание')
+            : 'Предварительно',
         metric:
             'max ${_fmt(r.maxDeltaE)} · среднее ${_fmt(r.meanDeltaE)} · ${r.diffPercent.toStringAsFixed(1)}%',
-        comment: colorOk
-            ? 'Цветовые отклонения в пределах рабочего порога.'
-            : 'Есть зоны с заметным цветовым отличием.',
+        comment: !_exactDeltaEReady
+            ? 'Быстрая оценка через пиксель. Для точного заключения откройте «ΔE цвет».'
+            : colorOk
+                ? 'Цветовые отклонения в пределах рабочего порога.'
+                : 'Есть зоны с заметным цветовым отличием.',
       ),
       CheckProtocolStage(
         name: 'Геометрия ЧБ',
@@ -1521,9 +1630,11 @@ class _CompareScreenState extends State<CompareScreen>
         ),
       CheckProtocolStage(
         name: 'Итог',
-        status: _overallStatus(r.score),
+        status: _exactDeltaEReady ? _overallStatus(r.score) : 'Предварительно',
         metric: '${r.score.toStringAsFixed(1)}%',
-        comment: 'Общий результат без отправки в базу.',
+        comment: _exactDeltaEReady
+            ? 'Общий результат без отправки в базу.'
+            : 'Окончательный PASS/FAIL будет доступен после точной Delta E.',
       ),
     ];
   }
@@ -1550,25 +1661,35 @@ class _CompareScreenState extends State<CompareScreen>
   Future<void> _saveCheckResult() async {
     final r = _result;
     if (r == null) return;
-    final now = DateTime.now();
+    final replacingCurrent = _activeProtocolId != null &&
+        _activeProtocolCreatedAt != null &&
+        _activeProtocolSampleImageId != null &&
+        _activeProtocolSampleNo != null;
+    final now = replacingCurrent ? _activeProtocolCreatedAt! : DateTime.now();
     final referenceId = _activeReferenceId ?? '';
     final jobNumber = _currentJobNumber;
-    final sampleNumber = _nextSampleNumberFor(
-      referenceId: referenceId,
-      referenceLabel: _savedRefLabel,
-      minValue: _sampleNo,
-    );
-    final sampleImageId =
-        '$_currentJobId-sample-$sampleNumber-${now.millisecondsSinceEpoch}';
+    final sampleNumber = replacingCurrent
+        ? _activeProtocolSampleNo!
+        : _nextSampleNumberFor(
+            referenceId: referenceId,
+            referenceLabel: _savedRefLabel,
+            minValue: _sampleNo,
+          );
+    final sampleImageId = replacingCurrent
+        ? _activeProtocolSampleImageId!
+        : '$_currentJobId-sample-$sampleNumber-${now.millisecondsSinceEpoch}';
+    final protocolId = replacingCurrent
+        ? _activeProtocolId!
+        : now.millisecondsSinceEpoch.toString();
     if (mounted) setState(() => _sampleNo = sampleNumber);
     await CheckHistoryService.saveLast(
       CheckProtocol(
-        id: now.millisecondsSinceEpoch.toString(),
+        id: protocolId,
         createdAt: now,
         jobId: _currentJobId,
         jobNumber: jobNumber,
         score: r.score,
-        verdict: _overallStatus(r.score),
+        verdict: _exactDeltaEReady ? _overallStatus(r.score) : 'Предварительно',
         refSize: r.refSize,
         cmpSize: r.cmpSize,
         labId: _shortLabId(_refLabFingerprint?.labId),
@@ -1581,6 +1702,14 @@ class _CompareScreenState extends State<CompareScreen>
         stages: _checkProtocolStages(r),
       ),
     );
+    if (mounted) {
+      setState(() {
+        _activeProtocolId = protocolId;
+        _activeProtocolCreatedAt = now;
+        _activeProtocolSampleImageId = sampleImageId;
+        _activeProtocolSampleNo = sampleNumber;
+      });
+    }
   }
 
   String _shortLabId(String? value) {
@@ -1592,24 +1721,45 @@ class _CompareScreenState extends State<CompareScreen>
   Future<void> _cropImage(bool isRef) async {
     final src = isRef ? _refImg : _cmpImg;
     if (src == null) return;
-    final result = await CropFrameScreen.show(
+    final selection = await CropFrameScreen.show(
       context,
       src,
       title: isRef ? 'Рамка — Эталон' : 'Рамка — Образец',
     );
-    if (result != null && mounted) {
+    if (selection != null && mounted) {
+      final cropWatch = Stopwatch()..start();
+      final timingLabel = isRef ? 'Обрезка эталона' : 'Обрезка образца';
+      var cropCompleted = false;
       setState(() {
         _imageBusy = true;
-        _imageBusyLabel = 'Применение рамки...';
+        _imageBusyLabel = 'Применение границы обработки...';
       });
       try {
-        // Обрезанная картинка имеет другие размеры — пересчитываем
-        // _refImgSize/_cmpImgSize, иначе панель якорных точек продолжает
-        // мапить клики по старым (необрезанным) размерам, и точки
-        // оказываются смещены относительно реального изображения.
-        final sz = await _readImageSize(result);
+        ({Uint8List bytes, int width, int height}) cropped;
+        if (web_worker.isWebCompareWorkerSupported) {
+          cropped = await web_worker.runWebCropWorker(
+            image: src,
+            x: selection.x,
+            y: selection.y,
+            width: selection.width,
+            height: selection.height,
+            onProgress: (message) {
+              if (mounted) setState(() => _imageBusyLabel = message);
+            },
+          );
+        } else {
+          final bytes = await CropFrameScreen.apply(src, selection);
+          cropped = (
+            bytes: bytes,
+            width: selection.width,
+            height: selection.height,
+          );
+        }
         if (!mounted) return;
-        final newSize = sz;
+        final newSize = Size(
+          cropped.width.toDouble(),
+          cropped.height.toDouble(),
+        );
         setState(() {
           // Точки незавершённой калибровки (_tempRefPts/_tempCmpPts) записаны
           // в пиксельных координатах старого (необрезанного) изображения —
@@ -1620,21 +1770,35 @@ class _CompareScreenState extends State<CompareScreen>
           _tempCmpPts = [];
           if (isRef) {
             _layoutProfile = null;
-            _refImg = result;
+            _refImg = cropped.bytes;
             _refImgSize = newSize;
             _savedRefLabel = null;
             _activeReferenceId = null;
             _refAligned = null;
             _refAnchorPts = null;
           } else {
-            _cmpImg = result;
+            _cmpImg = cropped.bytes;
             _cmpImgSize = newSize;
             _cmpAligned = null;
             _cmpAnchorPts = null;
           }
         });
+        cropCompleted = true;
+      } catch (error) {
+        if (mounted) {
+          xpDlg(context, 'Ошибка применения рамки', error.toString());
+        }
       } finally {
-        if (mounted) setState(() => _imageBusy = false);
+        cropWatch.stop();
+        if (mounted) {
+          setState(() {
+            _imageBusy = false;
+            if (cropCompleted) {
+              _timedSteps.removeWhere((step) => step.label == timingLabel);
+              _timedSteps.add(_TimedStep(timingLabel, cropWatch.elapsed));
+            }
+          });
+        }
       }
     }
   }
@@ -2463,7 +2627,7 @@ class _CompareScreenState extends State<CompareScreen>
       const inactiveColor = Color(0xFFE5E7EB);
       return Expanded(
         child: InkWell(
-          onTap: () => setState(() => _resultMapMode = mode),
+          onTap: () => _selectResultMapMode(mode),
           borderRadius: BorderRadius.circular(16),
           child: Container(
             height: 46,
@@ -2553,7 +2717,16 @@ class _CompareScreenState extends State<CompareScreen>
     return Column(children: [
       Row(
         children: [
-          item(_ResultMapMode.deltaE, 'ΔE цвет'),
+          item(
+            _ResultMapMode.deltaE,
+            _exactDeltaEComputing
+                ? 'ΔE: расчёт...'
+                : _exactDeltaERequested
+                    ? 'ΔE: в очереди'
+                    : _exactDeltaEReady
+                        ? 'ΔE точно'
+                        : 'ΔE цвет',
+          ),
           const SizedBox(width: 6),
           item(_ResultMapMode.geometry, 'Геометрия ЧБ'),
           const SizedBox(width: 6),
@@ -3753,8 +3926,14 @@ class _CompareScreenState extends State<CompareScreen>
 
   Widget _inspectorStatusCard() {
     final r = _result;
-    final status = r == null ? 'ОЖИДАНИЕ' : _shortStatus(r.score);
-    final color = r == null ? AppTheme.blueDark : AppTheme.simColor(r.score);
+    final status = r == null
+        ? 'ОЖИДАНИЕ'
+        : !_exactDeltaEReady
+            ? 'ПРЕДВАРИТЕЛЬНО'
+            : _shortStatus(r.score);
+    final color = r == null || !_exactDeltaEReady
+        ? AppTheme.blueDark
+        : AppTheme.simColor(r.score);
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
@@ -3777,7 +3956,9 @@ class _CompareScreenState extends State<CompareScreen>
           Text(
             r == null
                 ? 'Загрузите эталон и образец, затем запустите сравнение.'
-                : 'Сходство ${r.score.toStringAsFixed(1)}%',
+                : !_exactDeltaEReady
+                    ? 'Сходство ${r.score.toStringAsFixed(1)}% · Delta E уровня 2'
+                    : 'Сходство ${r.score.toStringAsFixed(1)}%',
             style: const TextStyle(fontSize: 11, color: Colors.black54),
           ),
         ],

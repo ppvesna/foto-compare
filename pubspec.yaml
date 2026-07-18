@@ -18,6 +18,7 @@ dependencies:
   shared_preferences: ^2.2.2
   uuid: ^4.3.3
   http: ^1.2.0
+  web: ^1.1.1
   mobile_scanner: ^5.2.3
   google_mlkit_barcode_scanning: ^0.12.1
   google_mlkit_text_recognition: ^0.13.0

@@ -347,7 +347,7 @@ class AlignByAnchorsResult {
       case 'good':
         return 'Хорошо';
       case 'warning':
-        return 'Слабо';
+        return 'Требует проверки';
       default:
         return 'Ошибка';
     }
