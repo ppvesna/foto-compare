@@ -2265,16 +2265,29 @@ class _CompareScreenState extends State<CompareScreen>
       ),
       _WorkflowAction(
         '7',
-        _result == null ? 'Сравнить' : 'Открыть результат',
+        _result == null ? 'Сравнить' : 'Сравнить повторно',
         Icons.compare,
         done: _result != null,
         active: _result == null && _canStartCompareAction,
         busy: _comparing,
-        onTap: _result != null
-            ? () => _selectWorkspace(_WorkspaceView.comparison)
-            : _canStartCompareAction && !_comparing && !_imageBusy
-                ? _runCompare
-                : null,
+        onTap: _canStartCompareAction && !_comparing && !_imageBusy
+            ? _runCompare
+            : null,
+      ),
+      _WorkflowAction(
+        '8',
+        _aiLoading
+            ? 'AI-анализ...'
+            : _aiResult == null
+                ? 'AI-анализ'
+                : 'Повторить AI-анализ',
+        Icons.auto_awesome_outlined,
+        done: _aiResult != null,
+        active: _result != null && _aiResult == null,
+        busy: _aiLoading,
+        onTap: _result != null && !_aiLoading && !_comparing
+            ? _runAiAnalysis
+            : null,
       ),
     ];
 
@@ -2896,7 +2909,8 @@ class _CompareScreenState extends State<CompareScreen>
                     ),
                   ),
                   Text(
-                    _resultMapMode == _ResultMapMode.overlay
+                    _inspectionTool == _InspectionTool.point ||
+                            _resultMapMode == _ResultMapMode.overlay
                         ? 'Образец'
                         : 'Образец + карта',
                     style: const TextStyle(fontSize: 11),
@@ -2937,29 +2951,6 @@ class _CompareScreenState extends State<CompareScreen>
                   ),
                 ),
               ),
-            const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                if (r != null) ...[
-                  SimBadge(value: r.score, fontSize: 11),
-                  const SizedBox(width: 10),
-                ],
-                XpBtn(
-                  label: _comparing
-                      ? 'Сравнение...'
-                      : r == null
-                          ? 'Сравнить'
-                          : 'Сравнить повторно',
-                  icon: Icons.compare,
-                  primary: true,
-                  width: 220,
-                  onPressed: _canStartCompareAction && !_comparing
-                      ? _runCompare
-                      : null,
-                ),
-              ],
-            ),
             if (r?.diffL3 != null || r?.geometryDiff != null) ...[
               const SizedBox(height: 8),
               _mapModeSelector(),
@@ -2982,7 +2973,7 @@ class _CompareScreenState extends State<CompareScreen>
                 (_inspectionTool == _InspectionTool.point ||
                     _pointProbe != null)) ...[
               const SizedBox(height: 8),
-              _pointProbePanel(r),
+              _pointProbePanel(),
             ],
             if (r != null ||
                 CheckHistoryService.checks.value.any(
@@ -3128,12 +3119,13 @@ class _CompareScreenState extends State<CompareScreen>
 
   Widget _mapModeSelector() {
     Widget item(_ResultMapMode mode, String label) {
-      final selected = _resultMapMode == mode;
-      const activeColor = Color(0xFF2563EB);
+      final enabled = _inspectionTool != _InspectionTool.point;
+      final selected = enabled && _resultMapMode == mode;
+      const activeColor = Color(0xFFDCEEFF);
       const inactiveColor = Color(0xFFE5E7EB);
       return Expanded(
         child: InkWell(
-          onTap: () => _selectResultMapMode(mode),
+          onTap: enabled ? () => _selectResultMapMode(mode) : null,
           borderRadius: BorderRadius.circular(16),
           child: Container(
             height: 46,
@@ -3143,8 +3135,9 @@ class _CompareScreenState extends State<CompareScreen>
               borderRadius: BorderRadius.circular(16),
               border: Border.all(
                 color: selected
-                    ? const Color(0xFF1D4ED8)
+                    ? const Color(0xFF2563EB)
                     : const Color(0xFFD1D5DB),
+                width: selected ? 1.5 : 1,
               ),
               boxShadow: selected
                   ? [
@@ -3161,7 +3154,11 @@ class _CompareScreenState extends State<CompareScreen>
               style: TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w700,
-                color: selected ? Colors.white : const Color(0xFF475569),
+                color: selected
+                    ? const Color(0xFF174EA6)
+                    : enabled
+                        ? const Color(0xFF475569)
+                        : const Color(0xFF9CA3AF),
               ),
             ),
           ),
@@ -3175,14 +3172,7 @@ class _CompareScreenState extends State<CompareScreen>
       const inactiveColor = Color(0xFFE5E7EB);
       return Expanded(
         child: InkWell(
-          onTap: () => setState(() {
-            final turningOff = _inspectionTool == tool;
-            _inspectionTool = turningOff ? null : tool;
-            if (_inspectionTool != _InspectionTool.loupe) {
-              _loupeDraftRect = null;
-              _loupeDragStart = null;
-            }
-          }),
+          onTap: () => _toggleInspectionTool(tool),
           borderRadius: BorderRadius.circular(16),
           child: Container(
             height: 46,
@@ -3227,7 +3217,31 @@ class _CompareScreenState extends State<CompareScreen>
       );
     }
 
-    return Column(children: [
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      const Text(
+        'Инструмент контроля',
+        style: TextStyle(
+          fontSize: 10,
+          color: Color(0xFF64748B),
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      const SizedBox(height: 5),
+      Row(children: [
+        tool(_InspectionTool.point, Icons.gps_fixed, 'Контроль точки'),
+        const SizedBox(width: 6),
+        tool(_InspectionTool.loupe, Icons.zoom_in, 'Лупа области'),
+      ]),
+      const SizedBox(height: 9),
+      const Text(
+        'Режим изображения',
+        style: TextStyle(
+          fontSize: 10,
+          color: Color(0xFF64748B),
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      const SizedBox(height: 5),
       Row(
         children: [
           item(
@@ -3246,16 +3260,39 @@ class _CompareScreenState extends State<CompareScreen>
           item(_ResultMapMode.overlay, 'Наложение'),
         ],
       ),
-      const SizedBox(height: 6),
-      Row(children: [
-        tool(_InspectionTool.point, Icons.gps_fixed, 'Параметры точки'),
-        const SizedBox(width: 6),
-        tool(_InspectionTool.loupe, Icons.zoom_in, 'Лупа области'),
-      ]),
     ]);
   }
 
+  void _toggleInspectionTool(_InspectionTool tool) {
+    final turningOff = _inspectionTool == tool;
+    final resetLoupe =
+        (_inspectionTool == _InspectionTool.loupe || _areaLoupe != null) &&
+            (turningOff || tool == _InspectionTool.point);
+    if (resetLoupe) _resultCmpCtrl.value = Matrix4.identity();
+    setState(() {
+      _inspectionTool = turningOff ? null : tool;
+      if (tool == _InspectionTool.point || turningOff) {
+        _pointProbe = null;
+      }
+      if (resetLoupe) {
+        _areaLoupe = null;
+        _loupeDraftRect = null;
+        _loupeDragStart = null;
+        _loupeImageSize = null;
+      }
+      if (!turningOff && tool == _InspectionTool.loupe) {
+        _pointProbe = null;
+      }
+    });
+  }
+
   Widget _mapLegend() {
+    if (_inspectionTool == _InspectionTool.point) {
+      return const Text(
+        'Контроль точки: кликните по изображению для измерения выбранной апертурой.',
+        style: TextStyle(fontSize: 10, color: Colors.grey),
+      );
+    }
     if (_resultMapMode == _ResultMapMode.geometry) {
       return Row(
         children: [
@@ -3283,15 +3320,18 @@ class _CompareScreenState extends State<CompareScreen>
   }
 
   Widget _resultMapOverlay(CompareResult r) {
-    final diff = switch (_resultMapMode) {
+    final displayMode = _inspectionTool == _InspectionTool.point
+        ? _ResultMapMode.overlay
+        : _resultMapMode;
+    final diff = switch (displayMode) {
       _ResultMapMode.deltaE => r.diffL3,
       _ResultMapMode.geometry => r.geometryDiff,
       _ResultMapMode.overlay => null,
     };
-    final refBase = _resultMapMode == _ResultMapMode.geometry
+    final refBase = displayMode == _ResultMapMode.geometry
         ? r.geometryRefCanonical ?? r.refCanonical
         : r.refCanonical;
-    final cmpBase = _resultMapMode == _ResultMapMode.geometry
+    final cmpBase = displayMode == _ResultMapMode.geometry
         ? r.geometryCmpCanonical ?? r.cmpCanonical
         : r.cmpCanonical;
     return _diffOverlay(
@@ -3319,7 +3359,7 @@ class _CompareScreenState extends State<CompareScreen>
   bool get _showAreaLoupePanel =>
       _inspectionTool == _InspectionTool.loupe || _areaLoupe != null;
 
-  Widget _pointProbePanel(CompareResult r) {
+  Widget _pointProbePanel() {
     final probe = _pointProbe;
     return Container(
       decoration: BoxDecoration(
@@ -3366,8 +3406,8 @@ class _CompareScreenState extends State<CompareScreen>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _probeCell(
-                  'Сходство',
-                  '${r.score.toStringAsFixed(1)}%\n${probe.formulaLabel} ${probe.deltaE.toStringAsFixed(2)}',
+                  'ΔE точки',
+                  '${probe.formulaLabel} ${probe.deltaE.toStringAsFixed(2)}',
                   flex: 2,
                 ),
                 _probeCell('CMYK эталона', probe.refCmyk.label, flex: 3),
@@ -4589,16 +4629,10 @@ class _CompareScreenState extends State<CompareScreen>
 
     final ai = _aiResult;
     if (ai == null) {
-      return _inspectorSection('AI анализ', [
-        const Text(
-          'AI-отчёт появится здесь: краткий вывод, найденные проблемы печати и рекомендации.',
+      return _inspectorSection('AI анализ', const [
+        Text(
+          'AI-отчёт появится здесь после запуска этапа «AI-анализ» в порядке действий.',
           style: TextStyle(fontSize: 11, height: 1.4, color: Colors.black54),
-        ),
-        const SizedBox(height: 8),
-        XpBtn(
-          label: 'Запустить AI',
-          primary: true,
-          onPressed: _refImg != null && _cmpImg != null ? _runAiAnalysis : null,
         ),
       ]);
     }
@@ -4637,8 +4671,6 @@ class _CompareScreenState extends State<CompareScreen>
               ),
             ),
       ],
-      const SizedBox(height: 8),
-      XpBtn(label: 'Повторить AI', onPressed: _runAiAnalysis),
     ]);
   }
 
@@ -7358,7 +7390,6 @@ class _CompareScreenState extends State<CompareScreen>
           cmpMeasurement.sampledPixels,
         ),
       );
-      _inspectionTool = null;
     });
   }
 
@@ -7424,7 +7455,6 @@ class _CompareScreenState extends State<CompareScreen>
       _loupeDraftRect = null;
       _loupeDragStart = null;
       _loupeImageSize = imageSize;
-      _inspectionTool = null;
     });
     _zoomComparisonToRect(
       normalized,
