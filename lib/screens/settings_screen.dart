@@ -1,20 +1,35 @@
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../app/local_access_testing_service.dart';
 import '../config/app_theme.dart';
+import '../features/billing/billing.dart';
+import '../features/capture/capture.dart';
+import '../features/color_analysis/color_analysis.dart';
+import '../features/organization/organization.dart';
 import '../services/calibration_settings_service.dart';
 import '../features/protocols/protocols.dart';
 import '../services/compare_settings_service.dart';
 import '../widgets/xp_widgets.dart';
 
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key});
+  final EntitlementSnapshot entitlements;
+  final OrganizationAccess organizationAccess;
+  final Future<void> Function() onAccessChanged;
+
+  const SettingsScreen({
+    super.key,
+    required this.entitlements,
+    required this.organizationAccess,
+    required this.onAccessChanged,
+  });
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  int _section = 0;
+  int _section = 1;
   double _quality = 96;
   bool _aiEnabled = false;
   bool _history = true;
@@ -32,9 +47,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
   CalibrationPointSettings _calibrationSettings =
       CalibrationPointSettings.defaults;
   CompareSettings _compareSettings = CompareSettings.defaults;
+  ColorMeasurementSettings _colorMeasurementSettings =
+      ColorMeasurementSettings.defaults;
+  CameraCaptureSettings _cameraCaptureSettings = CameraCaptureSettings.defaults;
+  AccessTestOverride _accessTestOverride = AccessTestOverride.disabled;
+  bool _accessSaving = false;
 
   static const _sections = [
     _SettingsSection('Аккаунт', 'профиль и синхронизация'),
+    _SettingsSection('Доступ', 'план, роль и лимиты'),
     _SettingsSection('Камера', 'захват с ноутбука или USB'),
     _SettingsSection('Калибровка', 'точки, лупа и магнит'),
     _SettingsSection('Цвет', 'CMYK точки и Delta E'),
@@ -49,6 +70,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.initState();
     _loadCalibrationSettings();
     _loadCompareSettings();
+    _loadColorMeasurementSettings();
+    _loadCameraCaptureSettings();
+    _loadAccessTestOverride();
   }
 
   Future<void> _loadCalibrationSettings() async {
@@ -59,6 +83,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _loadCompareSettings() async {
     final settings = await CompareSettingsService.load();
     if (mounted) setState(() => _compareSettings = settings);
+  }
+
+  Future<void> _loadColorMeasurementSettings() async {
+    final settings = await ColorMeasurementSettingsService.load();
+    if (mounted) setState(() => _colorMeasurementSettings = settings);
+  }
+
+  Future<void> _loadCameraCaptureSettings() async {
+    final settings = await CameraCaptureSettingsService.load();
+    if (mounted) setState(() => _cameraCaptureSettings = settings);
+  }
+
+  Future<void> _loadAccessTestOverride() async {
+    if (!kDebugMode) return;
+    final value = await const LocalAccessTestingService().load();
+    if (mounted) setState(() => _accessTestOverride = value);
   }
 
   final _dotRows = const [
@@ -209,28 +249,50 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _sectionBody() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(12),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        if (_section == 0) _accountSection(),
-        if (_section == 1) _cameraSection(),
-        if (_section == 2) _calibrationSection(),
-        if (_section == 3) _colorSection(),
-        if (_section == 4) _densitySection(),
-        if (_section == 5) _barcodeSection(),
-        if (_section == 6) _inspectionSection(),
-        if (_section == 7) _storageSection(),
-        const SizedBox(height: 12),
-        Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-          XpBtn(label: 'Сбросить', onPressed: _resetSettings),
-          const SizedBox(width: 8),
-          XpBtn(
-            label: 'Сохранить',
-            primary: true,
-            onPressed: () => _saveSettings(),
+    return Column(
+      children: [
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (_section == 0) _accountSection(),
+                if (_section == 1) _accessSection(),
+                if (_section == 2) _cameraSection(),
+                if (_section == 3) _calibrationSection(),
+                if (_section == 4) _colorSection(),
+                if (_section == 5) _densitySection(),
+                if (_section == 6) _barcodeSection(),
+                if (_section == 7) _inspectionSection(),
+                if (_section == 8) _storageSection(),
+              ],
+            ),
           ),
-        ]),
-      ]),
+        ),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(12, 9, 12, 10),
+          decoration: const BoxDecoration(
+            color: Color(0xFFF8FCFF),
+            border: Border(
+              top: BorderSide(color: Color(0xFFC9E2F0)),
+            ),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              XpBtn(label: 'Сбросить', onPressed: _resetSettings),
+              const SizedBox(width: 8),
+              XpBtn(
+                label: 'Сохранить',
+                primary: true,
+                onPressed: () => _saveSettings(),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -240,7 +302,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       title: 'Аккаунт и организация',
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         _infoRow('Email', email.isEmpty ? 'не указан' : email),
-        _infoRow('План', 'Бесплатный, 10 проверок в день'),
+        _infoRow('План', widget.entitlements.plan.label),
+        _infoRow('Роль', widget.organizationAccess.role.label),
         _infoRow('Организация', 'будет использоваться для группового чата'),
         const SizedBox(height: 8),
         Row(children: [
@@ -270,6 +333,247 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  Widget _accessSection() {
+    final checksLimit = widget.entitlements.limit(UsageLimit.checksPerDay);
+    final referencesLimit =
+        widget.entitlements.limit(UsageLimit.savedReferences);
+    final seatsLimit = widget.entitlements.limit(UsageLimit.organizationSeats);
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      _settingsPanel(
+        title: 'Текущий доступ',
+        child:
+            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          _infoRow('Источник', _accessSourceLabel()),
+          _infoRow('План', widget.entitlements.plan.label),
+          _infoRow('Статус', _accessStatusLabel()),
+          _infoRow('Роль', widget.organizationAccess.role.label),
+          _infoRow(
+            'Проверок/день',
+            checksLimit == null ? 'без ограничения' : '$checksLimit',
+          ),
+          _infoRow(
+            'Эталонов',
+            referencesLimit == null ? 'без ограничения' : '$referencesLimit',
+          ),
+          _infoRow(
+            'Мест в группе',
+            seatsLimit == null ? 'без ограничения' : '$seatsLimit',
+          ),
+        ]),
+      ),
+      const SizedBox(height: 10),
+      _settingsPanel(
+        title: 'Возможности плана',
+        child: _table(
+          headers: const ['Возможность', 'План'],
+          rows: ProductCapability.values
+              .map((capability) => [
+                    _capabilityLabel(capability),
+                    widget.entitlements.allows(capability)
+                        ? 'Разрешено планом'
+                        : 'Не входит',
+                  ])
+              .toList(),
+        ),
+      ),
+      const SizedBox(height: 10),
+      _settingsPanel(
+        title: 'Права роли',
+        child: _table(
+          headers: const ['Действие', 'Разрешение'],
+          rows: OrganizationPermission.values
+              .map((permission) => [
+                    _permissionLabel(permission),
+                    widget.organizationAccess.allows(permission)
+                        ? 'Разрешено'
+                        : 'Запрещено',
+                  ])
+              .toList(),
+        ),
+      ),
+      const SizedBox(height: 10),
+      if (kDebugMode) _accessTestingPanel() else _productionAccessPanel(),
+    ]);
+  }
+
+  Widget _accessTestingPanel() {
+    return _settingsPanel(
+      title: 'Тестирование доступа',
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        _toggleRow(
+          'Локальный тестовый режим',
+          'не меняет Supabase, платежи и серверные права',
+          _accessTestOverride.enabled,
+          (value) => setState(() {
+            _accessTestOverride = _accessTestOverride.copyWith(enabled: value);
+          }),
+        ),
+        _optionChips(
+          label: 'Тестовый план',
+          value: _accessTestOverride.plan.label,
+          values: PlanTier.values.map((plan) => plan.label).toList(),
+          onSelect: (value) => setState(() {
+            _accessTestOverride = _accessTestOverride.copyWith(
+              plan: PlanTier.values.firstWhere((plan) => plan.label == value),
+            );
+          }),
+        ),
+        _optionChips(
+          label: 'Тестовая роль',
+          value: _accessTestOverride.role.label,
+          values: OrganizationRole.values.map((role) => role.label).toList(),
+          onSelect: (value) => setState(() {
+            _accessTestOverride = _accessTestOverride.copyWith(
+              role: OrganizationRole.values
+                  .firstWhere((role) => role.label == value),
+            );
+          }),
+        ),
+        Row(children: [
+          Expanded(
+            child: XpBtn(
+              label: 'Отключить тест',
+              onPressed: _accessSaving ? null : _clearAccessTestOverride,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: XpBtn(
+              label: 'Применить режим',
+              primary: true,
+              onPressed: _accessSaving ? null : _applyAccessTestOverride,
+            ),
+          ),
+        ]),
+      ]),
+    );
+  }
+
+  Widget _productionAccessPanel() {
+    return _settingsPanel(
+      title: 'Управление подпиской',
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        _infoRow('Активация', 'через защищенный сервер'),
+        _infoRow('Тариф', widget.entitlements.plan.label),
+        XpBtn(
+          label: 'Изменить план',
+          primary: true,
+          onPressed: () => xpDlg(
+            context,
+            'Платежи не подключены',
+            'Тариф будет активироваться после подтверждения платежа сервером.',
+          ),
+        ),
+      ]),
+    );
+  }
+
+  String _accessSourceLabel() {
+    if (kDebugMode && _accessTestOverride.enabled) {
+      return 'локальный тестовый режим';
+    }
+    if (widget.entitlements.legacyFallback) {
+      return 'переходный доступ';
+    }
+    return 'Supabase access snapshot';
+  }
+
+  String _accessStatusLabel() {
+    if (kDebugMode && _accessTestOverride.enabled) return 'тест';
+    if (widget.entitlements.legacyFallback) return 'переходный';
+    final validUntil = widget.entitlements.validUntil;
+    if (validUntil == null) return 'активен';
+    final local = validUntil.toLocal();
+    return 'активен до ${local.day.toString().padLeft(2, '0')}.${local.month.toString().padLeft(2, '0')}.${local.year}';
+  }
+
+  String _capabilityLabel(ProductCapability capability) {
+    switch (capability) {
+      case ProductCapability.runInspection:
+        return 'Запуск сравнения';
+      case ProductCapability.exactDeltaE:
+        return 'Точная Delta E';
+      case ProductCapability.ocr:
+        return 'OCR / вычитка текста';
+      case ProductCapability.barcode:
+        return 'Штрихкоды и QR';
+      case ProductCapability.aiAnalysis:
+        return 'AI-анализ';
+      case ProductCapability.protocolHistory:
+        return 'Протоколы проверок';
+      case ProductCapability.multipleReferences:
+        return 'Несколько эталонов';
+      case ProductCapability.cloudSync:
+        return 'Синхронизация данных';
+      case ProductCapability.cloudAssets:
+        return 'Облачные изображения';
+      case ProductCapability.pdfReports:
+        return 'PDF-отчёты';
+      case ProductCapability.collaboration:
+        return 'Чат и совместная работа';
+    }
+  }
+
+  String _permissionLabel(OrganizationPermission permission) {
+    switch (permission) {
+      case OrganizationPermission.runInspection:
+        return 'Проводить проверки';
+      case OrganizationPermission.manageReferences:
+        return 'Управлять эталонами';
+      case OrganizationPermission.viewProtocols:
+        return 'Смотреть протоколы';
+      case OrganizationPermission.addComments:
+        return 'Комментировать';
+      case OrganizationPermission.manageSettings:
+        return 'Менять рабочие настройки';
+      case OrganizationPermission.manageMembers:
+        return 'Управлять участниками';
+      case OrganizationPermission.manageBilling:
+        return 'Управлять оплатой';
+    }
+  }
+
+  Future<void> _applyAccessTestOverride() async {
+    if (!kDebugMode || _accessSaving) return;
+    setState(() => _accessSaving = true);
+    try {
+      await const LocalAccessTestingService().save(_accessTestOverride);
+      await widget.onAccessChanged();
+      if (mounted) {
+        xpDlg(
+          context,
+          'Тестовый режим',
+          _accessTestOverride.enabled
+              ? 'Применены план ${_accessTestOverride.plan.label} и роль ${_accessTestOverride.role.label}.'
+              : 'Тестовый режим отключён.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _accessSaving = false);
+    }
+  }
+
+  Future<void> _clearAccessTestOverride() async {
+    if (!kDebugMode || _accessSaving) return;
+    setState(() {
+      _accessSaving = true;
+      _accessTestOverride = AccessTestOverride.disabled;
+    });
+    try {
+      await const LocalAccessTestingService().clear();
+      await widget.onAccessChanged();
+      if (mounted) {
+        xpDlg(
+          context,
+          'Тестовый режим',
+          'Отключён. Восстановлен серверный или переходный доступ.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _accessSaving = false);
+    }
+  }
+
   Widget _cameraSection() {
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       _settingsPanel(
@@ -292,6 +596,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
             values: const ['1920 x 1080', '2560 x 1440', '3840 x 2160'],
             onSelect: (v) => setState(() => _captureResolution = v),
           ),
+          _optionChips(
+            label: 'Освещение при съёмке',
+            value: _cameraCaptureSettings.lighting.label,
+            values: CameraLighting.values.map((value) => value.label).toList(),
+            onSelect: (value) => setState(() {
+              _cameraCaptureSettings = _cameraCaptureSettings.copyWith(
+                lighting: CameraLighting.values.firstWhere(
+                  (lighting) => lighting.label == value,
+                ),
+              );
+            }),
+          ),
+          _optionChips(
+            label: 'Оптический фильтр',
+            value: _cameraCaptureSettings.opticalFilter.label,
+            values:
+                CameraOpticalFilter.values.map((value) => value.label).toList(),
+            onSelect: (value) => setState(() {
+              _cameraCaptureSettings = _cameraCaptureSettings.copyWith(
+                opticalFilter: CameraOpticalFilter.values.firstWhere(
+                  (filter) => filter.label == value,
+                ),
+              );
+            }),
+          ),
           _toggleRow(
             'Авто баланс белого',
             'для старта включен; позже добавим ручную калибровку по серой карте',
@@ -305,6 +634,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _NumberSpec('Резкость минимум', '120'),
           ]),
         ]),
+      ),
+      const SizedBox(height: 10),
+      _notePanel(
+        'Освещение и фильтр описывают условия получения готового изображения и записываются в протокол. Они не изменяют пиксели и не пересчитывают Lab программно.',
       ),
       const SizedBox(height: 10),
       _notePanel(
@@ -372,6 +705,45 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Widget _colorSection() {
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      _settingsPanel(
+        title: 'Профиль цветового измерения',
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _optionChips(
+              label: 'Формула Delta E',
+              value: _colorMeasurementSettings.deltaEFormula.label,
+              values: DeltaEFormula.values.map((value) => value.label).toList(),
+              onSelect: (value) => setState(() {
+                _colorMeasurementSettings = _colorMeasurementSettings.copyWith(
+                  deltaEFormula: DeltaEFormula.values.firstWhere(
+                    (formula) => formula.label == value,
+                  ),
+                );
+              }),
+            ),
+            _optionChips(
+              label: 'Апертура точки',
+              value: _colorMeasurementSettings.aperture.label,
+              values: MeasurementAperture.values
+                  .map((value) => value.label)
+                  .toList(),
+              onSelect: (value) => setState(() {
+                _colorMeasurementSettings = _colorMeasurementSettings.copyWith(
+                  aperture: MeasurementAperture.values.firstWhere(
+                    (aperture) => aperture.label == value,
+                  ),
+                );
+              }),
+            ),
+            _infoRow(
+              'Применение',
+              '${_colorMeasurementSettings.deltaEFormula.shortLabel} применяется к карте и точке; апертура ${_colorMeasurementSettings.aperture.label} усредняет круглую область точки',
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 10),
       _settingsPanel(
         title: 'Цветовой профиль пользователя',
         child: Column(children: [
@@ -884,11 +1256,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _saveSettings() async {
     await CalibrationSettingsService.save(_calibrationSettings);
     await CompareSettingsService.save(_compareSettings);
+    await ColorMeasurementSettingsService.save(_colorMeasurementSettings);
+    await CameraCaptureSettingsService.save(_cameraCaptureSettings);
     if (!mounted) return;
     xpDlg(
       context,
       'Сохранено',
-      'Настройки применены локально. Параметры калибровки и Delta E будут использоваться на экране сравнения.',
+      'Настройки применены локально. Формула и апертура влияют на анализ; условия камеры записываются в протокол.',
     );
   }
 
@@ -913,9 +1287,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _colorProfile = 'ISO Coated v2 / FOGRA39';
       _calibrationSettings = CalibrationPointSettings.defaults;
       _compareSettings = CompareSettings.defaults;
+      _colorMeasurementSettings = ColorMeasurementSettings.defaults;
+      _cameraCaptureSettings = CameraCaptureSettings.defaults;
     });
     await CalibrationSettingsService.reset();
     await CompareSettingsService.reset();
+    await ColorMeasurementSettingsService.reset();
+    await CameraCaptureSettingsService.reset();
   }
 
   Widget _lastCheckHistoryGroup() {
@@ -981,6 +1359,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _summaryText('Вердикт', p.verdict),
           _summaryText('Дата', date),
           _summaryText('Размер', '${p.refSize} -> ${p.cmpSize}'),
+          _summaryText('Delta E', p.deltaEFormula),
+          _summaryText('Освещение камеры', p.captureLighting),
+          _summaryText('Фильтр камеры', p.captureFilter),
+          _summaryText('Апертура', '${p.apertureMm.toStringAsFixed(0)} мм'),
           _summaryText('Lab ID', p.labId),
           _summaryText(
             'Lab match',

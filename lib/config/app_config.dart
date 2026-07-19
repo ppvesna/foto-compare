@@ -22,20 +22,21 @@ class AppConfig {
 
   // Физический размер печати — основа для нативного разрешения (70 л/см)
   // Меняется под конкретный формат: этикетка, A5, A4 и т.д.
-  static const double printWidthMm  = 100.0;  // ширина в мм (дефолт: 10×10 см)
-  static const double printHeightMm = 100.0;  // высота в мм
+  static const double printWidthMm = 100.0; // ширина в мм (дефолт: 10×10 см)
+  static const double printHeightMm = 100.0; // высота в мм
+  static const double canonicalPixelsPerMm = 14.0;
 
   // Lab-пирамида: параметры сравнения (настраиваемые для обучения ИИ)
-  static const double compareWL      = 0.5;   // вес яркости L* в формуле ΔE
-  static const double compareWLayer0 = 0.5;   // вес уровня 0 (1 зона)
-  static const double compareWLayer1 = 1.5;   // вес уровня 1 (9 зон)
-  static const double compareWLayer2 = 2.0;   // вес уровня 2 (81 зона)
-  static const double compareWLayer3 = 1.0;   // вес уровня 3 (729 зон)
-  static const double compareDeScale = 2.0;   // ΔE → score: 100 − ΔE×deScale
+  static const double compareWL = 0.5; // вес яркости L* в формуле ΔE
+  static const double compareWLayer0 = 0.5; // вес уровня 0 (1 зона)
+  static const double compareWLayer1 = 1.5; // вес уровня 1 (9 зон)
+  static const double compareWLayer2 = 2.0; // вес уровня 2 (81 зона)
+  static const double compareWLayer3 = 1.0; // вес уровня 3 (729 зон)
+  static const double compareDeScale = 2.0; // ΔE → score: 100 − ΔE×deScale
 
   // Фичи
   static const bool featureAI = false;
   static const bool featureAuth = true; // ← включено
   static const bool featurePayments = false;
-  static const bool featureServerSync = true;  // Supabase sync включён
+  static const bool featureServerSync = true; // Supabase sync включён
 }

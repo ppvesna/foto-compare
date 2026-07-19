@@ -13,6 +13,7 @@ Future<Map<String, dynamic>> runWebCompareWorker({
   required Uint8List sample,
   required int pixelStep,
   required int edgeTolerance,
+  required String deltaEFormula,
   required bool includeGeometry,
   required bool includeCanonical,
   ValueChanged<String>? onProgress,
@@ -84,6 +85,7 @@ Future<Map<String, dynamic>> runWebCompareWorker({
   message['sample'] = sample.toJS;
   message['pixelStep'] = pixelStep.toJS;
   message['edgeTolerance'] = edgeTolerance.toJS;
+  message['deltaEFormula'] = deltaEFormula.toJS;
   message['includeGeometry'] = includeGeometry.toJS;
   message['includeCanonical'] = includeCanonical.toJS;
   worker.postMessage(message);

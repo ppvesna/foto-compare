@@ -74,6 +74,7 @@ async function compareImages(task) {
   normalizeLuminance(refData.data, cmpData.data);
 
   progress('Строю Lab-матрицы и контуры...');
+  const formula = task.deltaEFormula || 'cie76';
   const refLab = buildLab(refData.data);
   const cmpLab = buildLab(cmpData.data);
   const refEdges = buildEdges(refData.data, width, height);
@@ -101,6 +102,7 @@ async function compareImages(task) {
     shift,
     pixelStep,
     edgeRadius,
+    formula,
   });
 
   let geometry = null;
@@ -178,6 +180,7 @@ async function compareColor(options) {
     shift,
     pixelStep,
     edgeRadius,
+    formula,
   } = options;
   const mapWidth = Math.ceil(width / pixelStep);
   const mapHeight = Math.ceil(height / pixelStep);
@@ -218,6 +221,7 @@ async function compareColor(options) {
             cx,
             cy,
             radius: edgeRadius,
+            formula,
           });
           deltaSum += delta * weight;
           maxDeltaE = Math.max(maxDeltaE, delta);
@@ -403,25 +407,25 @@ function estimateResidualShift(refLuma, cmpLuma, refData, cmpData, width, height
 }
 
 function edgeAwareDeltaE(options) {
-  const raw = labDelta(options.refLab, options.refIndex, options.cmpLab, options.cmpIndex);
+  const raw = labDelta(options.refLab, options.refIndex, options.cmpLab, options.cmpIndex, options.formula);
   if (options.radius <= 0 || raw < MINOR_DE) return raw;
   const nearRef = edgeNear(options.refMask, options.width, options.height, options.x, options.y, options.radius);
   const nearCmp = edgeNear(options.cmpMask, options.width, options.height, options.cx, options.cy, options.radius);
   if (!nearRef && !nearCmp) return raw;
   const local = Math.min(
-    minLocalDelta(options.refLab, options.refIndex, options.cmpLab, options.width, options.height, options.cx, options.cy, options.radius),
-    minLocalDelta(options.cmpLab, options.cmpIndex, options.refLab, options.width, options.height, options.x, options.y, options.radius),
+    minLocalDelta(options.refLab, options.refIndex, options.cmpLab, options.width, options.height, options.cx, options.cy, options.radius, options.formula),
+    minLocalDelta(options.cmpLab, options.cmpIndex, options.refLab, options.width, options.height, options.x, options.y, options.radius, options.formula),
   );
   let corrected = Math.min(raw, local);
   if (nearRef && nearCmp && local < raw) corrected *= 0.42;
   return corrected;
 }
 
-function minLocalDelta(sourceLab, sourceIndex, targetLab, width, height, cx, cy, radius) {
+function minLocalDelta(sourceLab, sourceIndex, targetLab, width, height, cx, cy, radius, formula) {
   let best = Infinity;
   for (let y = Math.max(0, cy - radius); y <= Math.min(height - 1, cy + radius); y++) {
     for (let x = Math.max(0, cx - radius); x <= Math.min(width - 1, cx + radius); x++) {
-      best = Math.min(best, labDelta(sourceLab, sourceIndex, targetLab, y * width + x));
+      best = Math.min(best, labDelta(sourceLab, sourceIndex, targetLab, y * width + x, formula));
     }
   }
   return best;
@@ -436,13 +440,115 @@ function edgeNear(mask, width, height, cx, cy, radius) {
   return false;
 }
 
-function labDelta(a, ai, b, bi) {
+function labDelta(a, ai, b, bi, formula) {
   const ap = ai * 3;
   const bp = bi * 3;
-  const dl = a[ap] - b[bp];
-  const da = a[ap + 1] - b[bp + 1];
-  const db = a[ap + 2] - b[bp + 2];
+  const l1 = a[ap];
+  const a1 = a[ap + 1];
+  const b1 = a[ap + 2];
+  const l2 = b[bp];
+  const a2 = b[bp + 1];
+  const b2 = b[bp + 2];
+  if (formula === 'cie94GraphicArts') return deltaE94(l1, a1, b1, l2, a2, b2);
+  if (formula === 'ciede2000') return deltaE2000(l1, a1, b1, l2, a2, b2);
+  if (formula === 'cmc21') return deltaECmc21(l1, a1, b1, l2, a2, b2);
+  return deltaE76(l1, a1, b1, l2, a2, b2);
+}
+
+function deltaE76(l1, a1, b1, l2, a2, b2) {
+  const dl = l1 - l2;
+  const da = a1 - a2;
+  const db = b1 - b2;
   return Math.sqrt(dl * dl + da * da + db * db);
+}
+
+function deltaE94(l1, a1, b1, l2, a2, b2) {
+  const dl = l1 - l2;
+  const c1 = Math.hypot(a1, b1);
+  const c2 = Math.hypot(a2, b2);
+  const dc = c1 - c2;
+  const da = a1 - a2;
+  const db = b1 - b2;
+  const dh2 = Math.max(0, da * da + db * db - dc * dc);
+  const sc = 1 + 0.045 * c1;
+  const sh = 1 + 0.015 * c1;
+  return Math.sqrt(dl * dl + (dc / sc) ** 2 + dh2 / (sh * sh));
+}
+
+function deltaE2000(l1, a1, b1, l2, a2, b2) {
+  const c1 = Math.hypot(a1, b1);
+  const c2 = Math.hypot(a2, b2);
+  const cBar = (c1 + c2) / 2;
+  const cBar7 = cBar ** 7;
+  const g = 0.5 * (1 - Math.sqrt(cBar7 / (cBar7 + 6103515625)));
+  const a1p = (1 + g) * a1;
+  const a2p = (1 + g) * a2;
+  const c1p = Math.hypot(a1p, b1);
+  const c2p = Math.hypot(a2p, b2);
+  const h1p = hueDegrees(b1, a1p);
+  const h2p = hueDegrees(b2, a2p);
+  const dlp = l2 - l1;
+  const dcp = c2p - c1p;
+  let dhp = h2p - h1p;
+  if (c1p * c2p === 0) dhp = 0;
+  else if (dhp > 180) dhp -= 360;
+  else if (dhp < -180) dhp += 360;
+  const dhTerm = 2 * Math.sqrt(c1p * c2p) * sinDegrees(dhp / 2);
+  const lp = (l1 + l2) / 2;
+  const cp = (c1p + c2p) / 2;
+  let hp;
+  if (c1p * c2p === 0) hp = h1p + h2p;
+  else if (Math.abs(h1p - h2p) <= 180) hp = (h1p + h2p) / 2;
+  else if (h1p + h2p < 360) hp = (h1p + h2p + 360) / 2;
+  else hp = (h1p + h2p - 360) / 2;
+  const t = 1
+    - 0.17 * cosDegrees(hp - 30)
+    + 0.24 * cosDegrees(2 * hp)
+    + 0.32 * cosDegrees(3 * hp + 6)
+    - 0.20 * cosDegrees(4 * hp - 63);
+  const sl = 1 + (0.015 * (lp - 50) ** 2) / Math.sqrt(20 + (lp - 50) ** 2);
+  const sc = 1 + 0.045 * cp;
+  const sh = 1 + 0.015 * cp * t;
+  const deltaTheta = 30 * Math.exp(-Math.pow((hp - 275) / 25, 2));
+  const cp7 = cp ** 7;
+  const rc = 2 * Math.sqrt(cp7 / (cp7 + 6103515625));
+  const rt = -rc * sinDegrees(2 * deltaTheta);
+  const lt = dlp / sl;
+  const ct = dcp / sc;
+  const ht = dhTerm / sh;
+  return Math.sqrt(lt * lt + ct * ct + ht * ht + rt * ct * ht);
+}
+
+function deltaECmc21(l1, a1, b1, l2, a2, b2) {
+  const dl = l1 - l2;
+  const c1 = Math.hypot(a1, b1);
+  const c2 = Math.hypot(a2, b2);
+  const dc = c1 - c2;
+  const da = a1 - a2;
+  const db = b1 - b2;
+  const dh2 = Math.max(0, da * da + db * db - dc * dc);
+  const h1 = hueDegrees(b1, a1);
+  const f = Math.sqrt(c1 ** 4 / (c1 ** 4 + 1900));
+  const t = h1 >= 164 && h1 <= 345
+    ? 0.56 + Math.abs(0.2 * cosDegrees(h1 + 168))
+    : 0.36 + Math.abs(0.4 * cosDegrees(h1 + 35));
+  const sl = l1 < 16 ? 0.511 : (0.040975 * l1) / (1 + 0.01765 * l1);
+  const sc = (0.0638 * c1) / (1 + 0.0131 * c1) + 0.638;
+  const sh = sc * (f * t + 1 - f);
+  return Math.sqrt((dl / (2 * sl)) ** 2 + (dc / sc) ** 2 + dh2 / (sh * sh));
+}
+
+function hueDegrees(b, a) {
+  const value = (Math.atan2(b, a) * 180) / Math.PI;
+  return value < 0 ? value + 360 : value;
+}
+
+function sinDegrees(value) {
+  return Math.sin((value * Math.PI) / 180);
+}
+
+function cosDegrees(value) {
+  return Math.cos((value * Math.PI) / 180);
 }
 
 function setDeltaPixel(data, index, delta) {

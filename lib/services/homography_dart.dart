@@ -13,8 +13,7 @@ const int _kMaxSrcDim = 1600;
 // стандарт применяется нативно). Используется как единая целевая рамка
 // и для эталона, и для выровненного образца, иначе их размеры расходятся.
 int canonicalDim(double mm) {
-  const pxPerMm = 14.0;
-  return ((mm * pxPerMm) / 27).ceil() * 27;
+  return ((mm * AppConfig.canonicalPixelsPerMm) / 27).ceil() * 27;
 }
 
 /// Pure-Dart fallback for alignByAnchors (web / no OpenCV).

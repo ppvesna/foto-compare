@@ -1,6 +1,6 @@
 import 'dart:typed_data';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../models/layout_profile.dart';
+import '../features/references/references.dart';
 
 /// Единая точка входа для всех операций с Supabase.
 /// Покрывает: layouts, layout_profiles, check_results, production_orders.

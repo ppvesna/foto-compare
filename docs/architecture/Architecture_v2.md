@@ -18,9 +18,11 @@ Existing screens and services are migrated only when a product change requires i
 In particular, Architecture v2 does not require an immediate refactor of
 `CompareScreen`.
 
-The first implemented boundary is `lib/features/protocols`. Protocol domain models
-are separated from the current SharedPreferences adapter and exposed through one
-public module entry. Existing storage keys and JSON remain compatible.
+The implemented boundaries include `lib/features/protocols`,
+`lib/features/references`, and the first `billing` and `organization` contracts.
+Entitlements and organization permissions now reach the current application shell as
+typed snapshots. Existing storage keys, file names, JSON, and current user access remain
+compatible while the remote access migration is pending.
 
 ## 2. Architectural decision
 
@@ -94,6 +96,11 @@ by `EntitlementService`, which answers capability questions such as:
 Neither is called directly by Compare, OCR, reports, or settings. Those modules ask
 only for entitlements. This also supports Enterprise contracts that do not use the
 same payment flow as individual subscriptions.
+
+Current implementation note: `EntitlementService`, plan presets, limits, mocks, and a
+Supabase access-snapshot adapter exist. Accounts without the new server function use an
+explicit legacy-compatible snapshot. This fallback is transitional and must be removed
+only after the access migration and subscription assignments are verified.
 
 ## 7. Inspection domain
 

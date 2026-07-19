@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '../features/billing/billing.dart';
+import '../features/organization/organization.dart';
 import '../widgets/xp_widgets.dart';
 
 class HomeScreen extends StatelessWidget {
@@ -6,6 +8,8 @@ class HomeScreen extends StatelessWidget {
   final String displayName;
   final String nickname;
   final String organizationName;
+  final EntitlementSnapshot entitlements;
+  final OrganizationAccess organizationAccess;
   final VoidCallback onOpenSettings;
   final VoidCallback onSignOut;
 
@@ -15,6 +19,8 @@ class HomeScreen extends StatelessWidget {
     required this.displayName,
     required this.nickname,
     required this.organizationName,
+    required this.entitlements,
+    required this.organizationAccess,
     required this.onOpenSettings,
     required this.onSignOut,
   });
@@ -25,6 +31,13 @@ class HomeScreen extends StatelessWidget {
       organizationName.trim().isEmpty ? 'не указана' : organizationName.trim();
   String get _shownName =>
       displayName.trim().isEmpty ? 'профиль без имени' : displayName.trim();
+  String get _shownPlan => entitlements.legacyFallback
+      ? '${entitlements.plan.label} (переходный доступ)'
+      : entitlements.plan.label;
+  String get _shownLimit {
+    final limit = entitlements.limit(UsageLimit.checksPerDay);
+    return limit == null ? 'без ограничения' : '$limit проверок в день';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -37,7 +50,7 @@ class HomeScreen extends StatelessWidget {
             onTap: () => xpDlg(
               context,
               'Профиль',
-              'Email: ${email.isEmpty ? 'не указан' : email}\nНик: $_shownNick\nОрганизация: $_shownOrg\nПлан: Бесплатный',
+              'Email: ${email.isEmpty ? 'не указан' : email}\nНик: $_shownNick\nОрганизация: $_shownOrg\nРоль: ${organizationAccess.role.label}\nПлан: $_shownPlan\nЛимит: $_shownLimit',
             ),
           ),
           XpMenuItem(
@@ -253,8 +266,9 @@ class HomeScreen extends StatelessWidget {
               _profileRow('Ник', _shownNick),
               _profileRow('Имя', _shownName),
               _profileRow('Организация', _shownOrg),
-              _profileRow('План', 'Бесплатный'),
-              _profileRow('Лимит', '10 проверок в день'),
+              _profileRow('Роль', organizationAccess.role.label),
+              _profileRow('План', _shownPlan),
+              _profileRow('Лимит', _shownLimit),
               _profileRow('Облако', 'протоколы и превью позже'),
             ]),
           ),

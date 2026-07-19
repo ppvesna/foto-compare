@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'app/local_access_testing_service.dart';
 import 'config/app_config.dart';
 import 'config/app_theme.dart';
 import 'screens/start_screen.dart';
@@ -8,8 +10,11 @@ import 'screens/compare_screen.dart';
 import 'screens/chat_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/settings_screen.dart';
+import 'features/billing/billing.dart';
+import 'features/organization/organization.dart';
 import 'features/protocols/protocols.dart';
 import 'services/sync_service.dart';
+import 'widgets/xp_widgets.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -91,11 +96,60 @@ class MainShell extends StatefulWidget {
 class _MainShellState extends State<MainShell> {
   int _tab = 0;
   int _chatBadge = 4;
+  int _settingsAccessRequest = 0;
+  EntitlementSnapshot _entitlements =
+      EntitlementSnapshot.legacyCompatible();
+  OrganizationAccess _organizationAccess =
+      OrganizationAccess.legacyPersonal();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAccess();
+  }
+
+  Future<void> _loadAccess() async {
+    final client = Supabase.instance.client;
+    var entitlements = await SupabaseEntitlementService(client).load();
+    var organizationAccess =
+        await SupabaseOrganizationAccessService(client).load();
+    if (kDebugMode) {
+      final testOverride = await const LocalAccessTestingService().load();
+      if (testOverride.enabled) {
+        entitlements = EntitlementSnapshot.forPlan(testOverride.plan);
+        organizationAccess = OrganizationAccess.forRole(
+          organizationId: organizationAccess.organizationId,
+          role: testOverride.role,
+        );
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _entitlements = entitlements;
+      _organizationAccess = organizationAccess;
+    });
+  }
 
   void _onTab(int i) {
+    if (i == 2 &&
+        !_entitlements.allows(ProductCapability.collaboration)) {
+      xpDlg(
+        context,
+        'Нет доступа',
+        'Чат и совместная работа не входят в текущий план.',
+      );
+      return;
+    }
     setState(() {
       _tab = i;
       if (i == 2) _chatBadge = 0;
+    });
+  }
+
+  void _openAccessSettings() {
+    setState(() {
+      _settingsAccessRequest++;
+      _tab = 3;
     });
   }
 
@@ -114,17 +168,27 @@ class _MainShellState extends State<MainShell> {
         displayName: displayName,
         nickname: nickname,
         organizationName: organizationName,
-        onOpenSettings: () => _onTab(3),
+        entitlements: _entitlements,
+        organizationAccess: _organizationAccess,
+        onOpenSettings: _openAccessSettings,
         onSignOut: _signOut,
       ),
-      const CompareScreen(),
+      CompareScreen(
+        entitlements: _entitlements,
+        organizationAccess: _organizationAccess,
+      ),
       ChatScreen(
         email: email,
         displayName: displayName,
         nickname: nickname,
         organizationName: organizationName,
       ),
-      const SettingsScreen(),
+      SettingsScreen(
+        key: ValueKey('settings-access-$_settingsAccessRequest'),
+        entitlements: _entitlements,
+        organizationAccess: _organizationAccess,
+        onAccessChanged: _loadAccess,
+      ),
     ];
 
     return Scaffold(

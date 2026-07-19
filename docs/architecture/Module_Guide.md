@@ -14,6 +14,7 @@ lib/
   features/
     auth/
     organization/
+    capture/
     inspection/
     references/
     production/
@@ -43,13 +44,35 @@ lib/
 This is a destination map, not an instruction to move current files. A folder is
 created only when the first approved migration step needs it.
 
-Currently implemented Architecture v2 module:
+Currently implemented Architecture v2 modules:
 
 ```text
 lib/features/protocols/
   domain/check_protocol.dart
   infrastructure/check_history_service.dart
   protocols.dart
+
+lib/features/references/
+  domain/layout_profile.dart
+  domain/saved_reference.dart
+  infrastructure/layout_profile_storage.dart
+  infrastructure/reference_storage.dart
+  references.dart
+
+lib/features/billing/
+  domain/entitlement.dart
+  domain/entitlement_service.dart
+  infrastructure/legacy_entitlement_service.dart
+  infrastructure/supabase_entitlement_service.dart
+  testing/mock_entitlement_service.dart
+  billing.dart
+
+lib/features/organization/
+  domain/organization_access.dart
+  domain/organization_access_service.dart
+  infrastructure/supabase_organization_access_service.dart
+  testing/mock_organization_access_service.dart
+  organization.dart
 ```
 
 Other existing files remain in their legacy locations until their individual migration
@@ -126,6 +149,17 @@ Public contracts: `CompareEngine`, `RunInspection`, `InspectionProgress`,
 Dependencies: references, production, protocols, alignment, color analysis, geometry
 analysis, OCR, barcode, AI, and entitlements through public interfaces. It must not
 depend on payment SDKs, Supabase tables, or report rendering.
+
+### capture
+
+Responsibilities: camera source, lighting, optical filter, exposure metadata, white
+balance, resolution, and future device control. Capture settings describe how an image
+was obtained; they do not modify an already loaded sRGB image during comparison.
+
+Public contracts: `CaptureDevice`, `CameraCaptureSettingsRepository`, `CaptureMetadata`.
+
+Dependencies: platform camera adapter and settings. Inspection receives a capture
+metadata snapshot for the protocol.
 
 ### references
 
@@ -209,6 +243,12 @@ canonical output. Dart and OpenCV are adapters.
 
 Defines `ColorAnalysisProvider` for Lab conversion, Delta E, color profiles, defect maps,
 and layered analysis. Web Worker, Dart, native, or server execution are adapters.
+
+Current foundation: `lib/features/color_analysis` owns the measurement profile and the
+deterministic CIE76, CIE94 Graphic Arts, CIEDE2000, and CMC 2:1 formulas, plus the 2/5 mm
+point aperture. `lib/features/capture` owns camera lighting and optical-filter metadata.
+The legacy compare service and Web Worker consume the color-analysis model until the
+provider boundary is introduced; capture metadata never changes ready-image pixels.
 
 ### geometry_analysis
 

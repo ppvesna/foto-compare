@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
 
+import '../features/color_analysis/color_analysis.dart';
 import 'compare_settings_service.dart';
 import 'web_compare_worker_stub.dart'
     if (dart.library.html) 'web_compare_worker_web.dart' as web_worker;
@@ -15,8 +16,11 @@ class CompareService {
     int pixelStep = 1,
     bool includeGeometry = true,
     bool includeCanonical = true,
+    ColorMeasurementSettings? measurementSettings,
   }) async {
     final settings = await CompareSettingsService.load();
+    final measurement =
+        measurementSettings ?? await ColorMeasurementSettingsService.load();
     final normalizedPixelStep = pixelStep.clamp(1, 4);
     if (kIsWeb) {
       if (web_worker.isWebCompareWorkerSupported) {
@@ -26,6 +30,7 @@ class CompareService {
             sample: cmp,
             pixelStep: normalizedPixelStep,
             edgeTolerance: settings.deltaEdgeTolerancePx,
+            deltaEFormula: measurement.deltaEFormula.name,
             includeGeometry: includeGeometry,
             includeCanonical: includeCanonical,
             onProgress: onProgress,
@@ -46,6 +51,7 @@ class CompareService {
           normalizedPixelStep,
           includeGeometry,
           includeCanonical,
+          measurement.deltaEFormula.name,
         ],
         onProgress: onProgress,
       );
@@ -57,6 +63,7 @@ class CompareService {
       normalizedPixelStep,
       includeGeometry,
       includeCanonical,
+      measurement.deltaEFormula.name,
     ]);
   }
 }
@@ -105,39 +112,16 @@ const double _minorDeltaE = 3.0;
 const double _strongDeltaE = 6.0;
 const double _criticalDeltaE = 12.0;
 
-double _pivotRgb(num v) {
-  final c = v / 255.0;
-  return c <= 0.04045
-      ? c / 12.92
-      : math.pow((c + 0.055) / 1.055, 2.4) as double;
-}
-
-double _pivotXyz(double v) {
-  return v > 0.008856 ? math.pow(v, 1 / 3) as double : (7.787 * v) + 16 / 116;
-}
-
-({double l, double a, double b}) _rgbToLab(img.Pixel p) {
-  final r = _pivotRgb(p.r);
-  final g = _pivotRgb(p.g);
-  final b = _pivotRgb(p.b);
-
-  final x = (r * 0.4124564 + g * 0.3575761 + b * 0.1804375) / 0.95047;
-  final y = (r * 0.2126729 + g * 0.7151522 + b * 0.0721750) / 1.00000;
-  final z = (r * 0.0193339 + g * 0.1191920 + b * 0.9503041) / 1.08883;
-
-  final fx = _pivotXyz(x);
-  final fy = _pivotXyz(y);
-  final fz = _pivotXyz(z);
-  return (l: 116 * fy - 16, a: 500 * (fx - fy), b: 200 * (fy - fz));
-}
-
-double _deltaE76(img.Pixel ref, img.Pixel cmp) {
-  final a = _rgbToLab(ref);
-  final b = _rgbToLab(cmp);
-  final dl = a.l - b.l;
-  final da = a.a - b.a;
-  final db = a.b - b.b;
-  return math.sqrt(dl * dl + da * da + db * db);
+double _pixelDeltaE(
+  img.Pixel ref,
+  img.Pixel cmp,
+  DeltaEFormula formula,
+) {
+  return ColorDifferenceCalculator.deltaEForPixels(
+    ref,
+    cmp,
+    formula: formula,
+  );
 }
 
 _TileCompareData _compareTiles(
@@ -145,6 +129,7 @@ _TileCompareData _compareTiles(
   img.Image c,
   int edgeToleranceRadius,
   int pixelStep,
+  DeltaEFormula formula,
 ) {
   final residualShift = _estimateResidualShift(r, c);
   final refEdges = _edgeMask(r);
@@ -195,6 +180,7 @@ _TileCompareData _compareTiles(
             cx: cx,
             cy: cy,
             radius: edgeToleranceRadius,
+            formula: formula,
           );
           diff += deltaE * pixelWeight;
           if (deltaE > maxDeltaE) maxDeltaE = deltaE;
@@ -248,6 +234,7 @@ Future<_TileCompareData> _compareTilesYielding(
   img.Image c,
   int edgeToleranceRadius, {
   required int pixelStep,
+  required DeltaEFormula formula,
   ValueChanged<String>? onProgress,
 }) async {
   final residualShift = _estimateResidualShift(r, c);
@@ -303,6 +290,7 @@ Future<_TileCompareData> _compareTilesYielding(
             cx: cx,
             cy: cy,
             radius: edgeToleranceRadius,
+            formula: formula,
           );
           diff += deltaE * pixelWeight;
           if (deltaE > maxDeltaE) maxDeltaE = deltaE;
@@ -549,8 +537,9 @@ double _edgeAwareDeltaE({
   required int cx,
   required int cy,
   required int radius,
+  required DeltaEFormula formula,
 }) {
-  final raw = _deltaE76(refPixel, cmpPixel);
+  final raw = _pixelDeltaE(refPixel, cmpPixel, formula);
   if (radius <= 0 || raw < _minorDeltaE) return raw;
 
   final nearRefEdge = _isEdgeNear(
@@ -572,8 +561,22 @@ double _edgeAwareDeltaE({
   if (!nearRefEdge && !nearCmpEdge) return raw;
 
   final local = math.min(
-    _minLocalDeltaE(refPixel, cmpImage, cx, cy, radius),
-    _minLocalDeltaE(cmpPixel, refImage, x, y, radius),
+    _minLocalDeltaE(
+      refPixel,
+      cmpImage,
+      cx,
+      cy,
+      radius,
+      formula,
+    ),
+    _minLocalDeltaE(
+      cmpPixel,
+      refImage,
+      x,
+      y,
+      radius,
+      formula,
+    ),
   );
   var corrected = math.min(raw, local);
 
@@ -592,6 +595,7 @@ double _minLocalDeltaE(
   int cx,
   int cy,
   int radius,
+  DeltaEFormula formula,
 ) {
   var best = double.infinity;
   for (int y = math.max(0, cy - radius);
@@ -602,11 +606,11 @@ double _minLocalDeltaE(
         x++) {
       final p = cmp.getPixel(x, y);
       if (_noData(p)) continue;
-      best = math.min(best, _deltaE76(ref, p));
+      best = math.min(best, _pixelDeltaE(ref, p, formula));
     }
   }
   if (best.isFinite) return best;
-  return _deltaE76(ref, cmp.getPixel(cx, cy));
+  return _pixelDeltaE(ref, cmp.getPixel(cx, cy), formula);
 }
 
 ({int x, int y}) _estimateResidualShift(img.Image r, img.Image c) {
@@ -740,10 +744,15 @@ CompareResult _run(List<dynamic> args) {
   final imgRef = img.decodeImage(args[0] as Uint8List);
   final imgCmp = img.decodeImage(args[1] as Uint8List);
   final edgeToleranceRadius =
-      args.length > 2 ? (args[2] as int).clamp(0, 3) : 2;
+      args.length > 2 ? (args[2] as int).clamp(0, 6) : 2;
   final pixelStep = args.length > 3 ? (args[3] as int).clamp(1, 4) : 1;
   final includeGeometry = args.length <= 4 || args[4] as bool;
   final includeCanonical = args.length <= 5 || args[5] as bool;
+  final formula = _enumByName(
+    DeltaEFormula.values,
+    args.length > 6 ? args[6] as String : null,
+    DeltaEFormula.cie76,
+  );
   if (imgRef == null || imgCmp == null) {
     throw Exception('Не удалось декодировать изображение');
   }
@@ -770,6 +779,7 @@ CompareResult _run(List<dynamic> args) {
     cmpCanonical,
     edgeToleranceRadius,
     pixelStep,
+    formula,
   );
   final geometry =
       includeGeometry ? _compareGeometry(refCanonical, cmpCanonical) : null;
@@ -818,10 +828,15 @@ Future<CompareResult> _runYielding(
   final imgRef = img.decodeImage(args[0] as Uint8List);
   final imgCmp = img.decodeImage(args[1] as Uint8List);
   final edgeToleranceRadius =
-      args.length > 2 ? (args[2] as int).clamp(0, 3) : 2;
+      args.length > 2 ? (args[2] as int).clamp(0, 6) : 2;
   final pixelStep = args.length > 3 ? (args[3] as int).clamp(1, 4) : 1;
   final includeGeometry = args.length <= 4 || args[4] as bool;
   final includeCanonical = args.length <= 5 || args[5] as bool;
+  final formula = _enumByName(
+    DeltaEFormula.values,
+    args.length > 6 ? args[6] as String : null,
+    DeltaEFormula.cie76,
+  );
   if (imgRef == null || imgCmp == null) {
     throw Exception('Не удалось декодировать изображение');
   }
@@ -856,6 +871,7 @@ Future<CompareResult> _runYielding(
     cmpCanonical,
     edgeToleranceRadius,
     pixelStep: pixelStep,
+    formula: formula,
     onProgress: onProgress,
   );
 
@@ -904,6 +920,13 @@ Future<CompareResult> _runYielding(
     geometryRefCanonical: includeGeometry ? refCanonicalPng : null,
     geometryCmpCanonical: includeGeometry ? cmpCanonicalPng : null,
   );
+}
+
+T _enumByName<T extends Enum>(List<T> values, String? name, T fallback) {
+  for (final value in values) {
+    if (value.name == name) return value;
+  }
+  return fallback;
 }
 
 class CompareResult {

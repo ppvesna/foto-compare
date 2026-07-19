@@ -7,12 +7,18 @@ Rule: every step must preserve the working application and be independently reve
 ## Current checkpoint
 
 - Architecture v2 is approved.
-- The `protocols` feature boundary is the first implemented module.
-- Protocol models and the current local persistence adapter are separated.
-- Legacy SharedPreferences keys and JSON are preserved.
-- A compatibility test for the legacy protocol key is present.
-- The next module is `references`; a full `ProtocolRepository` abstraction remains a
-  later small step and is not required for the initial safe move.
+- The `protocols` and `references` feature boundaries are implemented.
+- Protocol, reference, and calibration profile models are separated from the current
+  local persistence adapters.
+- Legacy SharedPreferences keys, file names, and JSON are preserved.
+- Compatibility tests for legacy protocol and reference data are present.
+- Organization role and entitlement snapshots are connected to the application shell.
+- Free, Pro, and Enterprise presets, mocks, client gates, and a Supabase snapshot adapter
+  are implemented with a legacy-compatible fallback.
+- `005_access_control.sql` is prepared but not applied to remote Supabase. It requires a
+  backup and staging validation because it replaces permissive prototype RLS policies.
+- The next module is `production`; full repository abstractions remain later small
+  steps and are not required for these initial safe moves.
 
 ## Migration policy
 
@@ -79,10 +85,19 @@ continue to use their current UI while authentication details move behind the ad
 Add current organization, membership, and role to the application session. A personal
 account can be represented as a one-member organization to avoid two data models.
 
+Progress: typed roles, permission matrix, mock, Supabase adapter, and shell integration
+are present. Organization creation, switching, and administration UI remain pending.
+
 ### Step 10. Introduce entitlements
 
 Add `EntitlementService` with a permissive implementation matching today's behavior.
 Replace future plan checks with capability checks only.
+
+Progress: implemented for inspection start, daily limits, barcode, OCR, AI, exact Delta
+E, protocol history, and collaboration navigation. Server rollout remains pending.
+
+The settings UI now displays the effective snapshot and offers a debug-only local plan
+and role override. Production builds do not expose this override.
 
 ### Step 11. Add subscription and license mocks
 
@@ -139,6 +154,12 @@ protocols. Never reinterpret an old result using current thresholds without labe
 the recalculation.
 
 ## Phase 5: Offline synchronization
+
+Implementation order before this phase: introduce a `CloudStorage` port with local and
+Supabase adapters, then add a Google Drive adapter. User-supplied databases must connect
+through a server-side `DatabaseConnector`; raw database credentials are never stored in
+Flutter Web. AI integration follows through `AIProvider`, independently of the compare
+engine and storage provider.
 
 ### Step 20. Add an outbox
 

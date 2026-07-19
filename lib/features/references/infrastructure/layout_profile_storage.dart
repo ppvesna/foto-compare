@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
-import '../models/layout_profile.dart';
+import '../domain/layout_profile.dart';
 
 class LayoutProfileStorage {
   static const _fileName = 'layout_profiles.json';

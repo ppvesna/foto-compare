@@ -6,9 +6,13 @@ import 'package:flutter/services.dart' show HardwareKeyboard, KeyEvent;
 import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import '../config/app_theme.dart';
+import '../features/billing/billing.dart';
+import '../features/capture/capture.dart';
+import '../features/color_analysis/color_analysis.dart';
+import '../features/organization/organization.dart';
 import '../widgets/xp_widgets.dart';
 import '../services/compare_service.dart';
-import '../services/reference_storage.dart';
+import '../features/references/references.dart';
 import '../services/opencv_service.dart';
 import '../services/ai_compare_service.dart';
 import '../services/barcode_service.dart';
@@ -23,37 +27,22 @@ import '../services/web_compare_worker_stub.dart'
 import '../config/app_config.dart';
 import '../widgets/crop_frame_screen.dart';
 import '../widgets/anchor_point_screen.dart';
-import '../models/layout_profile.dart';
-import '../services/layout_profile_storage.dart';
 
 enum _ResultMapMode { deltaE, geometry, overlay }
 
 enum _InspectionTool { point, loupe }
 
-({double l, double a, double b}) _rgbPixelToLab(img.Pixel p) {
-  final r = _pivotRgbValue(p.r);
-  final g = _pivotRgbValue(p.g);
-  final b = _pivotRgbValue(p.b);
-  final x = (r * 0.4124564 + g * 0.3575761 + b * 0.1804375) / 0.95047;
-  final y = r * 0.2126729 + g * 0.7151522 + b * 0.0721750;
-  final z = (r * 0.0193339 + g * 0.1191920 + b * 0.9503041) / 1.08883;
-  final fx = _pivotXyzValue(x);
-  final fy = _pivotXyzValue(y);
-  final fz = _pivotXyzValue(z);
-  return (l: 116 * fy - 16, a: 500 * (fx - fy), b: 200 * (fy - fz));
-}
-
-double _pivotRgbValue(num v) {
-  final c = v / 255.0;
-  return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4) as double;
-}
-
-double _pivotXyzValue(double v) {
-  return v > 0.008856 ? pow(v, 1 / 3) as double : (7.787 * v) + 16 / 116;
-}
+enum _WorkspaceView { reference, sample, comparison }
 
 class CompareScreen extends StatefulWidget {
-  const CompareScreen({super.key});
+  final EntitlementSnapshot entitlements;
+  final OrganizationAccess organizationAccess;
+
+  const CompareScreen({
+    super.key,
+    required this.entitlements,
+    required this.organizationAccess,
+  });
 
   @override
   State<CompareScreen> createState() => _CompareScreenState();
@@ -81,6 +70,68 @@ class _CompareScreenState extends State<CompareScreen>
   LabFingerprint? _refLabFingerprint;
   LabFingerprint? _cmpLabFingerprint;
   double? _labFingerprintMatch;
+
+  bool _allows(ProductCapability capability) =>
+      widget.entitlements.allows(capability);
+
+  void _showPlanRequired(String feature) {
+    xpDlg(
+      context,
+      'Нет доступа',
+      '$feature не входит в текущий план.',
+    );
+  }
+
+  bool _isToday(DateTime value) {
+    final now = DateTime.now();
+    final local = value.toLocal();
+    return local.year == now.year &&
+        local.month == now.month &&
+        local.day == now.day;
+  }
+
+  bool _hasDailyCheckQuota() {
+    final limit = widget.entitlements.limit(UsageLimit.checksPerDay);
+    if (limit == null) return true;
+    final used = CheckHistoryService.checks.value
+        .where((p) => _isToday(p.createdAt))
+        .length;
+    if (used < limit) return true;
+    xpDlg(
+      context,
+      'Дневной лимит',
+      'Использовано $used из $limit проверок. Новая проверка будет доступна после обновления лимита.',
+    );
+    return false;
+  }
+
+  bool _hasReferenceQuota() {
+    final limit = widget.entitlements.limit(UsageLimit.savedReferences);
+    if (limit == null) return true;
+    final currentId = _layoutProfile?.id ?? _activeReferenceId;
+    final replacesExisting = currentId != null &&
+        _savedReferences.any((reference) => reference.id == currentId);
+    if (replacesExisting || _savedReferences.length < limit) return true;
+    xpDlg(
+      context,
+      'Лимит эталонов',
+      'В текущем плане можно сохранить не более $limit эталонов.',
+    );
+    return false;
+  }
+
+  bool _canManageReferences() {
+    if (widget.organizationAccess
+        .allows(OrganizationPermission.manageReferences)) {
+      return true;
+    }
+    xpDlg(
+      context,
+      'Нет права',
+      'Роль «${widget.organizationAccess.role.label}» не может изменять базу эталонов.',
+    );
+    return false;
+  }
 
   Uint8List? _refAligned;
   Uint8List? _cmpAligned;
@@ -123,14 +174,17 @@ class _CompareScreenState extends State<CompareScreen>
 
   bool _stacking = false;
   bool _imageBusy = false;
+  bool _refCropApplied = false;
+  bool _cmpCropApplied = false;
   String _imageBusyLabel = 'Обработка изображения...';
   double _diffSlider = 0.5;
   _ResultMapMode _resultMapMode = _ResultMapMode.deltaE;
   bool _exactDeltaEReady = false;
   bool _exactDeltaEComputing = false;
   bool _exactDeltaERequested = false;
-  _InspectionTool _inspectionTool = _InspectionTool.point;
+  _InspectionTool? _inspectionTool;
   final _resultCmpCtrl = TransformationController();
+  _WorkspaceView _workspaceView = _WorkspaceView.reference;
   _PointProbe? _pointProbe;
   _AreaLoupe? _areaLoupe;
   Offset? _loupeDragStart;
@@ -140,7 +194,6 @@ class _CompareScreenState extends State<CompareScreen>
   String? _savedRefLabel;
   String? _activeReferenceId;
   List<SavedReferenceProfile> _savedReferences = [];
-  final _jobNumberCtrl = TextEditingController();
   String _jobNumber = '';
   int _sampleNo = 1;
   String? _activeProtocolId;
@@ -187,6 +240,9 @@ class _CompareScreenState extends State<CompareScreen>
   List<LayoutProfile> _savedProfiles = [];
   CalibrationPointSettings _calibrationSettings =
       CalibrationPointSettings.defaults;
+  ColorMeasurementSettings _measurementSettings =
+      ColorMeasurementSettings.defaults;
+  CameraCaptureSettings _cameraCaptureSettings = CameraCaptureSettings.defaults;
 
   @override
   void initState() {
@@ -195,6 +251,8 @@ class _CompareScreenState extends State<CompareScreen>
     _loadSavedReference();
     _loadProfiles();
     _loadCalibrationSettings();
+    _loadColorMeasurementSettings();
+    _loadCameraCaptureSettings();
     CalibrationSettingsService.notifier.addListener(_onCalibrationSettings);
     HardwareKeyboard.instance.addHandler(_handleCtrlKey);
   }
@@ -202,6 +260,16 @@ class _CompareScreenState extends State<CompareScreen>
   Future<void> _loadCalibrationSettings() async {
     final settings = await CalibrationSettingsService.load();
     if (mounted) setState(() => _calibrationSettings = settings);
+  }
+
+  Future<void> _loadColorMeasurementSettings() async {
+    final settings = await ColorMeasurementSettingsService.load();
+    if (mounted) setState(() => _measurementSettings = settings);
+  }
+
+  Future<void> _loadCameraCaptureSettings() async {
+    final settings = await CameraCaptureSettingsService.load();
+    if (mounted) setState(() => _cameraCaptureSettings = settings);
   }
 
   void _onCalibrationSettings() {
@@ -245,7 +313,9 @@ class _CompareScreenState extends State<CompareScreen>
             .map((a) => Offset(a.x * size.width, a.y * size.height))
             .toList();
     setState(() {
+      _workspaceView = _WorkspaceView.reference;
       _refImg = item.bytes;
+      _refCropApplied = true;
       _refImgSize = size;
       _savedRefLabel = item.label;
       _activeReferenceId = item.id;
@@ -278,6 +348,7 @@ class _CompareScreenState extends State<CompareScreen>
 
   Future<void> _saveReference() async {
     if (_refImg == null) return;
+    if (!_canManageReferences() || !_hasReferenceQuota()) return;
     final now = DateTime.now();
     final label =
         '${now.day.toString().padLeft(2, '0')}.${now.month.toString().padLeft(2, '0')}.${now.year}';
@@ -302,12 +373,14 @@ class _CompareScreenState extends State<CompareScreen>
 
   void _newSample() {
     setState(() {
+      _workspaceView = _WorkspaceView.sample;
       _sampleNo = _nextSampleNumberFor(
         referenceId: _activeReferenceId,
         referenceLabel: _savedRefLabel,
         minValue: _sampleNo + 1,
       );
       _cmpImg = null;
+      _cmpCropApplied = false;
       _cmpImgSize = null;
       _cmpAligned = null;
       _cmpAnchorPts = null;
@@ -337,6 +410,7 @@ class _CompareScreenState extends State<CompareScreen>
   }
 
   Future<void> _clearReference() async {
+    if (!_canManageReferences()) return;
     final ok = await xpConfirm(
       context,
       'Сбросить эталон',
@@ -349,6 +423,7 @@ class _CompareScreenState extends State<CompareScreen>
         _savedReferences = [];
         _activeReferenceId = null;
         _refImg = null;
+        _refCropApplied = false;
         _refImgSize = null;
         _savedRefLabel = null;
         _refAligned = null;
@@ -384,6 +459,8 @@ class _CompareScreenState extends State<CompareScreen>
     setState(() {
       _calStep =
           storedRefPts == null || storedRefPts.length < _minAnchorPts ? 1 : 2;
+      _workspaceView =
+          _calStep == 1 ? _WorkspaceView.reference : _WorkspaceView.sample;
       _tempRefPts = storedRefPts ?? [];
       _tempCmpPts = [];
       _refImgSize = refSize;
@@ -510,6 +587,7 @@ class _CompareScreenState extends State<CompareScreen>
         _timedSteps.where((step) => step.label.startsWith('Обрезка ')).toList();
     setState(() {
       _calStep = 2;
+      _workspaceView = _WorkspaceView.sample;
       _tempCmpPts = [];
       _cmpAligned = null;
       _cmpAnchorPts = null;
@@ -946,7 +1024,6 @@ class _CompareScreenState extends State<CompareScreen>
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_handleCtrlKey);
     CalibrationSettingsService.notifier.removeListener(_onCalibrationSettings);
-    _jobNumberCtrl.dispose();
     _tabs.dispose();
     _overlayCtrl.dispose();
     _cmp2Ctrl.dispose();
@@ -1022,6 +1099,7 @@ class _CompareScreenState extends State<CompareScreen>
       if (!mounted) return;
       setState(() {
         _refImg = fused;
+        _refCropApplied = false;
         _refImgSize = sz;
         _savedRefLabel = null;
         _activeReferenceId = null;
@@ -1074,6 +1152,7 @@ class _CompareScreenState extends State<CompareScreen>
       if (!mounted) return;
       setState(() {
         _cmpImg = fused;
+        _cmpCropApplied = false;
         _cmpImgSize = sz;
         _cmpAligned = null;
         _cmpAnchorPts = null;
@@ -1113,6 +1192,10 @@ class _CompareScreenState extends State<CompareScreen>
 
   // ── AI анализ качества эталона ───────────────────
   Future<void> _analyzeReferenceWithAi() async {
+    if (!_allows(ProductCapability.aiAnalysis)) {
+      _showPlanRequired('AI-анализ');
+      return;
+    }
     if (_refImg == null) return;
     setState(() {
       _refAiLoading = true;
@@ -1131,6 +1214,10 @@ class _CompareScreenState extends State<CompareScreen>
 
   // ── AI анализ через Claude Vision ─────────────────
   Future<void> _runAiAnalysis() async {
+    if (!_allows(ProductCapability.aiAnalysis)) {
+      _showPlanRequired('AI-анализ');
+      return;
+    }
     final ref = _refAligned ?? _refImg;
     final cmp = _cmpAligned ?? _cmpImg;
     if (ref == null || cmp == null) return;
@@ -1245,6 +1332,20 @@ class _CompareScreenState extends State<CompareScreen>
   }
 
   Future<void> _runCompare() async {
+    if (!_allows(ProductCapability.runInspection)) {
+      _showPlanRequired('Сравнение изображений');
+      return;
+    }
+    if (!widget.organizationAccess
+        .allows(OrganizationPermission.runInspection)) {
+      xpDlg(
+        context,
+        'Нет права',
+        'Роль «${widget.organizationAccess.role.label}» не может запускать проверки.',
+      );
+      return;
+    }
+    if (!_hasDailyCheckQuota()) return;
     final ref = _refAligned ?? _refImg;
     final cmp = _cmpAligned ?? _cmpImg;
     if (ref == null || cmp == null) {
@@ -1272,6 +1373,8 @@ class _CompareScreenState extends State<CompareScreen>
         .toList();
     setState(() {
       _comparing = true;
+      _workspaceView = _WorkspaceView.comparison;
+      _inspectionTool = null;
       _aiResult = null;
       _refBarcodes = [];
       _cmpBarcodes = [];
@@ -1309,10 +1412,18 @@ class _CompareScreenState extends State<CompareScreen>
         'Этап 1/4: проверяю ч/б геометрию и Delta E уровня 2...',
       );
       await _yieldUi();
+      final measurementSettings = await ColorMeasurementSettingsService.load();
+      final cameraCaptureSettings = await CameraCaptureSettingsService.load();
+      if (!mounted) return;
+      setState(() {
+        _measurementSettings = measurementSettings;
+        _cameraCaptureSettings = cameraCaptureSettings;
+      });
       final compareResult = await CompareService.compare(
         ref,
         cmp,
         pixelStep: 2,
+        measurementSettings: measurementSettings,
         onProgress: (message) => _setCompareStatus(message),
       );
       if (!mounted) return;
@@ -1323,56 +1434,65 @@ class _CompareScreenState extends State<CompareScreen>
       _setCompareStatus(_geometryStatusLine(compareResult));
       _tabs.animateTo(3);
 
-      _startTimedStage('Этап 2/4: проверяю штрихкоды и QR...');
-      await _yieldUi();
-      final barcodeResults = await Future.wait([
-        BarcodeService.scanImage(
-          ref,
-        ).catchError((Object _) => <BarcodeResult>[]),
-        BarcodeService.scanImage(
-          cmp,
-        ).catchError((Object _) => <BarcodeResult>[]),
-      ]);
-      if (!mounted) return;
-      setState(() {
-        _refBarcodes = barcodeResults[0];
-        _cmpBarcodes = barcodeResults[1];
-      });
-      _setCompareStatus(
-        'Штрихкоды проверены: эталон ${_refBarcodes.length}, образец ${_cmpBarcodes.length}.',
-      );
-      _finishTimedStage(label: 'Штрихкоды и QR');
-      _startTimedStage('Этап 3/4: проверяю текст OCR...');
-      await _yieldUi();
-
-      Future<OcrResult> ocrSafe(Uint8List b) async {
-        try {
-          return await OcrService.recognize(b).timeout(
-            const Duration(seconds: 15),
-            onTimeout: () => const OcrResult('', [], error: 'Таймаут OCR'),
-          );
-        } catch (e) {
-          return OcrResult('', [], error: e.toString());
-        }
+      if (_allows(ProductCapability.barcode)) {
+        _startTimedStage('Этап 2/4: проверяю штрихкоды и QR...');
+        await _yieldUi();
+        final barcodeResults = await Future.wait([
+          BarcodeService.scanImage(
+            ref,
+          ).catchError((Object _) => <BarcodeResult>[]),
+          BarcodeService.scanImage(
+            cmp,
+          ).catchError((Object _) => <BarcodeResult>[]),
+        ]);
+        if (!mounted) return;
+        setState(() {
+          _refBarcodes = barcodeResults[0];
+          _cmpBarcodes = barcodeResults[1];
+        });
+        _setCompareStatus(
+          'Штрихкоды проверены: эталон ${_refBarcodes.length}, образец ${_cmpBarcodes.length}.',
+        );
+        _finishTimedStage(label: 'Штрихкоды и QR');
+      } else {
+        _setCompareStatus('Штрихкоды: этап не входит в текущий план.');
       }
 
-      final ocrResults = await Future.wait([ocrSafe(ref), ocrSafe(cmp)]);
-      if (!mounted) return;
-      final ro = ocrResults[0];
-      final co = ocrResults[1];
-      setState(() {
-        _refOcr = ro;
-        _cmpOcr = co;
-        _textDiff = (!ro.isEmpty || !co.isEmpty)
-            ? OcrService.compareTexts(ro.fullText, co.fullText)
-            : null;
-      });
-      _setCompareStatus(
-        _textDiff == null
-            ? 'OCR: распознанного текста для вычитки нет.'
-            : 'OCR: совпадение текста ${_textDiff!.similarity.toStringAsFixed(1)}%.',
-      );
-      _finishTimedStage(label: 'OCR / текст');
+      if (_allows(ProductCapability.ocr)) {
+        _startTimedStage('Этап 3/4: проверяю текст OCR...');
+        await _yieldUi();
+
+        Future<OcrResult> ocrSafe(Uint8List b) async {
+          try {
+            return await OcrService.recognize(b).timeout(
+              const Duration(seconds: 15),
+              onTimeout: () => const OcrResult('', [], error: 'Таймаут OCR'),
+            );
+          } catch (e) {
+            return OcrResult('', [], error: e.toString());
+          }
+        }
+
+        final ocrResults = await Future.wait([ocrSafe(ref), ocrSafe(cmp)]);
+        if (!mounted) return;
+        final ro = ocrResults[0];
+        final co = ocrResults[1];
+        setState(() {
+          _refOcr = ro;
+          _cmpOcr = co;
+          _textDiff = (!ro.isEmpty || !co.isEmpty)
+              ? OcrService.compareTexts(ro.fullText, co.fullText)
+              : null;
+        });
+        _setCompareStatus(
+          _textDiff == null
+              ? 'OCR: распознанного текста для вычитки нет.'
+              : 'OCR: совпадение текста ${_textDiff!.similarity.toStringAsFixed(1)}%.',
+        );
+        _finishTimedStage(label: 'OCR / текст');
+      } else {
+        _setCompareStatus('OCR: этап не входит в текущий план.');
+      }
 
       _startTimedStage('Этап 4/4: строю Lab ID и сохраняю протокол...');
       await _yieldUi();
@@ -1444,6 +1564,10 @@ class _CompareScreenState extends State<CompareScreen>
   }
 
   Future<void> _runExactDeltaE() async {
+    if (!_allows(ProductCapability.exactDeltaE)) {
+      _showPlanRequired('Точная Delta E');
+      return;
+    }
     final ref = _refAligned ?? _refImg;
     final cmp = _cmpAligned ?? _cmpImg;
     final preliminary = _result;
@@ -1459,6 +1583,7 @@ class _CompareScreenState extends State<CompareScreen>
         pixelStep: 1,
         includeGeometry: false,
         includeCanonical: false,
+        measurementSettings: _measurementSettings,
         onProgress: (message) => _setCompareStatus(message),
       );
       final labFuture = OpenCvService.compareImages(ref, cmp);
@@ -1504,7 +1629,7 @@ class _CompareScreenState extends State<CompareScreen>
       });
       _finishTimedStage(label: 'Точная Delta E (все пиксели)');
       _setCompareStatus(
-        'Точная Delta E готова: max ${_fmt(exact.maxDeltaE)}, '
+        'Точная ${_measurementSettings.deltaEFormula.shortLabel} готова: max ${_fmt(exact.maxDeltaE)}, '
         'среднее ${_fmt(exact.meanDeltaE)}.',
       );
       try {
@@ -1574,8 +1699,8 @@ class _CompareScreenState extends State<CompareScreen>
       ),
       CheckProtocolStage(
         name: _exactDeltaEReady
-            ? 'Цветовая карта ΔE'
-            : 'Цветовая карта ΔE (уровень 2)',
+            ? 'Цветовая карта ${_measurementSettings.deltaEFormula.shortLabel}'
+            : 'Цветовая карта ${_measurementSettings.deltaEFormula.shortLabel} (уровень 2)',
         status: _exactDeltaEReady
             ? (colorOk ? 'OK' : 'Внимание')
             : 'Предварительно',
@@ -1659,6 +1784,7 @@ class _CompareScreenState extends State<CompareScreen>
 
   // ── Сохранить локальный протокол последней проверки ──
   Future<void> _saveCheckResult() async {
+    if (!_allows(ProductCapability.protocolHistory)) return;
     final r = _result;
     if (r == null) return;
     final replacingCurrent = _activeProtocolId != null &&
@@ -1699,6 +1825,10 @@ class _CompareScreenState extends State<CompareScreen>
         sampleImageId: sampleImageId,
         sampleNo: sampleNumber,
         labMatch: _labFingerprintMatch,
+        deltaEFormula: _measurementSettings.deltaEFormula.shortLabel,
+        captureLighting: _cameraCaptureSettings.lighting.label,
+        captureFilter: _cameraCaptureSettings.opticalFilter.label,
+        apertureMm: _measurementSettings.aperture.diameterMm,
         stages: _checkProtocolStages(r),
       ),
     );
@@ -1769,6 +1899,8 @@ class _CompareScreenState extends State<CompareScreen>
           _tempRefPts = [];
           _tempCmpPts = [];
           if (isRef) {
+            _workspaceView = _WorkspaceView.reference;
+            _refCropApplied = true;
             _layoutProfile = null;
             _refImg = cropped.bytes;
             _refImgSize = newSize;
@@ -1777,6 +1909,8 @@ class _CompareScreenState extends State<CompareScreen>
             _refAligned = null;
             _refAnchorPts = null;
           } else {
+            _workspaceView = _WorkspaceView.sample;
+            _cmpCropApplied = true;
             _cmpImg = cropped.bytes;
             _cmpImgSize = newSize;
             _cmpAligned = null;
@@ -1848,6 +1982,8 @@ class _CompareScreenState extends State<CompareScreen>
         // Сбрасываем второй снимок и пропускаем через _selectRef (перспектива)
         if (!mounted) return;
         setState(() {
+          _workspaceView = _WorkspaceView.reference;
+          _refCropApplied = false;
           _ref2Img = null;
           _ref1Sharpness = null;
           _ref2Sharpness = null;
@@ -1857,7 +1993,9 @@ class _CompareScreenState extends State<CompareScreen>
         final sz = await _readImageSize(bytes);
         if (!mounted) return;
         setState(() {
+          _workspaceView = _WorkspaceView.sample;
           _cmpImg = bytes;
+          _cmpCropApplied = false;
           _cmpImgSize = sz;
           _cmpAligned = null;
           _cmpAnchorPts = null;
@@ -1886,9 +2024,12 @@ class _CompareScreenState extends State<CompareScreen>
                   icon: '+',
                   shortcut: 'Ctrl+N',
                   onTap: () => setState(() {
+                    _workspaceView = _WorkspaceView.reference;
                     _refImg = null;
+                    _refCropApplied = false;
                     _refImgSize = null;
                     _cmpImg = null;
+                    _cmpCropApplied = false;
                     _cmpImgSize = null;
                     _refAligned = null;
                     _cmpAligned = null;
@@ -1945,24 +2086,19 @@ class _CompareScreenState extends State<CompareScreen>
               label: 'Вид',
               items: [
                 XpMenuItem(
-                  label: 'Загрузка эталона',
+                  label: 'Эталон',
                   icon: 'R',
-                  onTap: () => _tabs.animateTo(0),
+                  onTap: () => _selectWorkspace(_WorkspaceView.reference),
                 ),
                 XpMenuItem(
                   label: 'Образец',
                   icon: 'S',
-                  onTap: () => _tabs.animateTo(1),
+                  onTap: () => _selectWorkspace(_WorkspaceView.sample),
                 ),
                 XpMenuItem(
-                  label: 'Совмещение',
-                  icon: 'A',
-                  onTap: () => _tabs.animateTo(2),
-                ),
-                XpMenuItem(
-                  label: 'Результат',
+                  label: 'Сравнение',
                   icon: '%',
-                  onTap: () => _tabs.animateTo(3),
+                  onTap: () => _selectWorkspace(_WorkspaceView.comparison),
                 ),
               ],
             ),
@@ -2010,21 +2146,6 @@ class _CompareScreenState extends State<CompareScreen>
     final stepWidth = width >= 1200 ? 170.0 : 140.0;
     final inspectorWidth = width >= 1200 ? 320.0 : 280.0;
 
-    if (_calStep != 0) {
-      return Container(
-        color: const Color(0xFFC9CDD3),
-        child: Scrollbar(
-          controller: _workspaceScrollCtrl,
-          thumbVisibility: true,
-          child: SingleChildScrollView(
-            controller: _workspaceScrollCtrl,
-            padding: const EdgeInsets.all(10),
-            child: _workspaceColumn(),
-          ),
-        ),
-      );
-    }
-
     return Container(
       color: const Color(0xFFC9CDD3),
       child: Row(
@@ -2049,21 +2170,6 @@ class _CompareScreenState extends State<CompareScreen>
   }
 
   Widget _mobileWorkbench() {
-    if (_calStep != 0) {
-      return Container(
-        color: const Color(0xFFC9CDD3),
-        child: Scrollbar(
-          controller: _workspaceScrollCtrl,
-          thumbVisibility: true,
-          child: SingleChildScrollView(
-            controller: _workspaceScrollCtrl,
-            padding: const EdgeInsets.all(10),
-            child: _workspaceColumn(),
-          ),
-        ),
-      );
-    }
-
     return Container(
       color: const Color(0xFFC9CDD3),
       child: Scrollbar(
@@ -2088,41 +2194,120 @@ class _CompareScreenState extends State<CompareScreen>
 
   Widget _workflowRail({bool horizontal = false}) {
     final hasJob = _currentJobNumber.isNotEmpty;
-    final steps = [
-      _FlowStep('1', 'Работа', hasJob, !hasJob),
-      _FlowStep('2', 'Эталон', _refImg != null, hasJob && _refImg == null),
-      _FlowStep(
+    final hasRef = _refImg != null;
+    final hasSample = _cmpImg != null;
+    final aligned = _canRunAlignedCompare;
+    final refCropDone =
+        _refCropApplied || hasSample || aligned || _result != null;
+    final sampleCropDone = _cmpCropApplied || aligned || _result != null;
+    final actions = [
+      _WorkflowAction(
+        '1',
+        'Номер работы',
+        Icons.assignment_outlined,
+        done: hasJob,
+        active: !hasJob,
+        onTap: _editJobNumber,
+      ),
+      _WorkflowAction(
+        '2',
+        'Загрузить эталон',
+        Icons.upload_file,
+        done: hasRef,
+        active: hasJob && !hasRef,
+        onTap: _imageBusy
+            ? null
+            : () {
+                _selectWorkspace(_WorkspaceView.reference);
+                _pickImage(true);
+              },
+      ),
+      _WorkflowAction(
         '3',
-        'Отпечаток',
-        _cmpImg != null,
-        _refImg != null && _cmpImg == null,
+        'Рамка эталона',
+        Icons.crop,
+        done: refCropDone,
+        active: hasRef && !refCropDone,
+        onTap: hasRef && !_imageBusy ? () => _cropImage(true) : null,
       ),
-      _FlowStep(
+      _WorkflowAction(
         '4',
-        'Точки',
-        _layoutProfile != null,
-        _refImg != null && _cmpImg != null && _layoutProfile == null,
+        'Загрузить отпечаток',
+        Icons.add_a_photo_outlined,
+        done: hasSample,
+        active: hasRef && refCropDone && !hasSample,
+        onTap: hasRef && !_imageBusy
+            ? () {
+                _selectWorkspace(_WorkspaceView.sample);
+                _pickImage(false);
+              }
+            : null,
       ),
-      _FlowStep(
+      _WorkflowAction(
         '5',
-        'Сравнение',
-        _result != null,
-        _refImg != null &&
-            _cmpImg != null &&
-            _layoutProfile != null &&
-            _result == null,
+        'Рамка отпечатка',
+        Icons.crop,
+        done: sampleCropDone,
+        active: hasSample && !sampleCropDone,
+        onTap: hasSample && !_imageBusy ? () => _cropImage(false) : null,
+      ),
+      _WorkflowAction(
+        '6',
+        'Совмещение',
+        Icons.control_camera_outlined,
+        done: aligned,
+        active: hasRef && hasSample && !aligned,
+        busy: _calibrating,
+        onTap:
+            hasRef && hasSample && !_imageBusy && !_calibrating && _calStep == 0
+                ? _startCalibration
+                : null,
+      ),
+      _WorkflowAction(
+        '7',
+        _result == null ? 'Сравнить' : 'Открыть результат',
+        Icons.compare,
+        done: _result != null,
+        active: _result == null && _canStartCompareAction,
+        busy: _comparing,
+        onTap: _result != null
+            ? () => _selectWorkspace(_WorkspaceView.comparison)
+            : _canStartCompareAction && !_comparing && !_imageBusy
+                ? _runCompare
+                : null,
       ),
     ];
 
+    final actionWidgets = actions
+        .map(
+          (action) => Padding(
+            padding: horizontal
+                ? const EdgeInsets.only(right: 6)
+                : const EdgeInsets.only(top: 6),
+            child: SizedBox(
+              width: horizontal ? 168 : null,
+              child: _workflowActionTile(action),
+            ),
+          ),
+        )
+        .toList();
     final content = horizontal
-        ? Row(
-            children: steps.map((s) => Expanded(child: _stepTile(s))).toList(),
+        ? Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _railHeader('Порядок действий'),
+              const SizedBox(height: 6),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(children: actionWidgets),
+              ),
+            ],
           )
         : Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _railHeader('Процесс'),
-              ...steps.map(_stepTile),
+              _railHeader('Порядок действий'),
+              ...actionWidgets,
               const Spacer(),
               _railNote(),
             ],
@@ -2158,52 +2343,110 @@ class _CompareScreenState extends State<CompareScreen>
     );
   }
 
-  Widget _stepTile(_FlowStep step) {
-    final color = step.done
+  Widget _workflowActionTile(_WorkflowAction action) {
+    final enabled = action.onTap != null;
+    final color = action.done
         ? AppTheme.simHigh
-        : step.active
+        : action.active
             ? AppTheme.blue
-            : Colors.grey.shade600;
-    return Container(
-      margin: const EdgeInsets.only(top: 6),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-      decoration: BoxDecoration(
-        color: step.active ? Colors.white : const Color(0xFFEDEDE8),
-        border: Border.all(color: color.withOpacity(step.active ? 0.9 : 0.35)),
-        boxShadow: step.active ? AppTheme.shadowSubtle : null,
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 22,
-            height: 22,
-            alignment: Alignment.center,
+            : enabled
+                ? const Color(0xFF64748B)
+                : Colors.grey.shade500;
+    return Tooltip(
+      message: action.label,
+      child: InkWell(
+        onTap: action.onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Opacity(
+          opacity:
+              enabled || action.done || action.active || action.busy ? 1 : 0.62,
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 54),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
             decoration: BoxDecoration(
-              color: color,
-              border: Border.all(color: Colors.white70),
-            ),
-            child: Text(
-              step.done ? '✓' : step.num,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 11,
-                fontWeight: FontWeight.bold,
+              color: action.active ? Colors.white : const Color(0xFFF5F7F8),
+              border: Border.all(
+                color: color.withOpacity(action.active ? 0.95 : 0.45),
               ),
+              borderRadius: BorderRadius.circular(8),
+              boxShadow: action.active ? AppTheme.shadowSubtle : null,
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 24,
+                  height: 24,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: color,
+                    borderRadius: BorderRadius.circular(7),
+                    border: Border.all(color: Colors.white70),
+                  ),
+                  child: action.busy
+                      ? const SizedBox(
+                          width: 12,
+                          height: 12,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 1.8,
+                            color: Colors.white,
+                          ),
+                        )
+                      : action.done
+                          ? const Icon(
+                              Icons.check,
+                              size: 15,
+                              color: Colors.white,
+                            )
+                          : Text(
+                              action.number,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                ),
+                const SizedBox(width: 7),
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        action.label,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          height: 1.15,
+                          color: enabled || action.done
+                              ? Colors.black87
+                              : Colors.black45,
+                          fontWeight: action.active || action.done
+                              ? FontWeight.w800
+                              : FontWeight.w600,
+                        ),
+                      ),
+                      if (action.active)
+                        const Padding(
+                          padding: EdgeInsets.only(top: 2),
+                          child: Text(
+                            'Следующий шаг',
+                            style: TextStyle(
+                              fontSize: 8.5,
+                              color: AppTheme.blue,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                Icon(action.icon, size: 16, color: color),
+              ],
             ),
           ),
-          const SizedBox(width: 7),
-          Expanded(
-            child: Text(
-              step.label,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 11,
-                color: step.active ? Colors.black : Colors.black87,
-                fontWeight: step.active ? FontWeight.bold : FontWeight.w600,
-              ),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -2216,80 +2459,310 @@ class _CompareScreenState extends State<CompareScreen>
         border: Border.all(color: AppTheme.silverDark),
       ),
       child: const Text(
-        'Эталон задаёт контекст. Основной анализ выполняется по образцу и карте отличий.',
+        'Выполняйте шаги сверху вниз. Завершённые действия отмечены зелёным.',
         style: TextStyle(fontSize: 10, height: 1.35, color: Colors.black54),
       ),
     );
   }
 
   Widget _workspaceColumn() {
-    if (_calStep != 0) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _calibrationWorkbench(),
-        ],
-      );
-    }
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _stagePanel(
-          title: 'Эталон',
-          subtitle: _savedRefLabel != null
-              ? 'Сохранён: $_savedRefLabel'
-              : (_refImg == null ? 'Загрузите цифровой файл' : 'Эталон готов'),
-          bytes: _refImg,
-          placeholderIcon: Icons.image_outlined,
-          placeholder: 'Нажмите, чтобы загрузить эталон',
-          onTap: () => _pickImage(true),
-          onOpen: _refImg != null ? () => _openFullScreen(_refImg!) : null,
-          actions: [
-            _toolBtn(Icons.upload_file, 'Загрузить', () => _pickImage(true)),
-            _toolBtn(
-              Icons.crop,
-              'Рамка',
-              _refImg != null ? () => _cropImage(true) : null,
+        _workspaceTabs(),
+        const SizedBox(height: 8),
+        _workspaceBody(),
+      ],
+    );
+  }
+
+  Widget _workspaceTabs() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 680;
+        final tabs = Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            if (compact) const SizedBox(width: 4),
+            if (compact)
+              Expanded(
+                child: _workspaceTab(
+                  _WorkspaceView.reference,
+                  'Эталон',
+                  ready: _refImg != null,
+                  width: double.infinity,
+                ),
+              )
+            else
+              _workspaceTab(
+                _WorkspaceView.reference,
+                'Эталон',
+                ready: _refImg != null,
+              ),
+            const SizedBox(width: 4),
+            if (compact)
+              Expanded(
+                child: _workspaceTab(
+                  _WorkspaceView.sample,
+                  'Образец',
+                  ready: _cmpImg != null,
+                  width: double.infinity,
+                ),
+              )
+            else
+              _workspaceTab(
+                _WorkspaceView.sample,
+                'Образец',
+                ready: _cmpImg != null,
+              ),
+            const SizedBox(width: 4),
+            if (compact)
+              Expanded(
+                child: _workspaceTab(
+                  _WorkspaceView.comparison,
+                  'Сравнение',
+                  ready: _result != null,
+                  width: double.infinity,
+                ),
+              )
+            else
+              _workspaceTab(
+                _WorkspaceView.comparison,
+                'Сравнение',
+                ready: _result != null,
+              ),
+            if (compact) const SizedBox(width: 4),
+          ],
+        );
+        return Container(
+          height: compact ? 86 : 48,
+          padding: EdgeInsets.fromLTRB(8, 7, 8, compact ? 5 : 0),
+          decoration: BoxDecoration(
+            color: const Color(0xFFDCE3EA),
+            border: Border.all(color: AppTheme.silverDark),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+          ),
+          child: compact
+              ? Column(
+                  children: [
+                    Expanded(child: tabs),
+                    const SizedBox(height: 4),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: _workspaceZoomControls(),
+                    ),
+                  ],
+                )
+              : Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Expanded(child: tabs),
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 5),
+                      child: _workspaceZoomControls(),
+                    ),
+                  ],
+                ),
+        );
+      },
+    );
+  }
+
+  Widget _workspaceTab(
+    _WorkspaceView view,
+    String label, {
+    required bool ready,
+    double width = 132,
+  }) {
+    final selected = _workspaceView == view;
+    final calibrationView = _calStep == 1
+        ? _WorkspaceView.reference
+        : _calStep == 2 || _calStep == 3
+            ? _WorkspaceView.sample
+            : null;
+    final enabled = _calStep == 0 || calibrationView == view;
+    return InkWell(
+      onTap: enabled ? () => _selectWorkspace(view) : null,
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(7)),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 140),
+        width: width,
+        height: selected ? 40 : 36,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: BoxDecoration(
+          color: selected ? Colors.white : const Color(0xFFC8D2DC),
+          border: Border.all(
+            color: selected ? AppTheme.blueLight : AppTheme.silverDark,
+          ),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(7)),
+          boxShadow: selected ? AppTheme.shadowSubtle : null,
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 7,
+              height: 7,
+              decoration: BoxDecoration(
+                color: ready ? AppTheme.simHigh : Colors.grey.shade500,
+                shape: BoxShape.circle,
+              ),
             ),
-            _toolBtn(
-              Icons.save,
-              'Сохранить',
-              _refImg != null ? _saveReference : null,
+            const SizedBox(width: 7),
+            Flexible(
+              child: Text(
+                label,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                  color: enabled ? Colors.black87 : Colors.black38,
+                ),
+              ),
             ),
           ],
         ),
-        const SizedBox(height: 10),
-        _stagePanel(
-          title: 'Образец',
-          subtitle: _cmpImg == null
-              ? 'Снимите или загрузите проверяемую распечатку'
-              : 'Основная зона анализа',
-          bytes: _cmpAligned ?? _cmpImg,
-          placeholderIcon: Icons.photo_camera_outlined,
-          placeholder: 'Нажмите, чтобы загрузить образец',
-          onTap: () => _pickImage(false),
-          onOpen: _cmpImg != null
-              ? () => _openFullScreen(_cmpAligned ?? _cmpImg!)
-              : null,
-          actions: [
-            _toolBtn(Icons.add_a_photo, 'Загрузить', () => _pickImage(false)),
-            _toolBtn(
-              Icons.crop,
-              'Рамка',
-              _cmpImg != null ? () => _cropImage(false) : null,
-            ),
-            _toolBtn(
-              Icons.tune,
-              'Точки',
-              _refImg != null && _cmpImg != null
-                  ? () => _startCalibration()
-                  : null,
-            ),
-          ],
+      ),
+    );
+  }
+
+  void _selectWorkspace(_WorkspaceView view) {
+    final calibrationView = _calStep == 1
+        ? _WorkspaceView.reference
+        : _calStep == 2 || _calStep == 3
+            ? _WorkspaceView.sample
+            : null;
+    if (calibrationView != null && calibrationView != view) return;
+    setState(() {
+      _workspaceView = view;
+      if (view == _WorkspaceView.comparison) _inspectionTool = null;
+    });
+  }
+
+  Widget _workspaceZoomControls() {
+    final controller = switch (_workspaceView) {
+      _WorkspaceView.reference => _refAlignCtrl,
+      _WorkspaceView.sample => _cmpAlignCtrl,
+      _WorkspaceView.comparison => _resultCmpCtrl,
+    };
+    final hasImage = switch (_workspaceView) {
+      _WorkspaceView.reference => _refImg != null,
+      _WorkspaceView.sample => _cmpImg != null,
+      _WorkspaceView.comparison => _result != null,
+    };
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _toolBtn(
+          Icons.remove,
+          'Уменьшить',
+          hasImage ? () => _zoomWorkspace(controller, 0.8) : null,
         ),
-        const SizedBox(height: 10),
-        _comparisonStage(),
+        _toolBtn(
+          Icons.add,
+          'Увеличить',
+          hasImage ? () => _zoomWorkspace(controller, 1.25) : null,
+        ),
+        _toolBtn(
+          Icons.fit_screen,
+          'Показать целиком',
+          hasImage ? () => controller.value = Matrix4.identity() : null,
+        ),
+        if (_workspaceView != _WorkspaceView.comparison)
+          _toolBtn(
+            Icons.open_in_full,
+            'На весь экран',
+            _activeWorkspaceImage == null
+                ? null
+                : () => _openFullScreen(_activeWorkspaceImage!),
+          ),
+      ],
+    );
+  }
+
+  Uint8List? get _activeWorkspaceImage => switch (_workspaceView) {
+        _WorkspaceView.reference => _refImg,
+        _WorkspaceView.sample => _cmpAligned ?? _cmpImg,
+        _WorkspaceView.comparison => null,
+      };
+
+  void _zoomWorkspace(TransformationController controller, double factor) {
+    final matrix = controller.value.clone()
+      ..multiply(Matrix4.diagonal3Values(factor, factor, 1));
+    final scale = matrix.getMaxScaleOnAxis();
+    if (scale < 0.5 || scale > 10.0) return;
+    controller.value = matrix;
+  }
+
+  Widget _workspaceBody() {
+    if (_calStep != 0) return _calibrationWorkbench();
+    return switch (_workspaceView) {
+      _WorkspaceView.reference => _referenceWorkspace(),
+      _WorkspaceView.sample => _sampleWorkspace(),
+      _WorkspaceView.comparison => _comparisonStage(),
+    };
+  }
+
+  Widget _referenceWorkspace() {
+    return _stagePanel(
+      title: 'Эталон',
+      subtitle: _savedRefLabel != null
+          ? 'Сохранён: $_savedRefLabel'
+          : (_refImg == null ? 'Загрузите цифровой файл' : 'Эталон готов'),
+      bytes: _refImg,
+      transformationController: _refAlignCtrl,
+      placeholderIcon: Icons.image_outlined,
+      placeholder: 'Нажмите, чтобы загрузить эталон',
+      onTap: () => _pickImage(true),
+      onOpen: _refImg != null ? () => _openFullScreen(_refImg!) : null,
+      actions: [
+        _toolBtn(Icons.upload_file, 'Загрузить', () => _pickImage(true)),
+        _toolBtn(
+          Icons.crop,
+          'Рамка',
+          _refImg != null ? () => _cropImage(true) : null,
+        ),
+        _toolBtn(
+          Icons.save,
+          'Сохранить',
+          _refImg != null ? _saveReference : null,
+        ),
+      ],
+    );
+  }
+
+  Widget _sampleWorkspace() {
+    return _stagePanel(
+      title: 'Образец',
+      subtitle: _cmpImg == null
+          ? 'Снимите или загрузите проверяемую распечатку'
+          : 'Основная зона анализа',
+      bytes: _cmpAligned ?? _cmpImg,
+      transformationController: _cmpAlignCtrl,
+      placeholderIcon: Icons.photo_camera_outlined,
+      placeholder: 'Нажмите, чтобы загрузить образец',
+      onTap: () => _pickImage(false),
+      onOpen: _cmpImg != null
+          ? () => _openFullScreen(_cmpAligned ?? _cmpImg!)
+          : null,
+      actions: [
+        _toolBtn(Icons.add_a_photo, 'Загрузить', () => _pickImage(false)),
+        if (_cmpImg != null)
+          _toolBtn(
+            Icons.note_add_outlined,
+            'Новый отпечаток',
+            _imageBusy ? null : _newSample,
+          ),
+        _toolBtn(
+          Icons.crop,
+          'Рамка',
+          _cmpImg != null ? () => _cropImage(false) : null,
+        ),
+        _toolBtn(
+          Icons.tune,
+          'Совмещение',
+          _refImg != null && _cmpImg != null ? _startCalibration : null,
+        ),
       ],
     );
   }
@@ -2301,6 +2774,7 @@ class _CompareScreenState extends State<CompareScreen>
     required IconData placeholderIcon,
     required String placeholder,
     required VoidCallback onTap,
+    required TransformationController transformationController,
     VoidCallback? onOpen,
     List<Widget> actions = const [],
   }) {
@@ -2321,36 +2795,51 @@ class _CompareScreenState extends State<CompareScreen>
             ),
           ),
           const SizedBox(height: 7),
-          GestureDetector(
-            onTap: busy ? null : onTap,
-            onDoubleTap: busy ? null : onOpen,
-            child: AspectRatio(
-              aspectRatio: ratio,
-              child: Container(
-                margin: const EdgeInsets.symmetric(horizontal: 8),
-                color: Colors.black,
-                child: busy
-                    ? Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const CircularProgressIndicator(
-                              color: Colors.white,
+          AspectRatio(
+            aspectRatio: ratio,
+            child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 8),
+              color: Colors.black,
+              child: busy
+                  ? Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const CircularProgressIndicator(
+                            color: Colors.white,
+                          ),
+                          const SizedBox(height: 10),
+                          Text(
+                            busyLabel,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: Colors.white70,
                             ),
-                            const SizedBox(height: 10),
-                            Text(
-                              busyLabel,
-                              style: const TextStyle(
-                                fontSize: 11,
-                                color: Colors.white70,
+                          ),
+                        ],
+                      ),
+                    )
+                  : bytes != null
+                      ? GestureDetector(
+                          onDoubleTap: onOpen,
+                          child: ClipRect(
+                            child: InteractiveViewer(
+                              transformationController:
+                                  transformationController,
+                              boundaryMargin: const EdgeInsets.all(80),
+                              minScale: 0.5,
+                              maxScale: 10.0,
+                              panEnabled: _ctrlHeld,
+                              scaleEnabled: _ctrlHeld,
+                              child: SizedBox.expand(
+                                child: _uiImage(bytes, fit: BoxFit.contain),
                               ),
                             ),
-                          ],
-                        ),
-                      )
-                    : bytes != null
-                        ? _uiImage(bytes, fit: BoxFit.contain)
-                        : Column(
+                          ),
+                        )
+                      : InkWell(
+                          onTap: busy ? null : onTap,
+                          child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               Icon(
@@ -2376,7 +2865,7 @@ class _CompareScreenState extends State<CompareScreen>
                               ),
                             ],
                           ),
-              ),
+                        ),
             ),
           ),
           const SizedBox(height: 8),
@@ -2389,37 +2878,12 @@ class _CompareScreenState extends State<CompareScreen>
     final r = _result;
     return _xpWindow(
       title: 'Сравнение и карта отличий',
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (r != null) SimBadge(value: r.score, fontSize: 11),
-          const SizedBox(width: 6),
-          _toolBtn(
-            Icons.compare,
-            'Сравнить',
-            _canStartCompareAction ? _runCompare : null,
-            primary: true,
-          ),
-        ],
-      ),
       child: Padding(
         padding: const EdgeInsets.all(8),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            if (_compareStatus != null) ...[
-              _compareProgressPanel(compact: true),
-              const SizedBox(height: 8),
-            ],
             if (r?.diffL3 != null || r?.geometryDiff != null) ...[
-              _mapModeSelector(),
-              if (_showAreaLoupePanel) ...[
-                const SizedBox(height: 8),
-                _areaLoupePanel(),
-              ],
-              const SizedBox(height: 8),
-              _mapLegend(),
-              const SizedBox(height: 8),
               _resultMapOverlay(r!),
               Row(
                 children: [
@@ -2473,8 +2937,50 @@ class _CompareScreenState extends State<CompareScreen>
                   ),
                 ),
               ),
-            if (r != null) ...[const SizedBox(height: 8), _resultSummaryBar(r)],
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (r != null) ...[
+                  SimBadge(value: r.score, fontSize: 11),
+                  const SizedBox(width: 10),
+                ],
+                XpBtn(
+                  label: _comparing
+                      ? 'Сравнение...'
+                      : r == null
+                          ? 'Сравнить'
+                          : 'Сравнить повторно',
+                  icon: Icons.compare,
+                  primary: true,
+                  width: 220,
+                  onPressed: _canStartCompareAction && !_comparing
+                      ? _runCompare
+                      : null,
+                ),
+              ],
+            ),
+            if (r?.diffL3 != null || r?.geometryDiff != null) ...[
+              const SizedBox(height: 8),
+              _mapModeSelector(),
+              const SizedBox(height: 8),
+              _mapLegend(),
+              if (_showAreaLoupePanel) ...[
+                const SizedBox(height: 8),
+                _areaLoupePanel(),
+              ],
+            ],
+            if (_compareStatus != null) ...[
+              const SizedBox(height: 8),
+              _compareProgressPanel(compact: true),
+            ],
             if (r != null) ...[
+              const SizedBox(height: 8),
+              _resultSummaryBar(r),
+            ],
+            if (r != null &&
+                (_inspectionTool == _InspectionTool.point ||
+                    _pointProbe != null)) ...[
               const SizedBox(height: 8),
               _pointProbePanel(r),
             ],
@@ -2669,7 +3175,14 @@ class _CompareScreenState extends State<CompareScreen>
       const inactiveColor = Color(0xFFE5E7EB);
       return Expanded(
         child: InkWell(
-          onTap: () => setState(() => _inspectionTool = tool),
+          onTap: () => setState(() {
+            final turningOff = _inspectionTool == tool;
+            _inspectionTool = turningOff ? null : tool;
+            if (_inspectionTool != _InspectionTool.loupe) {
+              _loupeDraftRect = null;
+              _loupeDragStart = null;
+            }
+          }),
           borderRadius: BorderRadius.circular(16),
           child: Container(
             height: 46,
@@ -2854,7 +3367,7 @@ class _CompareScreenState extends State<CompareScreen>
               children: [
                 _probeCell(
                   'Сходство',
-                  '${r.score.toStringAsFixed(1)}%\nточка ΔE ${probe.deltaE.toStringAsFixed(2)}',
+                  '${r.score.toStringAsFixed(1)}%\n${probe.formulaLabel} ${probe.deltaE.toStringAsFixed(2)}',
                   flex: 2,
                 ),
                 _probeCell('CMYK эталона', probe.refCmyk.label, flex: 3),
@@ -2862,6 +3375,11 @@ class _CompareScreenState extends State<CompareScreen>
                 _probeCell(
                   'Lab',
                   'эталон ${probe.refLab.label}\nобразец ${probe.cmpLab.label}',
+                  flex: 3,
+                ),
+                _probeCell(
+                  'Измерение',
+                  'апертура ${probe.apertureLabel}\nобласть ${probe.sampledPixels} px',
                   flex: 3,
                 ),
               ],
@@ -3760,103 +4278,6 @@ class _CompareScreenState extends State<CompareScreen>
             const SizedBox(height: 8),
             _referenceProfilesInspector(),
             const SizedBox(height: 8),
-            _inspectorSection('Порядок действий', [
-              SizedBox(
-                width: double.infinity,
-                child: XpBtn(
-                  label: '2. Загрузить эталон',
-                  icon: Icons.upload_file,
-                  primary: _refImg == null,
-                  onPressed: _imageBusy ? null : () => _pickImage(true),
-                ),
-              ),
-              const SizedBox(height: 8),
-              SizedBox(
-                width: double.infinity,
-                child: XpBtn(
-                  label: '3. Рамка эталона',
-                  icon: Icons.crop,
-                  onPressed: _refImg != null && !_imageBusy
-                      ? () => _cropImage(true)
-                      : null,
-                ),
-              ),
-              const SizedBox(height: 8),
-              SizedBox(
-                width: double.infinity,
-                child: XpBtn(
-                  label: '4. Загрузить отпечаток',
-                  icon: Icons.add_a_photo,
-                  primary: _refImg != null && _cmpImg == null,
-                  onPressed: _imageBusy ? null : () => _pickImage(false),
-                ),
-              ),
-              if (_cmpImg != null) ...[
-                const SizedBox(height: 8),
-                SizedBox(
-                  width: double.infinity,
-                  child: XpBtn(
-                    label: 'Новый отпечаток',
-                    icon: Icons.note_add,
-                    onPressed: _imageBusy ? null : _newSample,
-                  ),
-                ),
-              ],
-              const SizedBox(height: 8),
-              SizedBox(
-                width: double.infinity,
-                child: XpBtn(
-                  label: '5. Рамка отпечатка',
-                  icon: Icons.crop,
-                  onPressed: _cmpImg != null && !_imageBusy
-                      ? () => _cropImage(false)
-                      : null,
-                ),
-              ),
-              const SizedBox(height: 8),
-              SizedBox(
-                width: double.infinity,
-                child: XpBtn(
-                  label: '6. Калибровочные точки',
-                  icon: Icons.tune,
-                  primary: _refImg != null &&
-                      _cmpImg != null &&
-                      _layoutProfile == null,
-                  onPressed: _refImg != null && _cmpImg != null && !_imageBusy
-                      ? () => _startCalibration()
-                      : null,
-                ),
-              ),
-              const SizedBox(height: 8),
-              SizedBox(
-                width: double.infinity,
-                child: XpBtn(
-                  label: _comparing
-                      ? '7. Сравнение...'
-                      : _canCalculateAndCompare
-                          ? '7. Рассчитать и сравнить'
-                          : '7. Сравнить',
-                  icon: Icons.compare,
-                  primary: _canStartCompareAction,
-                  onPressed:
-                      _canStartCompareAction && !_comparing && !_imageBusy
-                          ? _runCompare
-                          : null,
-                ),
-              ),
-              const SizedBox(height: 8),
-              SizedBox(
-                width: double.infinity,
-                child: XpBtn(
-                  label: _aiLoading ? '8. AI анализ...' : '8. AI анализ',
-                  icon: Icons.auto_awesome,
-                  onPressed: _refImg != null && _cmpImg != null && !_aiLoading
-                      ? _runAiAnalysis
-                      : null,
-                ),
-              ),
-            ]),
-            const SizedBox(height: 8),
             _inspectorSection('Файлы', [
               _checkRow(
                 'Эталон',
@@ -3966,25 +4387,49 @@ class _CompareScreenState extends State<CompareScreen>
     );
   }
 
+  Future<void> _editJobNumber() async {
+    final controller = TextEditingController(text: _currentJobNumber);
+    final value = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Номер работы'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: 'Номер работы / заказа',
+          ),
+          onSubmitted: (text) => Navigator.pop(dialogContext, text.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(
+              dialogContext,
+              controller.text.trim(),
+            ),
+            child: const Text('Сохранить'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (value == null || !mounted) return;
+    setState(() {
+      _jobNumber = value;
+      _sampleNo = _nextSampleNumberFor(
+        referenceId: _activeReferenceId,
+        referenceLabel: _savedRefLabel,
+      );
+    });
+  }
+
   Widget _jobInspectorSection() {
     final hasJob = _currentJobNumber.isNotEmpty;
     return _inspectorSection('Работа', [
-      XpInput(
-        placeholder: 'Номер работы / заказа',
-        controller: _jobNumberCtrl,
-        keyboardType: TextInputType.text,
-        onChanged: (value) {
-          final next = value.trim();
-          setState(() {
-            _jobNumber = next;
-            _sampleNo = _nextSampleNumberFor(
-              referenceId: _activeReferenceId,
-              referenceLabel: _savedRefLabel,
-            );
-          });
-        },
-      ),
-      const SizedBox(height: 8),
       Row(
         children: [
           Expanded(
@@ -6114,7 +6559,9 @@ class _CompareScreenState extends State<CompareScreen>
                     onPressed: () {
                       setState(() {
                         _refImg = null;
+                        _refCropApplied = false;
                         _cmpImg = null;
+                        _cmpCropApplied = false;
                         _result = null;
                         _compareStatus = null;
                         _aiResult = null;
@@ -6867,20 +7314,51 @@ class _CompareScreenState extends State<CompareScreen>
     final cx = (nx * (cmp.width - 1)).round().clamp(0, cmp.width - 1);
     final cy = (ny * (cmp.height - 1)).round().clamp(0, cmp.height - 1);
 
-    final refPixel = ref.getPixel(rx, ry);
-    final cmpPixel = cmp.getPixel(cx, cy);
+    final refMeasurement = ColorMeasurementEngine.measurePoint(
+      ref,
+      x: rx,
+      y: ry,
+      settings: _measurementSettings,
+      pixelsPerMm: AppConfig.canonicalPixelsPerMm,
+    );
+    final cmpMeasurement = ColorMeasurementEngine.measurePoint(
+      cmp,
+      x: cx,
+      y: cy,
+      settings: _measurementSettings,
+      pixelsPerMm: AppConfig.canonicalPixelsPerMm,
+    );
     setState(() {
       _pointProbe = _PointProbe(
         x: rx,
         y: ry,
         normalized: Offset(nx, ny),
         imageSize: Size(ref.width.toDouble(), ref.height.toDouble()),
-        refLab: _LabColor.fromPixel(refPixel),
-        cmpLab: _LabColor.fromPixel(cmpPixel),
-        refCmyk: _CmykColor.fromPixel(refPixel),
-        cmpCmyk: _CmykColor.fromPixel(cmpPixel),
-        deltaE: _deltaE76(refPixel, cmpPixel),
+        refLab: _LabColor.fromLab(refMeasurement.lab),
+        cmpLab: _LabColor.fromLab(cmpMeasurement.lab),
+        refCmyk: _CmykColor.fromRgb(
+          refMeasurement.red,
+          refMeasurement.green,
+          refMeasurement.blue,
+        ),
+        cmpCmyk: _CmykColor.fromRgb(
+          cmpMeasurement.red,
+          cmpMeasurement.green,
+          cmpMeasurement.blue,
+        ),
+        deltaE: ColorDifferenceCalculator.deltaE(
+          refMeasurement.lab,
+          cmpMeasurement.lab,
+          _measurementSettings.deltaEFormula,
+        ),
+        formulaLabel: _measurementSettings.deltaEFormula.shortLabel,
+        apertureLabel: _measurementSettings.aperture.label,
+        sampledPixels: min(
+          refMeasurement.sampledPixels,
+          cmpMeasurement.sampledPixels,
+        ),
       );
+      _inspectionTool = null;
     });
   }
 
@@ -6946,6 +7424,7 @@ class _CompareScreenState extends State<CompareScreen>
       _loupeDraftRect = null;
       _loupeDragStart = null;
       _loupeImageSize = imageSize;
+      _inspectionTool = null;
     });
     _zoomComparisonToRect(
       normalized,
@@ -7041,37 +7520,6 @@ class _CompareScreenState extends State<CompareScreen>
     final w = image.width * scale;
     final h = image.height * scale;
     return Rect.fromLTWH((box.width - w) / 2, (box.height - h) / 2, w, h);
-  }
-
-  double _deltaE76(img.Pixel ref, img.Pixel cmp) {
-    final a = _rgbToLab(ref);
-    final b = _rgbToLab(cmp);
-    final dl = a.l - b.l;
-    final da = a.a - b.a;
-    final db = a.b - b.b;
-    return sqrt(dl * dl + da * da + db * db);
-  }
-
-  ({double l, double a, double b}) _rgbToLab(img.Pixel p) {
-    final r = _pivotRgb(p.r);
-    final g = _pivotRgb(p.g);
-    final b = _pivotRgb(p.b);
-    final x = (r * 0.4124564 + g * 0.3575761 + b * 0.1804375) / 0.95047;
-    final y = (r * 0.2126729 + g * 0.7151522 + b * 0.0721750);
-    final z = (r * 0.0193339 + g * 0.1191920 + b * 0.9503041) / 1.08883;
-    final fx = _pivotXyz(x);
-    final fy = _pivotXyz(y);
-    final fz = _pivotXyz(z);
-    return (l: 116 * fy - 16, a: 500 * (fx - fy), b: 200 * (fy - fz));
-  }
-
-  double _pivotRgb(num v) {
-    final c = v / 255.0;
-    return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4) as double;
-  }
-
-  double _pivotXyz(double v) {
-    return v > 0.008856 ? pow(v, 1 / 3) as double : (7.787 * v) + 16 / 116;
   }
 
   // Текстовый комментарий о цветовом сдвиге образца относительно эталона.
@@ -7423,13 +7871,24 @@ class _AnchorPointMarker extends StatelessWidget {
   }
 }
 
-class _FlowStep {
-  final String num;
+class _WorkflowAction {
+  final String number;
   final String label;
+  final IconData icon;
   final bool done;
   final bool active;
+  final bool busy;
+  final VoidCallback? onTap;
 
-  const _FlowStep(this.num, this.label, this.done, this.active);
+  const _WorkflowAction(
+    this.number,
+    this.label,
+    this.icon, {
+    required this.done,
+    required this.active,
+    this.busy = false,
+    this.onTap,
+  });
 }
 
 class _TimedStep {
@@ -7465,6 +7924,9 @@ class _PointProbe {
   final _CmykColor refCmyk;
   final _CmykColor cmpCmyk;
   final double deltaE;
+  final String formulaLabel;
+  final String apertureLabel;
+  final int sampledPixels;
 
   const _PointProbe({
     required this.x,
@@ -7476,6 +7938,9 @@ class _PointProbe {
     required this.refCmyk,
     required this.cmpCmyk,
     required this.deltaE,
+    required this.formulaLabel,
+    required this.apertureLabel,
+    required this.sampledPixels,
   });
 }
 
@@ -7504,10 +7969,7 @@ class _LabColor {
 
   const _LabColor(this.l, this.a, this.b);
 
-  factory _LabColor.fromPixel(img.Pixel p) {
-    final lab = _rgbPixelToLab(p);
-    return _LabColor(lab.l, lab.a, lab.b);
-  }
+  factory _LabColor.fromLab(LabColor lab) => _LabColor(lab.l, lab.a, lab.b);
 
   String get label =>
       'L ${l.toStringAsFixed(1)}  a ${a.toStringAsFixed(1)}  b ${b.toStringAsFixed(1)}';
@@ -7521,10 +7983,10 @@ class _CmykColor {
 
   const _CmykColor(this.c, this.m, this.y, this.k);
 
-  factory _CmykColor.fromPixel(img.Pixel p) {
-    final r = (p.r / 255.0).clamp(0.0, 1.0);
-    final g = (p.g / 255.0).clamp(0.0, 1.0);
-    final b = (p.b / 255.0).clamp(0.0, 1.0);
+  factory _CmykColor.fromRgb(double red, double green, double blue) {
+    final r = (red / 255.0).clamp(0.0, 1.0);
+    final g = (green / 255.0).clamp(0.0, 1.0);
+    final b = (blue / 255.0).clamp(0.0, 1.0);
     final k = 1.0 - max(r, max(g, b));
     if (k >= 0.999) return const _CmykColor(0, 0, 0, 100);
     final c = (1.0 - r - k) / (1.0 - k);

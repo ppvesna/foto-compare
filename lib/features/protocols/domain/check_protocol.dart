@@ -14,6 +14,10 @@ class CheckProtocol {
   final String sampleImageId;
   final int sampleNo;
   final double? labMatch;
+  final String deltaEFormula;
+  final String captureLighting;
+  final String captureFilter;
+  final double apertureMm;
   final List<CheckProtocolStage> stages;
 
   const CheckProtocol({
@@ -32,6 +36,10 @@ class CheckProtocol {
     this.sampleImageId = '',
     this.sampleNo = 1,
     required this.labMatch,
+    this.deltaEFormula = 'ΔE*76',
+    this.captureLighting = 'D65',
+    this.captureFilter = 'Без фильтра',
+    this.apertureMm = 2,
     required this.stages,
   });
 
@@ -51,6 +59,14 @@ class CheckProtocol {
         sampleImageId: json['sampleImageId'] as String? ?? '',
         sampleNo: (json['sampleNo'] as num?)?.toInt() ?? 1,
         labMatch: (json['labMatch'] as num?)?.toDouble(),
+        deltaEFormula: json['deltaEFormula'] as String? ?? 'ΔE*76',
+        captureLighting: json['captureLighting'] as String? ??
+            json['illuminant'] as String? ??
+            'D65',
+        captureFilter: json['captureFilter'] as String? ??
+            json['measurementCondition'] as String? ??
+            'Без фильтра',
+        apertureMm: (json['apertureMm'] as num?)?.toDouble() ?? 2,
         stages: (json['stages'] as List)
             .map((e) => CheckProtocolStage.fromJson(
                   Map<String, dynamic>.from(e as Map),
@@ -74,6 +90,10 @@ class CheckProtocol {
         'sampleImageId': sampleImageId,
         'sampleNo': sampleNo,
         'labMatch': labMatch,
+        'deltaEFormula': deltaEFormula,
+        'captureLighting': captureLighting,
+        'captureFilter': captureFilter,
+        'apertureMm': apertureMm,
         'stages': stages.map((e) => e.toJson()).toList(),
       };
 }

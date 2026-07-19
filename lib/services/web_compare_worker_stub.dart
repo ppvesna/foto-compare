@@ -7,6 +7,7 @@ Future<Map<String, dynamic>> runWebCompareWorker({
   required Uint8List sample,
   required int pixelStep,
   required int edgeTolerance,
+  required String deltaEFormula,
   required bool includeGeometry,
   required bool includeCanonical,
   ValueChanged<String>? onProgress,
