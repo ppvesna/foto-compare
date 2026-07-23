@@ -2,11 +2,13 @@ import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../app/local_access_testing_service.dart';
+import '../capabilities/storage/storage.dart';
 import '../config/app_theme.dart';
 import '../features/billing/billing.dart';
 import '../features/capture/capture.dart';
 import '../features/color_analysis/color_analysis.dart';
 import '../features/organization/organization.dart';
+import '../features/production/production.dart';
 import '../services/calibration_settings_service.dart';
 import '../features/protocols/protocols.dart';
 import '../services/compare_settings_service.dart';
@@ -16,12 +18,14 @@ class SettingsScreen extends StatefulWidget {
   final EntitlementSnapshot entitlements;
   final OrganizationAccess organizationAccess;
   final Future<void> Function() onAccessChanged;
+  final OrganizationAdministrationService? organizationAdministrationService;
 
   const SettingsScreen({
     super.key,
     required this.entitlements,
     required this.organizationAccess,
     required this.onAccessChanged,
+    this.organizationAdministrationService,
   });
 
   @override
@@ -33,7 +37,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   double _quality = 96;
   bool _aiEnabled = false;
   bool _history = true;
-  bool _sync = false;
   bool _notify = true;
   bool _cameraAutoWhite = true;
   bool _barcodeEnabled = true;
@@ -50,12 +53,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
   ColorMeasurementSettings _colorMeasurementSettings =
       ColorMeasurementSettings.defaults;
   CameraCaptureSettings _cameraCaptureSettings = CameraCaptureSettings.defaults;
+  StorageSettings _storageSettings = StorageSettings.defaults;
   AccessTestOverride _accessTestOverride = AccessTestOverride.disabled;
   bool _accessSaving = false;
+  final _organizationNameCtrl = TextEditingController();
+  final _memberNicknameCtrl = TextEditingController();
+  OrganizationUserProfile? _foundOrganizationUser;
+  List<OrganizationMember> _organizationMembers = const [];
+  OrganizationRole _selectedMemberRole = OrganizationRole.employee;
+  bool _organizationBusy = false;
 
   static const _sections = [
     _SettingsSection('Аккаунт', 'профиль и синхронизация'),
     _SettingsSection('Доступ', 'план, роль и лимиты'),
+    _SettingsSection('Организация', 'участники и роли'),
     _SettingsSection('Камера', 'захват с ноутбука или USB'),
     _SettingsSection('Калибровка', 'точки, лупа и магнит'),
     _SettingsSection('Цвет', 'CMYK точки и Delta E'),
@@ -72,8 +83,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _loadCompareSettings();
     _loadColorMeasurementSettings();
     _loadCameraCaptureSettings();
+    _loadStorageSettings();
     _loadAccessTestOverride();
   }
+
+  @override
+  void dispose() {
+    _organizationNameCtrl.dispose();
+    _memberNicknameCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant SettingsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.organizationAccess.role != widget.organizationAccess.role) {
+      final assignable = OrganizationAdministrationPolicy.assignableRoles(
+        widget.organizationAccess.role,
+      );
+      if (assignable.isNotEmpty && !assignable.contains(_selectedMemberRole)) {
+        _selectedMemberRole = assignable.first;
+      }
+    }
+  }
+
+  OrganizationAdministrationService get _organizationService =>
+      widget.organizationAdministrationService ??
+      SupabaseOrganizationAdministrationService(Supabase.instance.client);
 
   Future<void> _loadCalibrationSettings() async {
     final settings = await CalibrationSettingsService.load();
@@ -93,6 +129,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _loadCameraCaptureSettings() async {
     final settings = await CameraCaptureSettingsService.load();
     if (mounted) setState(() => _cameraCaptureSettings = settings);
+  }
+
+  Future<void> _loadStorageSettings() async {
+    final settings = await StorageSettingsService.load();
+    if (mounted) setState(() => _storageSettings = settings);
   }
 
   Future<void> _loadAccessTestOverride() async {
@@ -218,7 +259,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final item = _sections[index];
     final selected = _section == index;
     return InkWell(
-      onTap: () => setState(() => _section = index),
+      onTap: () {
+        setState(() => _section = index);
+        if (index == 2) _loadOrganizationMembers();
+      },
       borderRadius: BorderRadius.circular(14),
       child: Container(
         margin: const EdgeInsets.only(bottom: 7),
@@ -259,13 +303,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
               children: [
                 if (_section == 0) _accountSection(),
                 if (_section == 1) _accessSection(),
-                if (_section == 2) _cameraSection(),
-                if (_section == 3) _calibrationSection(),
-                if (_section == 4) _colorSection(),
-                if (_section == 5) _densitySection(),
-                if (_section == 6) _barcodeSection(),
-                if (_section == 7) _inspectionSection(),
-                if (_section == 8) _storageSection(),
+                if (_section == 2) _organizationSection(),
+                if (_section == 3) _cameraSection(),
+                if (_section == 4) _calibrationSection(),
+                if (_section == 5) _colorSection(),
+                if (_section == 6) _densitySection(),
+                if (_section == 7) _barcodeSection(),
+                if (_section == 8) _inspectionSection(),
+                if (_section == 9) _storageSection(),
               ],
             ),
           ),
@@ -304,7 +349,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _infoRow('Email', email.isEmpty ? 'не указан' : email),
         _infoRow('План', widget.entitlements.plan.label),
         _infoRow('Роль', widget.organizationAccess.role.label),
-        _infoRow('Организация', 'будет использоваться для группового чата'),
+        _infoRow(
+          'Организация',
+          widget.organizationAccess.organizationName ?? 'личное пространство',
+        ),
+        if (widget.organizationAccess.organizationId != null)
+          _infoRow('ID организации', widget.organizationAccess.organizationId!),
         const SizedBox(height: 8),
         Row(children: [
           Expanded(
@@ -348,6 +398,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _infoRow('Статус', _accessStatusLabel()),
           _infoRow('Роль', widget.organizationAccess.role.label),
           _infoRow(
+            'Организация',
+            widget.organizationAccess.organizationName ?? 'личное пространство',
+          ),
+          _infoRow('Область роли', widget.organizationAccess.role.scopeLabel),
+          _infoRow(
             'Проверок/день',
             checksLimit == null ? 'без ограничения' : '$checksLimit',
           ),
@@ -358,6 +413,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _infoRow(
             'Мест в группе',
             seatsLimit == null ? 'без ограничения' : '$seatsLimit',
+          ),
+          XpBtn(
+            label: _accessSaving ? 'Обновляем...' : 'Обновить права с сервера',
+            onPressed: _accessSaving ? null : _refreshAccess,
           ),
         ]),
       ),
@@ -392,8 +451,316 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ),
       const SizedBox(height: 10),
+      _settingsPanel(
+        title: 'Функции в конкретной работе',
+        child:
+            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          _table(
+            headers: const ['Функция', 'Рабочие действия'],
+            rows: JobFunction.values
+                .map((function) => [
+                      function.label,
+                      _jobFunctionDescription(function),
+                    ])
+                .toList(),
+          ),
+          const SizedBox(height: 8),
+          _notePanel(
+            'Функция не является ролью организации. Сотруднику можно назначить несколько функций отдельно в каждой работе. Заказчик получает только просмотр, согласование и чат своей работы.',
+          ),
+        ]),
+      ),
+      const SizedBox(height: 10),
       if (kDebugMode) _accessTestingPanel() else _productionAccessPanel(),
     ]);
+  }
+
+  Widget _organizationSection() {
+    final access = widget.organizationAccess;
+    final canAdminister = access.role == OrganizationRole.owner ||
+        access.role == OrganizationRole.admin;
+    if (access.role == OrganizationRole.personal) {
+      final planAllowsOrganization =
+          widget.entitlements.plan != PlanTier.free ||
+              widget.entitlements.legacyFallback;
+      return _settingsPanel(
+        title: 'Создание организации',
+        child:
+            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          _infoRow('Текущий режим', 'личное пространство'),
+          _infoRow('План', widget.entitlements.plan.label),
+          _notePanel(
+            'Название из регистрации является частью профиля и не даёт прав. После создания организации текущий пользователь становится её единственным владельцем.',
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            'Название организации',
+            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 4),
+          XpInput(
+            placeholder: 'Типография или организация',
+            controller: _organizationNameCtrl,
+          ),
+          const SizedBox(height: 8),
+          XpBtn(
+            label: _organizationBusy ? 'Создаём...' : 'Создать организацию',
+            primary: true,
+            onPressed: !planAllowsOrganization || _organizationBusy
+                ? null
+                : _createOrganization,
+          ),
+          if (!planAllowsOrganization) ...[
+            const SizedBox(height: 8),
+            _notePanel('Организация доступна начиная с плана Pro.'),
+          ],
+        ]),
+      );
+    }
+
+    if (!canAdminister) {
+      return _settingsPanel(
+        title: 'Моя организация',
+        child:
+            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          _infoRow('ID', access.organizationId ?? 'не определён'),
+          _infoRow('Название', access.organizationName ?? 'не указано'),
+          _infoRow('Роль', access.role.label),
+          _infoRow('Область', access.role.scopeLabel),
+          _notePanel(
+            'Роль назначает владелец или администратор. Пользователь не может повысить собственные права.',
+          ),
+        ]),
+      );
+    }
+
+    final assignableRoles = OrganizationAdministrationPolicy.assignableRoles(
+      access.role,
+    ).toList();
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      _settingsPanel(
+        title: 'Организация',
+        child:
+            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          _infoRow('Название', access.organizationName ?? 'не указано'),
+          _infoRow('ID', access.organizationId ?? 'не определён'),
+          _infoRow('Моя роль', access.role.label),
+          _infoRow('Участников', '${_organizationMembers.length}'),
+          _notePanel(
+            access.role == OrganizationRole.owner
+                ? 'Владелец назначает администратора, сотрудников и заказчиков. Передача владения будет отдельной защищённой операцией.'
+                : 'Администратор назначает сотрудников и заказчиков, но не может назначать администраторов или менять владельца.',
+          ),
+        ]),
+      ),
+      const SizedBox(height: 10),
+      _settingsPanel(
+        title: 'Найти пользователя по нику',
+        child:
+            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          XpInput(
+            placeholder: 'точный ник пользователя',
+            controller: _memberNicknameCtrl,
+          ),
+          const SizedBox(height: 8),
+          XpBtn(
+            label: _organizationBusy ? 'Ищем...' : 'Найти пользователя',
+            onPressed: _organizationBusy ? null : _findOrganizationUser,
+          ),
+          if (_foundOrganizationUser != null) ...[
+            const SizedBox(height: 10),
+            _infoRow('Ник', _foundOrganizationUser!.nickname),
+            _infoRow(
+              'Имя',
+              _foundOrganizationUser!.displayName.isEmpty
+                  ? 'не указано'
+                  : _foundOrganizationUser!.displayName,
+            ),
+            _infoRow(
+              'Из регистрации',
+              _foundOrganizationUser!.organizationName.isEmpty
+                  ? 'организация не указана'
+                  : _foundOrganizationUser!.organizationName,
+            ),
+            _optionChips(
+              label: 'Назначить роль',
+              value: _selectedMemberRole.label,
+              values: assignableRoles.map((role) => role.label).toList(),
+              onSelect: (value) => setState(() {
+                _selectedMemberRole = assignableRoles.firstWhere(
+                  (role) => role.label == value,
+                );
+              }),
+            ),
+            XpBtn(
+              label: _organizationBusy
+                  ? 'Сохраняем...'
+                  : 'Назначить или изменить роль',
+              primary: true,
+              onPressed: _organizationBusy ? null : _assignOrganizationMember,
+            ),
+          ],
+        ]),
+      ),
+      const SizedBox(height: 10),
+      _settingsPanel(
+        title: 'Участники',
+        child: _organizationBusy && _organizationMembers.isEmpty
+            ? const Padding(
+                padding: EdgeInsets.all(8),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            : _organizationMembers.isEmpty
+                ? const Text(
+                    'Список пока пуст или серверная схема 006 ещё не подключена.',
+                    style: TextStyle(fontSize: 11, color: Colors.black54),
+                  )
+                : _table(
+                    headers: const ['Ник', 'Имя', 'Роль'],
+                    rows: _organizationMembers
+                        .map((member) => [
+                              member.nickname.isEmpty ? '-' : member.nickname,
+                              member.displayName.isEmpty
+                                  ? 'не указано'
+                                  : member.displayName,
+                              member.role.label,
+                            ])
+                        .toList(),
+                  ),
+      ),
+    ]);
+  }
+
+  Future<void> _createOrganization() async {
+    final name = _organizationNameCtrl.text.trim();
+    if (name.length < 2) {
+      xpDlg(context, 'Организация', 'Введите название организации.');
+      return;
+    }
+    setState(() => _organizationBusy = true);
+    try {
+      await _organizationService.createOrganization(name: name);
+      await widget.onAccessChanged();
+      if (mounted) {
+        xpDlg(
+          context,
+          'Организация создана',
+          'Вы назначены владельцем. Теперь можно находить пользователей по нику.',
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        xpDlg(context, 'Не удалось создать организацию', _accessError(error));
+      }
+    } finally {
+      if (mounted) setState(() => _organizationBusy = false);
+    }
+  }
+
+  Future<void> _loadOrganizationMembers() async {
+    final access = widget.organizationAccess;
+    final organizationId = access.organizationId;
+    if (organizationId == null ||
+        (access.role != OrganizationRole.owner &&
+            access.role != OrganizationRole.admin) ||
+        _organizationBusy) {
+      return;
+    }
+    setState(() => _organizationBusy = true);
+    try {
+      final members = await _organizationService.listMembers(organizationId);
+      if (mounted) setState(() => _organizationMembers = members);
+    } catch (error) {
+      if (mounted) {
+        xpDlg(context, 'Участники недоступны', _accessError(error));
+      }
+    } finally {
+      if (mounted) setState(() => _organizationBusy = false);
+    }
+  }
+
+  Future<void> _findOrganizationUser() async {
+    final nickname = _memberNicknameCtrl.text.trim().toLowerCase();
+    if (nickname.isEmpty) {
+      xpDlg(context, 'Поиск пользователя', 'Введите точный ник.');
+      return;
+    }
+    setState(() {
+      _organizationBusy = true;
+      _foundOrganizationUser = null;
+    });
+    try {
+      final profile = await _organizationService.findUserByNickname(nickname);
+      if (!mounted) return;
+      setState(() => _foundOrganizationUser = profile);
+      if (profile == null) {
+        xpDlg(
+          context,
+          'Пользователь не найден',
+          'Пользователь должен зарегистрироваться, подтвердить email и хотя бы один раз войти в приложение.',
+        );
+      }
+    } catch (error) {
+      if (mounted) xpDlg(context, 'Ошибка поиска', _accessError(error));
+    } finally {
+      if (mounted) setState(() => _organizationBusy = false);
+    }
+  }
+
+  Future<void> _assignOrganizationMember() async {
+    final access = widget.organizationAccess;
+    final organizationId = access.organizationId;
+    final profile = _foundOrganizationUser;
+    if (organizationId == null || profile == null) return;
+    if (!OrganizationAdministrationPolicy.canAssign(
+      actorRole: access.role,
+      currentRole: _organizationMemberRole(profile.userId),
+      requestedRole: _selectedMemberRole,
+    )) {
+      xpDlg(context, 'Роль запрещена', 'Текущая роль не может это назначить.');
+      return;
+    }
+    setState(() => _organizationBusy = true);
+    try {
+      await _organizationService.assignMember(
+        organizationId: organizationId,
+        userId: profile.userId,
+        role: _selectedMemberRole,
+      );
+      final members = await _organizationService.listMembers(organizationId);
+      if (!mounted) return;
+      setState(() {
+        _organizationMembers = members;
+        _foundOrganizationUser = null;
+        _memberNicknameCtrl.clear();
+      });
+      xpDlg(
+        context,
+        'Роль сохранена',
+        '${profile.nickname}: ${_selectedMemberRole.label}. Новые права появятся после обновления доступа или следующего входа пользователя.',
+      );
+    } catch (error) {
+      if (mounted) xpDlg(context, 'Роль не сохранена', _accessError(error));
+    } finally {
+      if (mounted) setState(() => _organizationBusy = false);
+    }
+  }
+
+  String _accessError(Object error) {
+    final text = error.toString();
+    if (text.contains('current_organization_access_v2') ||
+        text.contains('create_organization_v2') ||
+        text.contains('PGRST202')) {
+      return 'Серверная схема организации ещё не подключена. Сначала проверьте миграцию 006 на staging.';
+    }
+    return text;
+  }
+
+  OrganizationRole? _organizationMemberRole(String userId) {
+    for (final member in _organizationMembers) {
+      if (member.userId == userId) return member.role;
+    }
+    return null;
   }
 
   Widget _accessTestingPanel() {
@@ -475,7 +842,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (widget.entitlements.legacyFallback) {
       return 'переходный доступ';
     }
-    return 'Supabase access snapshot';
+    return 'серверные права Supabase';
   }
 
   String _accessStatusLabel() {
@@ -524,12 +891,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
         return 'Смотреть протоколы';
       case OrganizationPermission.addComments:
         return 'Комментировать';
+      case OrganizationPermission.manageJobs:
+        return 'Управлять работами';
       case OrganizationPermission.manageSettings:
         return 'Менять рабочие настройки';
       case OrganizationPermission.manageMembers:
         return 'Управлять участниками';
       case OrganizationPermission.manageBilling:
         return 'Управлять оплатой';
+      case OrganizationPermission.manageOrganization:
+        return 'Владение организацией';
+    }
+  }
+
+  String _jobFunctionDescription(JobFunction function) {
+    switch (function) {
+      case JobFunction.manager:
+        return 'заказ, участники и связь с заказчиком';
+      case JobFunction.designer:
+        return 'макеты, версии и исправления';
+      case JobFunction.inspectionSpecialist:
+        return 'эталон, образцы, сравнение и протокол';
     }
   }
 
@@ -546,6 +928,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _accessTestOverride.enabled
               ? 'Применены план ${_accessTestOverride.plan.label} и роль ${_accessTestOverride.role.label}.'
               : 'Тестовый режим отключён.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _accessSaving = false);
+    }
+  }
+
+  Future<void> _refreshAccess() async {
+    if (_accessSaving) return;
+    setState(() => _accessSaving = true);
+    try {
+      await widget.onAccessChanged();
+      if (mounted) {
+        xpDlg(
+          context,
+          'Права обновлены',
+          'Роль организации и возможности плана повторно запрошены у Supabase.',
         );
       }
     } finally {
@@ -913,7 +1312,60 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _storageSection() {
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       _settingsPanel(
-        title: 'Хранение и синхронизация',
+        title: 'Место хранения изображений',
+        child:
+            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          _storageLocationOption(
+            location: AssetStorageLocation.device,
+            icon: Icons.computer_outlined,
+            title: 'На устройстве пользователя',
+            subtitle:
+                'Активно. Trimatrix обрабатывает выбранные файлы, но не загружает оригиналы в облако.',
+            available: true,
+          ),
+          _storageLocationOption(
+            location: AssetStorageLocation.supabaseStorage,
+            icon: Icons.cloud_outlined,
+            title: 'Облако приложения',
+            subtitle:
+                'Supabase Storage: превью и общие файлы. Подключение ещё не настроено.',
+          ),
+          _storageLocationOption(
+            location: AssetStorageLocation.googleDrive,
+            icon: Icons.add_to_drive_outlined,
+            title: 'Google Drive пользователя',
+            subtitle:
+                'Потребуется отдельный вход Google OAuth. Вход Trimatrix не даёт доступа к диску.',
+          ),
+          _storageLocationOption(
+            location: AssetStorageLocation.organizationDrive,
+            icon: Icons.corporate_fare_outlined,
+            title: 'Диск организации',
+            subtitle:
+                'Общее хранилище организации. Подключать сможет администратор с соответствующим правом.',
+          ),
+          const SizedBox(height: 4),
+          _notePanel(
+            'Авторизация Trimatrix определяет пользователя, организацию и роль. Подключение облачного хранилища настраивается отдельно и не меняет права пользователя в приложении.',
+          ),
+        ]),
+      ),
+      const SizedBox(height: 10),
+      _settingsPanel(
+        title: 'Политика данных',
+        child:
+            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          _infoRow('Оригиналы', 'не загружаются; остаются у владельца'),
+          _infoRow('Протокол', 'последняя проверка хранится локально'),
+          _infoRow('Превью и карты', 'облачная отправка выключена'),
+          _infoRow('Права доступа', 'план + роль + доступ к работе'),
+          _infoRow('Google OAuth', 'не подключён'),
+          _infoRow('Supabase Storage', 'не настроен'),
+        ]),
+      ),
+      const SizedBox(height: 10),
+      _settingsPanel(
+        title: 'Локальные данные и уведомления',
         child: Column(children: [
           _toggleRow(
             'Сохранять историю',
@@ -922,25 +1374,96 @@ class _SettingsScreenState extends State<SettingsScreen> {
             (v) => setState(() => _history = v),
           ),
           _toggleRow(
-            'Синхронизация с сервером',
-            'после Supabase-схемы настройки и протоколы уйдут в облако',
-            _sync,
-            (v) => setState(() => _sync = v),
-          ),
-          _toggleRow(
             'Уведомления чата',
             'сообщения группы организации',
             _notify,
             (v) => setState(() => _notify = v),
           ),
-          const SizedBox(height: 8),
-          _infoRow('Оригиналы картинок', 'локально на устройстве пользователя'),
-          _infoRow('В облаке', 'протокол, превью, карты, временные ссылки'),
         ]),
       ),
       const SizedBox(height: 10),
       _lastCheckHistoryGroup(),
     ]);
+  }
+
+  Widget _storageLocationOption({
+    required AssetStorageLocation location,
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    bool available = false,
+  }) {
+    final selected = _storageSettings.primaryLocation == location;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 7),
+      child: InkWell(
+        onTap: available
+            ? () => setState(() {
+                  _storageSettings = _storageSettings.copyWith(
+                    primaryLocation: location,
+                  );
+                })
+            : () => xpDlg(
+                  context,
+                  'Хранилище не подключено',
+                  'Сейчас данные никуда не отправляются. Подключение появится после добавления защищённого адаптера и проверки прав.',
+                ),
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: selected && available
+                ? const Color(0xFFEAF6FC)
+                : const Color(0xFFF8FCFF),
+            border: Border.all(
+              color: selected && available
+                  ? AppTheme.blue
+                  : const Color(0xFFC9E2F0),
+            ),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(children: [
+            Icon(
+              icon,
+              size: 22,
+              color: available ? AppTheme.blueDark : Colors.blueGrey,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(
+                      fontSize: 10,
+                      height: 1.3,
+                      color: Colors.black54,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Icon(
+              selected && available
+                  ? Icons.check_circle
+                  : Icons.link_off_outlined,
+              size: 18,
+              color: selected && available ? AppTheme.blue : Colors.grey,
+            ),
+          ]),
+        ),
+      ),
+    );
   }
 
   Widget _dotGainTable() {
@@ -1258,11 +1781,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await CompareSettingsService.save(_compareSettings);
     await ColorMeasurementSettingsService.save(_colorMeasurementSettings);
     await CameraCaptureSettingsService.save(_cameraCaptureSettings);
+    await StorageSettingsService.save(_storageSettings);
     if (!mounted) return;
     xpDlg(
       context,
       'Сохранено',
-      'Настройки применены локально. Формула и апертура влияют на анализ; условия камеры записываются в протокол.',
+      'Настройки применены локально. Хранилище изображений остаётся на устройстве; облачные подключения пока выключены.',
     );
   }
 
@@ -1274,7 +1798,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _quality = 96;
       _aiEnabled = false;
       _history = true;
-      _sync = false;
       _notify = true;
       _cameraAutoWhite = true;
       _barcodeEnabled = true;
@@ -1289,11 +1812,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _compareSettings = CompareSettings.defaults;
       _colorMeasurementSettings = ColorMeasurementSettings.defaults;
       _cameraCaptureSettings = CameraCaptureSettings.defaults;
+      _storageSettings = StorageSettings.defaults;
     });
     await CalibrationSettingsService.reset();
     await CompareSettingsService.reset();
     await ColorMeasurementSettingsService.reset();
     await CameraCaptureSettingsService.reset();
+    await StorageSettingsService.reset();
   }
 
   Widget _lastCheckHistoryGroup() {

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../domain/entitlement.dart';
@@ -14,10 +16,17 @@ class SupabaseEntitlementService implements EntitlementService {
     if (user == null) return EntitlementSnapshot.forPlan(PlanTier.free);
 
     try {
+      final remote = await client.rpc('current_entitlement_v2');
+      final metadata = _metadataFromResponse(remote);
+      if (metadata != null) return _fromMetadata(metadata);
+    } catch (_) {
+      // Entitlement v2 is optional until migration 008 is installed.
+    }
+
+    try {
       final remote = await client.rpc('current_access_snapshot');
-      if (remote is Map) {
-        return _fromMetadata(Map<String, dynamic>.from(remote));
-      }
+      final metadata = _metadataFromResponse(remote);
+      if (metadata != null) return _fromMetadata(metadata);
     } catch (_) {
       // The migration may not be installed yet. Fall back without blocking work.
     }
@@ -29,6 +38,20 @@ class SupabaseEntitlementService implements EntitlementService {
     if (planName == null) return EntitlementSnapshot.legacyCompatible();
 
     return _fromMetadata(metadata);
+  }
+
+  Map<String, dynamic>? _metadataFromResponse(Object? response) {
+    Object? value = response;
+    if (value is String) {
+      try {
+        value = jsonDecode(value);
+      } catch (_) {
+        return null;
+      }
+    }
+    if (value is List && value.isNotEmpty) value = value.first;
+    if (value is! Map) return null;
+    return Map<String, dynamic>.from(value);
   }
 
   EntitlementSnapshot _fromMetadata(Map<String, dynamic> metadata) {

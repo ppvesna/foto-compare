@@ -19,10 +19,12 @@ In particular, Architecture v2 does not require an immediate refactor of
 `CompareScreen`.
 
 The implemented boundaries include `lib/features/protocols`,
-`lib/features/references`, and the first `billing` and `organization` contracts.
+`lib/features/references`, the first `billing` and `organization` contracts, and the
+initial `capabilities/storage` contract and local settings adapter.
 Entitlements and organization permissions now reach the current application shell as
 typed snapshots. Existing storage keys, file names, JSON, and current user access remain
-compatible while the remote access migration is pending.
+compatible. Migrations `006–008` now provide the tested organization and entitlement
+snapshot for the current Supabase environment.
 
 ## 2. Architectural decision
 
@@ -102,6 +104,38 @@ Supabase access-snapshot adapter exist. Accounts without the new server function
 explicit legacy-compatible snapshot. This fallback is transitional and must be removed
 only after the access migration and subscription assignments are verified.
 
+### 6.1 Organization and job access
+
+Plan, organization role, and access to a production job are independent dimensions.
+The organization role model is intentionally small:
+
+- `owner`: exactly one organization owner; controls billing, ownership transfer, and
+  critical organization settings;
+- `admin`: manages the organization's jobs, members, and working settings, but cannot
+  control ownership or billing;
+- `employee`: sees assigned jobs and receives working actions from job functions;
+- `customer`: sees only explicitly assigned jobs and may view, comment, and approve;
+- `personal`: a user outside an organization, with full control of personal work within
+  the selected plan.
+
+Manager, designer, and inspection specialist are job functions, not organization
+roles. One employee may have several functions in one job and different functions in
+another. Owner and admin can see all jobs in their organization. Employee and customer
+access requires a `JobParticipant` assignment. This same job boundary must later protect
+chat messages, protocols, and image assets through server-side RLS.
+
+Legacy role values remain readable during migration: `operator`, `technologist`, and
+`member` map to employee; `viewer` maps to customer. The obsolete migration `005`
+retains the old role model and must not be applied.
+
+Current administration checkpoint: organization creation, exact nickname discovery,
+member listing, and role assignment are exposed through a replaceable service contract.
+The Supabase adapter uses security-definer RPCs prepared in migration `006`; direct
+client writes are not the authority for role changes. Migrations `007–008` read
+server-managed plan data directly so subscription changes do not depend on JWT refresh.
+The current environment has verified a Pro owner and one-member organization. Job and
+chat isolation remain pending.
+
 ## 7. Inspection domain
 
 The professional inspection record is modeled around:
@@ -119,6 +153,11 @@ Every entity receives a client-generated stable UUID before synchronization. A c
 protocol records the comparison engine version, thresholds, color settings,
 calibration data, source asset IDs, device context, operator, and timestamps. This
 makes old results interpretable after the algorithm evolves.
+
+Current implementation note: the first `production` domain foundation defines
+`ProductionJob`, stable job IDs, `JobParticipant`, job functions, and the effective job
+access policy. It does not yet persist or synchronize jobs and does not alter the legacy
+comparison workflow.
 
 ## 8. Comparison pipeline
 
@@ -138,6 +177,18 @@ and engine version in the result.
 The local database holds working metadata, protocols, pending commands, and asset
 references. Binary images may remain device-only, be uploaded on demand, or follow an
 organization policy.
+
+Trimatrix is the inspection tool and control plane, not the automatic owner of source
+images. An image is owned by a user or organization and may live on the device, in
+Supabase Storage, in a personal Google Drive, or in an organization drive. Trimatrix
+stores the stable asset ID, provider reference, protocol relationship, and access
+policy. Application authentication and storage-provider authorization are separate:
+signing in to Trimatrix never grants Google Drive access.
+
+Effective access to an asset is the intersection of product entitlement, organization
+role permission, access to the production job, and availability of the object in its
+storage provider. Roles are presets of explicit permissions rather than a rigid
+inheritance tree.
 
 Cloud synchronization uses an Outbox pattern:
 

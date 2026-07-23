@@ -56,10 +56,7 @@ class AccessTestOverride {
   }
 
   static OrganizationRole _roleFromName(String? name) {
-    return OrganizationRole.values.firstWhere(
-      (value) => value.name == name,
-      orElse: () => OrganizationRole.personal,
-    );
+    return OrganizationRoleCodec.fromStoredName(name);
   }
 }
 

@@ -33,9 +33,9 @@ class ChatApiService {
     required String creatorId,
     required List<String> memberIds,
   }) async {
-    final group = {
-      'id':         '${creatorId}_${DateTime.now().millisecondsSinceEpoch}',
-      'name':       name,
+    final group = <String, dynamic>{
+      'id': '${creatorId}_${DateTime.now().millisecondsSinceEpoch}',
+      'name': name,
       'created_by': creatorId,
       'created_at': DateTime.now().toIso8601String(),
       'updated_at': DateTime.now().toIso8601String(),
@@ -49,7 +49,7 @@ class ChatApiService {
     }
 
     if (AppConfig.featureServerSync) {
-      ApiService().post('/groups', group).catchError((_) {});
+      unawaited(_postBestEffort('/groups', group));
     }
 
     return group;
@@ -63,9 +63,9 @@ class ChatApiService {
     int limit = 50,
   }) async {
     final msgs = await LocalDatabase().getMessages(
-      groupId:     groupId,
+      groupId: groupId,
       recipientId: recipientId,
-      limit:       limit,
+      limit: limit,
     );
 
     if (AppConfig.featureServerSync) {
@@ -85,17 +85,17 @@ class ChatApiService {
     assert(groupId != null || recipientId != null,
         'Нужен groupId или recipientId');
 
-    final msg = {
-      'id':            '${senderId}_${DateTime.now().millisecondsSinceEpoch}',
-      'sender_id':     senderId,
-      'group_id':      groupId,
-      'recipient_id':  recipientId,
-      'text':          text,
+    final msg = <String, dynamic>{
+      'id': '${senderId}_${DateTime.now().millisecondsSinceEpoch}',
+      'sender_id': senderId,
+      'group_id': groupId,
+      'recipient_id': recipientId,
+      'text': text,
       'attachment_id': attachmentId,
-      'is_read':       0,
-      'created_at':    DateTime.now().toIso8601String(),
-      'updated_at':    DateTime.now().toIso8601String(),
-      'is_deleted':    0,
+      'is_read': 0,
+      'created_at': DateTime.now().toIso8601String(),
+      'updated_at': DateTime.now().toIso8601String(),
+      'is_deleted': 0,
     };
 
     // Сохраняем локально сразу
@@ -104,7 +104,7 @@ class ChatApiService {
 
     // Отправляем на сервер фоново
     if (AppConfig.featureServerSync) {
-      ApiService().post('/messages', msg).catchError((_) {});
+      unawaited(_postBestEffort('/messages', msg));
     }
 
     return msg;
@@ -122,11 +122,11 @@ class ChatApiService {
 
   Future<void> _syncGroups(String userId) async {
     try {
-      final res = await ApiService().get('/groups',
-          params: {'user_id': userId});
+      final res =
+          await ApiService().get('/groups', params: {'user_id': userId});
       final items = res['items'] as List? ?? [];
-      for (final item in items) {
-        await LocalDatabase().saveGroup(item as Map<String, dynamic>);
+      for (final item in items.whereType<Map>()) {
+        await LocalDatabase().saveGroup(Map<String, dynamic>.from(item));
       }
     } catch (_) {}
   }
@@ -137,15 +137,25 @@ class ChatApiService {
   }) async {
     try {
       final params = <String, String>{};
-      if (groupId != null)     params['group_id']     = groupId;
+      if (groupId != null) params['group_id'] = groupId;
       if (recipientId != null) params['recipient_id'] = recipientId;
 
       final res = await ApiService().get('/messages', params: params);
       final items = res['items'] as List? ?? [];
-      for (final item in items) {
-        await LocalDatabase().saveMessage(item as Map<String, dynamic>);
-        _messageController.add(item as Map<String, dynamic>);
+      for (final item in items.whereType<Map>()) {
+        final message = Map<String, dynamic>.from(item);
+        await LocalDatabase().saveMessage(message);
+        _messageController.add(message);
       }
+    } catch (_) {}
+  }
+
+  Future<void> _postBestEffort(
+    String path,
+    Map<String, dynamic> body,
+  ) async {
+    try {
+      await ApiService().post(path, body);
     } catch (_) {}
   }
 

@@ -1,5 +1,7 @@
 -- foto-compare: plans, entitlements, organization roles, and restrictive RLS.
--- Review and apply after migrations 001-004. Existing local Flutter data is unaffected.
+-- WARNING: this file still contains the previous organization role model.
+-- DO NOT APPLY to production until owner/admin/employee/customer and job-scoped RLS
+-- have been prepared and validated on staging. Existing local Flutter data is unaffected.
 
 CREATE TABLE IF NOT EXISTS access_plans (
   id           TEXT PRIMARY KEY CHECK (id IN ('free', 'pro', 'enterprise')),

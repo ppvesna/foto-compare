@@ -13,12 +13,19 @@ Rule: every step must preserve the working application and be independently reve
 - Legacy SharedPreferences keys, file names, and JSON are preserved.
 - Compatibility tests for legacy protocol and reference data are present.
 - Organization role and entitlement snapshots are connected to the application shell.
+- Organization roles are reduced to owner, admin, employee, and customer; manager,
+  designer, and inspection specialist are separate per-job functions.
 - Free, Pro, and Enterprise presets, mocks, client gates, and a Supabase snapshot adapter
   are implemented with a legacy-compatible fallback.
-- `005_access_control.sql` is prepared but not applied to remote Supabase. It requires a
-  backup and staging validation because it replaces permissive prototype RLS policies.
-- The next module is `production`; full repository abstractions remain later small
-  steps and are not required for these initial safe moves.
+- Migrations `006–008` are installed in the current test environment. Server-side Pro,
+  organization creation, owner membership, access refresh, and organization naming are
+  verified.
+- `005_access_control.sql` is an unapplied prototype based on the previous role set. It
+  must be revised for job-scoped access, backed up, and validated on staging.
+- The `production` domain foundation now contains jobs, participants, functions, and a
+  job access policy. Local persistence and UI remain the next safe steps.
+- The first `CloudStorage` port, mock, device-only settings adapter, and provider status
+  UI are present. Supabase Storage and Google Drive remain disconnected.
 
 ## Migration policy
 
@@ -85,8 +92,18 @@ continue to use their current UI while authentication details move behind the ad
 Add current organization, membership, and role to the application session. A personal
 account can be represented as a one-member organization to avoid two data models.
 
-Progress: typed roles, permission matrix, mock, Supabase adapter, and shell integration
-are present. Organization creation, switching, and administration UI remain pending.
+Progress: typed roles, permission matrix, mocks, Supabase adapters, shell integration,
+organization creation, administration UI, and the server schema are present. Legacy
+remote role names are mapped in the client. Switching and invitations remain pending.
+
+The existing `005_access_control.sql` still contains the previous role set. It must not
+be applied as the final production role model; revise it through a staged additive
+migration and verify job-scoped RLS first.
+
+Progress: client administration contracts and owner/admin settings UI are connected.
+`006` reads roles from membership; `007–008` use authoritative server plan data. The
+current test environment has passed owner bootstrap. Employee/customer assignment and
+job-scoped RLS still require staged validation.
 
 ### Step 10. Introduce entitlements
 
@@ -94,7 +111,8 @@ Add `EntitlementService` with a permissive implementation matching today's behav
 Replace future plan checks with capability checks only.
 
 Progress: implemented for inspection start, daily limits, barcode, OCR, AI, exact Delta
-E, protocol history, and collaboration navigation. Server rollout remains pending.
+E, protocol history, and collaboration navigation. The server entitlement snapshot is
+active in the current test environment; payment activation remains pending.
 
 The settings UI now displays the effective snapshot and offers a debug-only local plan
 and role override. Production builds do not expose this override.
@@ -123,6 +141,10 @@ injection are still pending.
 
 Introduce `ProductionJob` and `Sample` as metadata around the current comparison flow.
 Existing checks without these fields remain valid.
+
+Progress: the domain-only `ProductionJob`, `JobParticipant`, three job functions, and
+effective access policy are implemented. Sample metadata, local repository, current-job
+selection, and protocol linkage remain pending.
 
 ### Step 15. Add schema migrations
 
@@ -160,6 +182,10 @@ Supabase adapters, then add a Google Drive adapter. User-supplied databases must
 through a server-side `DatabaseConnector`; raw database credentials are never stored in
 Flutter Web. AI integration follows through `AIProvider`, independently of the compare
 engine and storage provider.
+
+Progress: the port, mock, local settings persistence, and device-only default are
+implemented. The next storage step is a real Supabase Storage adapter with organization
+policies; Google OAuth and Drive follow as a separate provider connection.
 
 ### Step 20. Add an outbox
 

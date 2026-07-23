@@ -15,7 +15,7 @@ void main() {
     const expected = AccessTestOverride(
       enabled: true,
       plan: PlanTier.pro,
-      role: OrganizationRole.operator,
+      role: OrganizationRole.employee,
     );
     const service = LocalAccessTestingService();
 
@@ -24,7 +24,19 @@ void main() {
 
     expect(restored.enabled, isTrue);
     expect(restored.plan, PlanTier.pro);
-    expect(restored.role, OrganizationRole.operator);
+    expect(restored.role, OrganizationRole.employee);
+  });
+
+  test('loads an old operator override as employee', () async {
+    SharedPreferences.setMockInitialValues({
+      'access_test_override_v1':
+          '{"enabled":true,"plan":"pro","role":"operator"}',
+    });
+
+    final restored = await const LocalAccessTestingService().load();
+
+    expect(restored.enabled, isTrue);
+    expect(restored.role, OrganizationRole.employee);
   });
 
   test('invalid stored JSON falls back to disabled mode', () async {

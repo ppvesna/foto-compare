@@ -70,9 +70,25 @@ lib/features/billing/
 lib/features/organization/
   domain/organization_access.dart
   domain/organization_access_service.dart
+  domain/organization_administration_service.dart
+  domain/organization_member.dart
+  infrastructure/supabase_organization_administration_service.dart
   infrastructure/supabase_organization_access_service.dart
+  testing/mock_organization_administration_service.dart
   testing/mock_organization_access_service.dart
   organization.dart
+
+lib/features/production/
+  domain/job_access.dart
+  domain/production_job.dart
+  production.dart
+
+lib/capabilities/storage/
+  domain/cloud_storage.dart
+  domain/storage_settings.dart
+  infrastructure/storage_settings_service.dart
+  testing/mock_cloud_storage.dart
+  storage.dart
 ```
 
 Other existing files remain in their legacy locations until their individual migration
@@ -129,14 +145,25 @@ It does not own payments or feature entitlements.
 
 ### organization
 
-Responsibilities: organizations, memberships, roles, operator permissions, seats, and
-organization policy.
+Responsibilities: organizations, memberships, the small owner/admin/employee/customer
+role set, seats, and organization policy. Owner and admin remain distinct: only the
+owner controls billing, ownership transfer, and organization deletion.
 
 Public contracts: `OrganizationRepository`, `MembershipRepository`,
 `OrganizationContext`.
 
 Dependencies: auth identity, sync, and licensing. A personal account may use a
 single-member organization rather than a separate data model.
+
+Manager, designer, and inspection specialist do not belong in this module as roles.
+They are assignments inside a production job.
+
+Current administration foundation: the owner/admin policy, public service contract,
+Supabase RPC adapter, mock, and settings UI exist. Migration `006` provides organization
+creation, exact nickname lookup, member listing, assignment, and current membership
+snapshot. Migrations `006–008` are installed in the current test environment and the
+owner bootstrap is verified. Employee/customer assignment and job isolation are the
+next server tests.
 
 ### inspection
 
@@ -173,12 +200,17 @@ Dependencies: storage and sync ports. It does not own inspection history.
 
 ### production
 
-Responsibilities: organization job number, order metadata, samples, batches, operator
-assignment, and production status.
+Responsibilities: organization job number, order metadata, samples, batches, participant
+assignment, job functions, and production status.
 
 Public contracts: `JobRepository`, `SampleRepository`, `ProductionContext`.
 
 Dependencies: auth organization context and sync. It does not run image comparison.
+
+Current foundation: `ProductionJob`, `JobParticipant`, manager/designer/inspection
+functions, and `JobAccessPolicy` exist as domain-only code. Owner and admin can access
+all organization jobs. Employees and customers require an explicit participant record.
+Persistence, job UI, and Supabase tables are not implemented yet.
 
 ### protocols
 
@@ -278,6 +310,11 @@ and tombstones. It depends on repository synchronization contracts, not screens.
 
 Defines `LocalStorage`, `CloudStorage`, asset metadata, cache, retention, checksums, and
 upload policy.
+
+Current foundation: the vendor-neutral `CloudStorage` port, deterministic
+`MockCloudStorage`, device-only defaults, and persisted storage settings exist. No real
+Supabase or Google Drive adapter is connected yet, so the settings UI cannot imply that
+an upload occurred.
 
 ### analytics
 

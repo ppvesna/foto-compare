@@ -97,10 +97,8 @@ class _MainShellState extends State<MainShell> {
   int _tab = 0;
   int _chatBadge = 4;
   int _settingsAccessRequest = 0;
-  EntitlementSnapshot _entitlements =
-      EntitlementSnapshot.legacyCompatible();
-  OrganizationAccess _organizationAccess =
-      OrganizationAccess.legacyPersonal();
+  EntitlementSnapshot _entitlements = EntitlementSnapshot.legacyCompatible();
+  OrganizationAccess _organizationAccess = OrganizationAccess.legacyPersonal();
 
   @override
   void initState() {
@@ -110,6 +108,13 @@ class _MainShellState extends State<MainShell> {
 
   Future<void> _loadAccess() async {
     final client = Supabase.instance.client;
+    if (client.auth.currentSession != null) {
+      try {
+        await client.auth.refreshSession();
+      } catch (_) {
+        // Keep cached access available when the session cannot refresh offline.
+      }
+    }
     var entitlements = await SupabaseEntitlementService(client).load();
     var organizationAccess =
         await SupabaseOrganizationAccessService(client).load();
@@ -119,6 +124,7 @@ class _MainShellState extends State<MainShell> {
         entitlements = EntitlementSnapshot.forPlan(testOverride.plan);
         organizationAccess = OrganizationAccess.forRole(
           organizationId: organizationAccess.organizationId,
+          organizationName: organizationAccess.organizationName,
           role: testOverride.role,
         );
       }
@@ -131,8 +137,7 @@ class _MainShellState extends State<MainShell> {
   }
 
   void _onTab(int i) {
-    if (i == 2 &&
-        !_entitlements.allows(ProductCapability.collaboration)) {
+    if (i == 2 && !_entitlements.allows(ProductCapability.collaboration)) {
       xpDlg(
         context,
         'Нет доступа',
@@ -160,8 +165,10 @@ class _MainShellState extends State<MainShell> {
     final metadata = user?.userMetadata ?? {};
     final displayName = (metadata['display_name'] as String?)?.trim() ?? '';
     final nickname = (metadata['nickname'] as String?)?.trim() ?? '';
-    final organizationName =
+    final profileOrganizationName =
         (metadata['organization_name'] as String?)?.trim() ?? '';
+    final organizationName =
+        _organizationAccess.organizationName ?? profileOrganizationName;
     final screens = [
       HomeScreen(
         email: email,
