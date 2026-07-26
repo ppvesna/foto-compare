@@ -5,11 +5,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show HardwareKeyboard, KeyEvent;
 import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/app_theme.dart';
 import '../features/billing/billing.dart';
 import '../features/capture/capture.dart';
 import '../features/color_analysis/color_analysis.dart';
 import '../features/organization/organization.dart';
+import '../features/production/production.dart';
 import '../widgets/xp_widgets.dart';
 import '../services/compare_service.dart';
 import '../features/references/references.dart';
@@ -34,14 +36,32 @@ enum _InspectionTool { point, loupe }
 
 enum _WorkspaceView { reference, sample, comparison }
 
+class _JobSelectionDraft {
+  final String jobNumber;
+  final String? customerId;
+  final String customerName;
+  final String requestedCustomerName;
+
+  const _JobSelectionDraft({
+    required this.jobNumber,
+    this.customerId,
+    required this.customerName,
+    required this.requestedCustomerName,
+  });
+}
+
 class CompareScreen extends StatefulWidget {
   final EntitlementSnapshot entitlements;
   final OrganizationAccess organizationAccess;
+  final CustomerDirectoryService? customerDirectoryService;
+  final ProductionJobService? productionJobService;
 
   const CompareScreen({
     super.key,
     required this.entitlements,
     required this.organizationAccess,
+    this.customerDirectoryService,
+    this.productionJobService,
   });
 
   @override
@@ -195,6 +215,14 @@ class _CompareScreenState extends State<CompareScreen>
   String? _activeReferenceId;
   List<SavedReferenceProfile> _savedReferences = [];
   String _jobNumber = '';
+  String? _cloudJobId;
+  List<OrganizationCustomer> _organizationCustomers = const [];
+  String? _selectedCustomerId;
+  String _selectedCustomerName = '';
+  String _requestedCustomerName = '';
+  bool _customerConfirmed = false;
+  bool _customerDirectoryLoading = false;
+  bool _customerDirectoryAvailable = true;
   int _sampleNo = 1;
   String? _activeProtocolId;
   DateTime? _activeProtocolCreatedAt;
@@ -253,8 +281,46 @@ class _CompareScreenState extends State<CompareScreen>
     _loadCalibrationSettings();
     _loadColorMeasurementSettings();
     _loadCameraCaptureSettings();
+    _loadCustomerDirectory();
     CalibrationSettingsService.notifier.addListener(_onCalibrationSettings);
     HardwareKeyboard.instance.addHandler(_handleCtrlKey);
+  }
+
+  @override
+  void didUpdateWidget(covariant CompareScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.organizationAccess.organizationId !=
+        widget.organizationAccess.organizationId) {
+      _loadCustomerDirectory();
+    }
+  }
+
+  CustomerDirectoryService get _customerDirectoryService =>
+      widget.customerDirectoryService ??
+      SupabaseCustomerDirectoryService(Supabase.instance.client);
+
+  ProductionJobService get _productionJobService =>
+      widget.productionJobService ??
+      SupabaseProductionJobService(Supabase.instance.client);
+
+  Future<void> _loadCustomerDirectory() async {
+    final organizationId = widget.organizationAccess.organizationId;
+    if (organizationId == null || _customerDirectoryLoading) return;
+    if (mounted) setState(() => _customerDirectoryLoading = true);
+    try {
+      final customers =
+          await _customerDirectoryService.listCustomers(organizationId);
+      if (!mounted) return;
+      setState(() {
+        _organizationCustomers = customers;
+        _customerDirectoryAvailable = true;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _customerDirectoryAvailable = false);
+    } finally {
+      if (mounted) setState(() => _customerDirectoryLoading = false);
+    }
   }
 
   Future<void> _loadCalibrationSettings() async {
@@ -1297,6 +1363,7 @@ class _CompareScreenState extends State<CompareScreen>
   String get _currentJobNumber => _jobNumber.trim();
 
   String get _currentJobId {
+    if (_cloudJobId != null && _cloudJobId!.isNotEmpty) return _cloudJobId!;
     final raw = _currentJobNumber;
     if (raw.isEmpty) return 'job-local';
     final safe = raw
@@ -1307,6 +1374,16 @@ class _CompareScreenState extends State<CompareScreen>
     final encoded =
         raw.runes.take(24).map((r) => r.toRadixString(16)).join('-');
     return encoded.isEmpty ? 'job-local' : 'job-$encoded';
+  }
+
+  String get _currentCustomerName => _customerConfirmed
+      ? _selectedCustomerName
+      : _requestedCustomerName.trim();
+
+  bool get _hasRequiredJobContext {
+    if (_currentJobNumber.isEmpty) return false;
+    if (widget.organizationAccess.organizationId == null) return true;
+    return _currentCustomerName.isNotEmpty;
   }
 
   String get _currentSampleLabel => 'Отпечаток $_sampleNo';
@@ -1346,6 +1423,16 @@ class _CompareScreenState extends State<CompareScreen>
       return;
     }
     if (!_hasDailyCheckQuota()) return;
+    if (!_hasRequiredJobContext) {
+      xpDlg(
+        context,
+        'Работа не задана',
+        widget.organizationAccess.organizationId == null
+            ? 'Введите номер работы.'
+            : 'Введите номер работы и выберите заказчика.',
+      );
+      return;
+    }
     final ref = _refAligned ?? _refImg;
     final cmp = _cmpAligned ?? _cmpImg;
     if (ref == null || cmp == null) {
@@ -1814,6 +1901,9 @@ class _CompareScreenState extends State<CompareScreen>
         createdAt: now,
         jobId: _currentJobId,
         jobNumber: jobNumber,
+        customerId: _selectedCustomerId ?? '',
+        customerName: _currentCustomerName,
+        customerConfirmed: _customerConfirmed,
         score: r.score,
         verdict: _exactDeltaEReady ? _overallStatus(r.score) : 'Предварительно',
         refSize: r.refSize,
@@ -2193,7 +2283,7 @@ class _CompareScreenState extends State<CompareScreen>
   }
 
   Widget _workflowRail({bool horizontal = false}) {
-    final hasJob = _currentJobNumber.isNotEmpty;
+    final hasJob = _hasRequiredJobContext;
     final hasRef = _refImg != null;
     final hasSample = _cmpImg != null;
     final aligned = _canRunAlignedCompare;
@@ -2203,7 +2293,7 @@ class _CompareScreenState extends State<CompareScreen>
     final actions = [
       _WorkflowAction(
         '1',
-        'Номер работы',
+        'Работа и заказчик',
         Icons.assignment_outlined,
         done: hasJob,
         active: !hasJob,
@@ -3584,6 +3674,11 @@ class _CompareScreenState extends State<CompareScreen>
                 final jobLabel = p.jobNumber.isEmpty
                     ? 'Работа не задана'
                     : 'Работа ${p.jobNumber}';
+                final customerLabel = p.customerName.isEmpty
+                    ? ''
+                    : p.customerConfirmed
+                        ? ' · ${p.customerName}'
+                        : ' · ${p.customerName} (не подтверждён)';
                 final imageId = p.sampleImageId.isEmpty
                     ? '-'
                     : _shortLabId(p.sampleImageId);
@@ -3592,7 +3687,7 @@ class _CompareScreenState extends State<CompareScreen>
                   tilePadding: const EdgeInsets.symmetric(horizontal: 10),
                   childrenPadding: EdgeInsets.zero,
                   title: Text(
-                    '$jobLabel · ${p.sampleLabel}',
+                    '$jobLabel$customerLabel · ${p.sampleLabel}',
                     style: const TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.bold,
@@ -4428,43 +4523,245 @@ class _CompareScreenState extends State<CompareScreen>
   }
 
   Future<void> _editJobNumber() async {
-    final controller = TextEditingController(text: _currentJobNumber);
-    final value = await showDialog<String>(
+    final jobController = TextEditingController(text: _currentJobNumber);
+    final requestedCustomerController =
+        TextEditingController(text: _requestedCustomerName);
+    var selectedCustomerId = _selectedCustomerId;
+    var selectedCustomerName = _selectedCustomerName;
+    var customerNotFound =
+        !_customerConfirmed && _requestedCustomerName.trim().isNotEmpty;
+    if (!_customerDirectoryAvailable &&
+        widget.organizationAccess.organizationId != null &&
+        selectedCustomerId == null) {
+      customerNotFound = true;
+    }
+    String? validationError;
+    final selectedCustomer = _organizationCustomers
+        .where((customer) => customer.id == selectedCustomerId)
+        .firstOrNull;
+    final value = await showDialog<_JobSelectionDraft>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Номер работы'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(
-            hintText: 'Номер работы / заказа',
-          ),
-          onSubmitted: (text) => Navigator.pop(dialogContext, text.trim()),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Отмена'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(
-              dialogContext,
-              controller.text.trim(),
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Работа и заказчик'),
+          content: SizedBox(
+            width: 520,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TextField(
+                    controller: jobController,
+                    autofocus: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Номер работы из техзадания',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  if (widget.organizationAccess.organizationId != null) ...[
+                    const SizedBox(height: 12),
+                    if (!_customerDirectoryAvailable)
+                      const Text(
+                        'Справочник временно недоступен. Введите название заказчика из техзадания.',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.black54,
+                        ),
+                      )
+                    else if (!customerNotFound)
+                      Autocomplete<OrganizationCustomer>(
+                        initialValue: TextEditingValue(
+                          text: selectedCustomer?.displayLabel ?? '',
+                        ),
+                        displayStringForOption: (customer) =>
+                            customer.displayLabel,
+                        optionsBuilder: (text) {
+                          final query = text.text.trim().toLowerCase();
+                          return _organizationCustomers
+                              .where(
+                                (customer) =>
+                                    query.isEmpty ||
+                                    customer.code
+                                        .toLowerCase()
+                                        .contains(query) ||
+                                    customer.name.toLowerCase().contains(query),
+                              )
+                              .take(10);
+                        },
+                        onSelected: (customer) {
+                          setDialogState(() {
+                            selectedCustomerId = customer.id;
+                            selectedCustomerName = customer.name;
+                            validationError = null;
+                          });
+                        },
+                        fieldViewBuilder: (
+                          context,
+                          textController,
+                          focusNode,
+                          onSubmitted,
+                        ) {
+                          return TextField(
+                            controller: textController,
+                            focusNode: focusNode,
+                            decoration: const InputDecoration(
+                              labelText: 'Заказчик: код или название',
+                              border: OutlineInputBorder(),
+                            ),
+                            onChanged: (text) {
+                              final selected = _organizationCustomers
+                                  .where(
+                                    (customer) =>
+                                        customer.id == selectedCustomerId,
+                                  )
+                                  .firstOrNull;
+                              if (selected == null ||
+                                  text != selected.displayLabel) {
+                                selectedCustomerId = null;
+                                selectedCustomerName = '';
+                              }
+                            },
+                            onSubmitted: (_) => onSubmitted(),
+                          );
+                        },
+                      ),
+                    CheckboxListTile(
+                      value: customerNotFound,
+                      contentPadding: EdgeInsets.zero,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      title: const Text(
+                        'Заказчик не найден',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                      subtitle: const Text(
+                        'Проверка продолжится, администратор получит заявку.',
+                        style: TextStyle(fontSize: 10),
+                      ),
+                      onChanged: _customerDirectoryAvailable
+                          ? (checked) => setDialogState(() {
+                                customerNotFound = checked == true;
+                                validationError = null;
+                              })
+                          : null,
+                    ),
+                    if (customerNotFound)
+                      TextField(
+                        controller: requestedCustomerController,
+                        decoration: const InputDecoration(
+                          labelText: 'Название точно как в техзадании',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                  ],
+                  if (validationError != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      validationError!,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: Colors.red,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ),
-            child: const Text('Сохранить'),
           ),
-        ],
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final number = jobController.text.trim();
+                final requestedName = requestedCustomerController.text.trim();
+                if (number.isEmpty) {
+                  setDialogState(
+                    () => validationError = 'Введите номер работы.',
+                  );
+                  return;
+                }
+                if (widget.organizationAccess.organizationId != null &&
+                    !customerNotFound &&
+                    selectedCustomerId == null) {
+                  setDialogState(
+                    () => validationError = 'Выберите заказчика из списка.',
+                  );
+                  return;
+                }
+                if (widget.organizationAccess.organizationId != null &&
+                    customerNotFound &&
+                    requestedName.length < 2) {
+                  setDialogState(
+                    () => validationError =
+                        'Введите название заказчика из техзадания.',
+                  );
+                  return;
+                }
+                Navigator.pop(
+                  dialogContext,
+                  _JobSelectionDraft(
+                    jobNumber: number,
+                    customerId: customerNotFound ? null : selectedCustomerId,
+                    customerName: customerNotFound ? '' : selectedCustomerName,
+                    requestedCustomerName:
+                        customerNotFound ? requestedName : '',
+                  ),
+                );
+              },
+              child: const Text('Продолжить'),
+            ),
+          ],
+        ),
       ),
     );
-    controller.dispose();
+    jobController.dispose();
+    requestedCustomerController.dispose();
     if (value == null || !mounted) return;
     setState(() {
-      _jobNumber = value;
+      _jobNumber = value.jobNumber;
+      _selectedCustomerId = value.customerId;
+      _selectedCustomerName = value.customerName;
+      _requestedCustomerName = value.requestedCustomerName;
+      _customerConfirmed = value.customerId != null;
+      _cloudJobId = null;
       _sampleNo = _nextSampleNumberFor(
         referenceId: _activeReferenceId,
         referenceLabel: _savedRefLabel,
       );
     });
+
+    final organizationId = widget.organizationAccess.organizationId;
+    if (organizationId == null) return;
+    try {
+      final job = await _productionJobService.openJob(
+        organizationId: organizationId,
+        jobNumber: value.jobNumber,
+        customerId: value.customerId,
+        requestedCustomerName: value.requestedCustomerName.isEmpty
+            ? null
+            : value.requestedCustomerName,
+      );
+      if (!mounted) return;
+      setState(() {
+        _cloudJobId = job.jobId;
+        _selectedCustomerId = job.customerId;
+        _selectedCustomerName = job.customerConfirmed ? job.customerName : '';
+        _requestedCustomerName = job.customerConfirmed ? '' : job.customerName;
+        _customerConfirmed = job.customerConfirmed;
+      });
+    } catch (_) {
+      if (mounted) {
+        xpDlg(
+          context,
+          'Работа сохранена локально',
+          'Проверку можно продолжать. После подключения миграции 012 или восстановления сети повторно откройте «Работа и заказчик», чтобы создать связь с организацией.',
+        );
+      }
+    }
   }
 
   Widget _jobInspectorSection() {
@@ -4490,6 +4787,14 @@ class _CompareScreenState extends State<CompareScreen>
         ],
       ),
       const SizedBox(height: 6),
+      if (widget.organizationAccess.organizationId != null) ...[
+        _jobInfoTile(
+          _customerConfirmed ? 'Заказчик' : 'Заказчик · не подтверждён',
+          _currentCustomerName.isEmpty ? 'не выбран' : _currentCustomerName,
+          _currentCustomerName.isNotEmpty,
+        ),
+        const SizedBox(height: 6),
+      ],
       _jobInfoTile('ID для базы', _currentJobId, hasJob),
     ]);
   }

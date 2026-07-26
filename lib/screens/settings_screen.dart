@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../app/local_access_testing_service.dart';
 import '../capabilities/storage/storage.dart';
 import '../config/app_theme.dart';
+import '../features/auth/auth.dart';
 import '../features/billing/billing.dart';
 import '../features/capture/capture.dart';
 import '../features/color_analysis/color_analysis.dart';
@@ -19,6 +20,8 @@ class SettingsScreen extends StatefulWidget {
   final OrganizationAccess organizationAccess;
   final Future<void> Function() onAccessChanged;
   final OrganizationAdministrationService? organizationAdministrationService;
+  final CustomerDirectoryService? customerDirectoryService;
+  final AccountProfileService? accountProfileService;
 
   const SettingsScreen({
     super.key,
@@ -26,6 +29,8 @@ class SettingsScreen extends StatefulWidget {
     required this.organizationAccess,
     required this.onAccessChanged,
     this.organizationAdministrationService,
+    this.customerDirectoryService,
+    this.accountProfileService,
   });
 
   @override
@@ -57,15 +62,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
   AccessTestOverride _accessTestOverride = AccessTestOverride.disabled;
   bool _accessSaving = false;
   final _organizationNameCtrl = TextEditingController();
+  final _accountNicknameCtrl = TextEditingController();
+  final _accountDisplayNameCtrl = TextEditingController();
   final _memberEmailCtrl = TextEditingController();
   final _memberNicknameCtrl = TextEditingController();
   final _memberDisplayNameCtrl = TextEditingController();
+  final _customerCodeCtrl = TextEditingController();
+  final _customerNameCtrl = TextEditingController();
   List<OrganizationParticipant> _organizationParticipants = const [];
+  List<OrganizationCustomer> _organizationCustomers = const [];
+  List<OrganizationCustomerRequest> _customerRequests = const [];
+  final Map<String, String?> _requestCustomerSelections = {};
   OrganizationRole _selectedMemberRole = OrganizationRole.employee;
   Set<OrganizationMemberFunction> _selectedMemberFunctions = {
     OrganizationMemberFunction.inspectionSpecialist,
   };
   bool _organizationBusy = false;
+  bool _accountProfileLoading = false;
+  bool _accountProfileSaving = false;
+  bool _accountProfileLoaded = false;
+  AccountProfile? _accountProfile;
+  bool _customerBusy = false;
+  bool _customerDirectoryAvailable = true;
+  String? _editingCustomerId;
+  String? _customerRequestBeingCreatedId;
+  String? _selectedCustomerManagerId;
+  String? _selectedCustomerUserId;
 
   static const _sections = [
     _SettingsSection('Аккаунт', 'профиль и синхронизация'),
@@ -94,9 +116,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void dispose() {
     _organizationNameCtrl.dispose();
+    _accountNicknameCtrl.dispose();
+    _accountDisplayNameCtrl.dispose();
     _memberEmailCtrl.dispose();
     _memberNicknameCtrl.dispose();
     _memberDisplayNameCtrl.dispose();
+    _customerCodeCtrl.dispose();
+    _customerNameCtrl.dispose();
     super.dispose();
   }
 
@@ -116,6 +142,94 @@ class _SettingsScreenState extends State<SettingsScreen> {
   OrganizationAdministrationService get _organizationService =>
       widget.organizationAdministrationService ??
       SupabaseOrganizationAdministrationService(Supabase.instance.client);
+
+  CustomerDirectoryService get _customerService =>
+      widget.customerDirectoryService ??
+      SupabaseCustomerDirectoryService(Supabase.instance.client);
+
+  AccountProfileService get _accountService =>
+      widget.accountProfileService ??
+      SupabaseAccountProfileService(Supabase.instance.client);
+
+  Future<void> _loadAccountProfile({bool force = false}) async {
+    if (_accountProfileLoading || (_accountProfileLoaded && !force)) return;
+    setState(() => _accountProfileLoading = true);
+    try {
+      final profile = await _accountService.loadCurrentProfile();
+      if (!mounted) return;
+      setState(() {
+        _accountProfile = profile;
+        _accountProfileLoaded = true;
+        _accountNicknameCtrl.text = profile.nickname;
+        _accountDisplayNameCtrl.text = profile.displayName;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      xpDlg(
+        context,
+        'Профиль недоступен',
+        error is AccountProfileException
+            ? error.message
+            : 'Не удалось загрузить профиль. Проверьте подключение к Supabase.',
+      );
+    } finally {
+      if (mounted) setState(() => _accountProfileLoading = false);
+    }
+  }
+
+  Future<void> _saveAccountProfile() async {
+    final nickname = _accountNicknameCtrl.text.trim().toLowerCase();
+    final displayName = _accountDisplayNameCtrl.text.trim();
+    if (!RegExp(r'^[a-z0-9_]{3,24}$').hasMatch(nickname)) {
+      xpDlg(
+        context,
+        'Проверьте ник',
+        'Ник: 3–24 символа, только латиница, цифры и подчёркивание.',
+      );
+      return;
+    }
+    if (displayName.length > 80) {
+      xpDlg(
+        context,
+        'Проверьте имя',
+        'Имя должно содержать не более 80 символов.',
+      );
+      return;
+    }
+
+    setState(() => _accountProfileSaving = true);
+    try {
+      final profile = await _accountService.saveCurrentProfile(
+        nickname: nickname,
+        displayName: displayName,
+      );
+      if (!mounted) return;
+      setState(() {
+        _accountProfile = profile;
+        _accountProfileLoaded = true;
+        _accountNicknameCtrl.text = profile.nickname;
+        _accountDisplayNameCtrl.text = profile.displayName;
+      });
+      await widget.onAccessChanged();
+      if (!mounted) return;
+      xpDlg(
+        context,
+        'Профиль сохранён',
+        'Ник ${profile.nickname} будет использоваться в организации, протоколах и чате.',
+      );
+    } catch (error) {
+      if (!mounted) return;
+      xpDlg(
+        context,
+        'Не удалось сохранить профиль',
+        error is AccountProfileException
+            ? error.message
+            : 'Проверьте подключение к Supabase и повторите.',
+      );
+    } finally {
+      if (mounted) setState(() => _accountProfileSaving = false);
+    }
+  }
 
   Future<void> _loadCalibrationSettings() async {
     final settings = await CalibrationSettingsService.load();
@@ -267,7 +381,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return InkWell(
       onTap: () {
         setState(() => _section = index);
-        if (index == 2) _loadOrganizationMembers();
+        if (index == 0) {
+          _loadAccountProfile();
+        } else if (index == 2) {
+          _loadOrganizationMembers();
+          _loadCustomerDirectory();
+        }
       },
       borderRadius: BorderRadius.circular(14),
       child: Container(
@@ -321,38 +440,75 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
         ),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.fromLTRB(12, 9, 12, 10),
-          decoration: const BoxDecoration(
-            color: Color(0xFFF8FCFF),
-            border: Border(
-              top: BorderSide(color: Color(0xFFC9E2F0)),
+        if (_section != 0)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(12, 9, 12, 10),
+            decoration: const BoxDecoration(
+              color: Color(0xFFF8FCFF),
+              border: Border(
+                top: BorderSide(color: Color(0xFFC9E2F0)),
+              ),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                XpBtn(label: 'Сбросить', onPressed: _resetSettings),
+                const SizedBox(width: 8),
+                XpBtn(
+                  label: 'Сохранить',
+                  primary: true,
+                  onPressed: () => _saveSettings(),
+                ),
+              ],
             ),
           ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              XpBtn(label: 'Сбросить', onPressed: _resetSettings),
-              const SizedBox(width: 8),
-              XpBtn(
-                label: 'Сохранить',
-                primary: true,
-                onPressed: () => _saveSettings(),
-              ),
-            ],
-          ),
-        ),
       ],
     );
   }
 
   Widget _accountSection() {
-    final email = Supabase.instance.client.auth.currentUser?.email ?? '';
+    final email = _accountProfile?.email ?? '';
     return _settingsPanel(
       title: 'Аккаунт и организация',
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         _infoRow('Email', email.isEmpty ? 'не указан' : email),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _accountNicknameCtrl,
+          enabled: !_accountProfileLoading && !_accountProfileSaving,
+          autocorrect: false,
+          enableSuggestions: false,
+          decoration: const InputDecoration(
+            labelText: 'Ник',
+            hintText: 'например printer_ivan',
+            helperText: '3–24 символа: латиница, цифры и подчёркивание',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 10),
+        TextField(
+          controller: _accountDisplayNameCtrl,
+          enabled: !_accountProfileLoading && !_accountProfileSaving,
+          decoration: const InputDecoration(
+            labelText: 'Имя',
+            hintText: 'необязательно',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 8),
+        XpBtn(
+          label: _accountProfileSaving
+              ? 'Сохранение…'
+              : _accountProfileLoading
+                  ? 'Загрузка…'
+                  : 'Сохранить профиль',
+          primary: true,
+          onPressed: _accountProfileLoading || _accountProfileSaving
+              ? null
+              : _saveAccountProfile,
+        ),
+        const SizedBox(height: 12),
         if (widget.entitlements.usesOrganizationPlan)
           _infoRow('Личный план', widget.entitlements.personalPlan.label),
         _infoRow(
@@ -693,7 +849,292 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ],
                   ),
       ),
+      const SizedBox(height: 10),
+      _customerDirectoryPanel(),
     ]);
+  }
+
+  Widget _customerDirectoryPanel() {
+    final managerCandidates = _organizationParticipants
+        .where(
+          (participant) =>
+              !participant.isPending &&
+              participant.userId != null &&
+              participant.role != OrganizationRole.customer,
+        )
+        .toList();
+    final customerUsers = _organizationParticipants
+        .where(
+          (participant) =>
+              !participant.isPending &&
+              participant.userId != null &&
+              participant.role == OrganizationRole.customer,
+        )
+        .toList();
+    return _settingsPanel(
+      title: 'Справочник заказчиков',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (!_customerDirectoryAvailable)
+            _notePanel(
+              'Справочник ещё не подключён на сервере. Нужна миграция 012.',
+            )
+          else ...[
+            Row(
+              children: [
+                Expanded(
+                  child: XpInput(
+                    placeholder: 'Код заказчика',
+                    controller: _customerCodeCtrl,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  flex: 2,
+                  child: XpInput(
+                    placeholder: 'Название заказчика',
+                    controller: _customerNameCtrl,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: _participantDropdown(
+                    label: 'Основной менеджер',
+                    value: _selectedCustomerManagerId,
+                    participants: managerCandidates,
+                    onChanged: (value) =>
+                        setState(() => _selectedCustomerManagerId = value),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _participantDropdown(
+                    label: 'Пользователь заказчика',
+                    value: _selectedCustomerUserId,
+                    participants: customerUsers,
+                    onChanged: (value) =>
+                        setState(() => _selectedCustomerUserId = value),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                if (_editingCustomerId != null) ...[
+                  Expanded(
+                    child: XpBtn(
+                      label: 'Отменить изменение',
+                      onPressed: _customerBusy ? null : _clearCustomerForm,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+                Expanded(
+                  child: XpBtn(
+                    label: _customerBusy
+                        ? 'Сохраняем...'
+                        : _editingCustomerId == null
+                            ? 'Добавить заказчика'
+                            : 'Сохранить заказчика',
+                    primary: true,
+                    onPressed: _customerBusy ? null : _saveCustomer,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            if (_customerBusy && _organizationCustomers.isEmpty)
+              const Center(child: CircularProgressIndicator())
+            else if (_organizationCustomers.isEmpty)
+              const Text(
+                'Заказчики ещё не добавлены.',
+                style: TextStyle(fontSize: 11, color: Colors.black54),
+              )
+            else ...[
+              _table(
+                headers: const [
+                  'Код / название',
+                  'Менеджер',
+                  'Пользователь',
+                  'Добавил',
+                ],
+                rows: _organizationCustomers
+                    .map(
+                      (customer) => [
+                        '${customer.code}\n${customer.name}',
+                        customer.primaryManagerNickname.isEmpty
+                            ? 'не назначен'
+                            : customer.primaryManagerNickname,
+                        customer.customerUserNickname.isEmpty
+                            ? 'не подключён'
+                            : customer.customerUserNickname,
+                        customer.createdByNickname.isEmpty
+                            ? 'неизвестно'
+                            : customer.createdByNickname ==
+                                    customer.updatedByNickname
+                                ? customer.createdByNickname
+                                : '${customer.createdByNickname}\nизм. ${customer.updatedByNickname.isEmpty ? 'неизвестно' : customer.updatedByNickname}',
+                      ],
+                    )
+                    .toList(),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: _organizationCustomers
+                    .expand(
+                      (customer) => [
+                        XpBtn(
+                          label: 'Изменить ${customer.code}',
+                          onPressed: _customerBusy
+                              ? null
+                              : () => _editCustomer(customer),
+                        ),
+                        XpBtn(
+                          label: 'В архив ${customer.code}',
+                          danger: true,
+                          onPressed: _customerBusy
+                              ? null
+                              : () => _archiveCustomer(customer),
+                        ),
+                      ],
+                    )
+                    .toList(),
+              ),
+            ],
+            if (_customerRequests.isNotEmpty) ...[
+              const SizedBox(height: 14),
+              const Text(
+                'Заказчик не найден',
+                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 6),
+              ..._customerRequests.map(_customerRequestRow),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _participantDropdown({
+    required String label,
+    required String? value,
+    required List<OrganizationParticipant> participants,
+    required ValueChanged<String?> onChanged,
+  }) {
+    return DropdownButtonFormField<String>(
+      key: ValueKey('$label-${value ?? 'none'}'),
+      initialValue: value,
+      isExpanded: true,
+      decoration: InputDecoration(
+        labelText: label,
+        border: const OutlineInputBorder(),
+        isDense: true,
+      ),
+      items: [
+        const DropdownMenuItem<String>(
+          value: '',
+          child: Text('Не выбран'),
+        ),
+        ...participants.map(
+          (participant) => DropdownMenuItem<String>(
+            value: participant.userId,
+            child: Text(
+              participant.nickname.isEmpty
+                  ? participant.displayName
+                  : participant.nickname,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ),
+      ],
+      onChanged: _customerBusy
+          ? null
+          : (selected) => onChanged(
+                selected == null || selected.isEmpty ? null : selected,
+              ),
+    );
+  }
+
+  Widget _customerRequestRow(OrganizationCustomerRequest request) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF8E8),
+        border: Border.all(color: const Color(0xFFE5C878)),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            '${request.requestedName} · работа ${request.workNumber.isEmpty ? 'не указана' : request.workNumber}',
+            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  key: ValueKey(
+                    'request-${request.id}-${_requestCustomerSelections[request.id] ?? 'none'}',
+                  ),
+                  initialValue: _requestCustomerSelections[request.id],
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Связать с существующим',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  items: _organizationCustomers
+                      .map(
+                        (customer) => DropdownMenuItem<String>(
+                          value: customer.id,
+                          child: Text(
+                            customer.displayLabel,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: _customerBusy
+                      ? null
+                      : (value) => setState(
+                            () =>
+                                _requestCustomerSelections[request.id] = value,
+                          ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              XpBtn(
+                label: 'Связать',
+                onPressed: _customerBusy ||
+                        _requestCustomerSelections[request.id] == null
+                    ? null
+                    : () => _resolveCustomerRequest(request),
+              ),
+              const SizedBox(width: 8),
+              XpBtn(
+                label: 'Создать',
+                primary: true,
+                onPressed: _customerBusy
+                    ? null
+                    : () => _prepareCustomerFromRequest(request),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _createOrganization() async {
@@ -745,6 +1186,192 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } finally {
       if (mounted) setState(() => _organizationBusy = false);
     }
+  }
+
+  Future<void> _loadCustomerDirectory() async {
+    final access = widget.organizationAccess;
+    final organizationId = access.organizationId;
+    if (organizationId == null ||
+        (access.role != OrganizationRole.owner &&
+            access.role != OrganizationRole.admin) ||
+        _customerBusy) {
+      return;
+    }
+    setState(() => _customerBusy = true);
+    try {
+      final customers = await _customerService.listCustomers(organizationId);
+      final requests =
+          await _customerService.listPendingRequests(organizationId);
+      if (!mounted) return;
+      setState(() {
+        _organizationCustomers = customers;
+        _customerRequests = requests;
+        _customerDirectoryAvailable = true;
+        _requestCustomerSelections.removeWhere(
+          (requestId, _) => !requests.any((request) => request.id == requestId),
+        );
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _customerDirectoryAvailable = false);
+    } finally {
+      if (mounted) setState(() => _customerBusy = false);
+    }
+  }
+
+  Future<void> _saveCustomer() async {
+    final organizationId = widget.organizationAccess.organizationId;
+    final code = _customerCodeCtrl.text.trim();
+    final name = _customerNameCtrl.text.trim();
+    if (organizationId == null) return;
+    if (code.isEmpty) {
+      xpDlg(context, 'Заказчик', 'Введите короткий код заказчика.');
+      return;
+    }
+    if (name.length < 2) {
+      xpDlg(context, 'Заказчик', 'Введите название заказчика.');
+      return;
+    }
+
+    setState(() => _customerBusy = true);
+    try {
+      final customerId = await _customerService.saveCustomer(
+        organizationId: organizationId,
+        code: code,
+        name: name,
+        managerUserId: _selectedCustomerManagerId,
+        customerUserId: _selectedCustomerUserId,
+        customerId: _editingCustomerId,
+      );
+      if (_customerRequestBeingCreatedId != null) {
+        await _customerService.resolveRequest(
+          requestId: _customerRequestBeingCreatedId!,
+          customerId: customerId,
+        );
+      }
+      _clearCustomerForm(notify: false);
+      final customers = await _customerService.listCustomers(organizationId);
+      final requests =
+          await _customerService.listPendingRequests(organizationId);
+      if (!mounted) return;
+      setState(() {
+        _organizationCustomers = customers;
+        _customerRequests = requests;
+        _customerDirectoryAvailable = true;
+      });
+    } catch (error) {
+      if (mounted) {
+        xpDlg(context, 'Заказчик не сохранён', _customerError(error));
+      }
+    } finally {
+      if (mounted) setState(() => _customerBusy = false);
+    }
+  }
+
+  void _editCustomer(OrganizationCustomer customer) {
+    setState(() {
+      _editingCustomerId = customer.id;
+      _customerRequestBeingCreatedId = null;
+      _customerCodeCtrl.text = customer.code;
+      _customerNameCtrl.text = customer.name;
+      _selectedCustomerManagerId = customer.primaryManagerUserId;
+      _selectedCustomerUserId = customer.customerUserId;
+    });
+  }
+
+  void _clearCustomerForm({bool notify = true}) {
+    void clear() {
+      _editingCustomerId = null;
+      _customerRequestBeingCreatedId = null;
+      _customerCodeCtrl.clear();
+      _customerNameCtrl.clear();
+      _selectedCustomerManagerId = null;
+      _selectedCustomerUserId = null;
+    }
+
+    if (notify && mounted) {
+      setState(clear);
+    } else {
+      clear();
+    }
+  }
+
+  Future<void> _archiveCustomer(OrganizationCustomer customer) async {
+    setState(() => _customerBusy = true);
+    try {
+      await _customerService.archiveCustomer(customer.id);
+      final organizationId = widget.organizationAccess.organizationId;
+      if (organizationId != null) {
+        final customers = await _customerService.listCustomers(organizationId);
+        if (mounted) setState(() => _organizationCustomers = customers);
+      }
+    } catch (error) {
+      if (mounted) {
+        xpDlg(context, 'Заказчик не архивирован', _customerError(error));
+      }
+    } finally {
+      if (mounted) setState(() => _customerBusy = false);
+    }
+  }
+
+  void _prepareCustomerFromRequest(OrganizationCustomerRequest request) {
+    setState(() {
+      _editingCustomerId = null;
+      _customerRequestBeingCreatedId = request.id;
+      _customerCodeCtrl.clear();
+      _customerNameCtrl.text = request.requestedName;
+      _selectedCustomerManagerId = null;
+      _selectedCustomerUserId = null;
+    });
+    xpDlg(
+      context,
+      'Новый заказчик',
+      'Название перенесено в форму. Укажите код и сохраните: заявка свяжется автоматически.',
+    );
+  }
+
+  Future<void> _resolveCustomerRequest(
+    OrganizationCustomerRequest request,
+  ) async {
+    final customerId = _requestCustomerSelections[request.id];
+    if (customerId == null) return;
+    setState(() => _customerBusy = true);
+    try {
+      await _customerService.resolveRequest(
+        requestId: request.id,
+        customerId: customerId,
+      );
+      final organizationId = widget.organizationAccess.organizationId;
+      if (organizationId != null) {
+        final requests =
+            await _customerService.listPendingRequests(organizationId);
+        if (mounted) {
+          setState(() {
+            _customerRequests = requests;
+            _requestCustomerSelections.remove(request.id);
+          });
+        }
+      }
+    } catch (error) {
+      if (mounted) {
+        xpDlg(context, 'Заявка не связана', _customerError(error));
+      }
+    } finally {
+      if (mounted) setState(() => _customerBusy = false);
+    }
+  }
+
+  String _customerError(Object error) {
+    final text = error.toString();
+    if (text.contains('organization_customers') ||
+        text.contains('list_organization_customers_v1') ||
+        text.contains('PGRST202')) {
+      return 'Справочник заказчиков ещё не подключён. Нужна миграция 012.';
+    }
+    if (text.toLowerCase().contains('duplicate') || text.contains('23505')) {
+      return 'Такой код заказчика уже используется.';
+    }
+    return text;
   }
 
   Future<void> _inviteOrganizationMember() async {

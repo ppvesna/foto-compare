@@ -321,6 +321,46 @@ class _MainShellState extends State<MainShell> {
     });
   }
 
+  String _workspaceScopeLabel() {
+    switch (_organizationAccess.role) {
+      case OrganizationRole.owner:
+      case OrganizationRole.admin:
+        return 'Все работы';
+      case OrganizationRole.employee:
+        return 'Назначенные работы';
+      case OrganizationRole.customer:
+        return 'Свои работы';
+      case OrganizationRole.personal:
+        return 'Личные работы';
+    }
+  }
+
+  List<String> _workspaceCapabilityLabels() {
+    final access = _organizationAccess;
+    final labels = <String>[_workspaceScopeLabel()];
+    if (access.allows(OrganizationPermission.runInspection) &&
+        _entitlements.allows(ProductCapability.runInspection)) {
+      labels.add('Проверки');
+    }
+    if (access.allows(OrganizationPermission.manageReferences)) {
+      labels.add('Эталоны');
+    }
+    if (access.allows(OrganizationPermission.viewProtocols)) {
+      labels.add('Протоколы');
+    }
+    if (access.allows(OrganizationPermission.addComments) &&
+        _entitlements.allows(ProductCapability.collaboration)) {
+      labels.add('Чат');
+    }
+    if (access.allows(OrganizationPermission.manageMembers)) {
+      labels.add('Участники');
+    }
+    if (access.allows(OrganizationPermission.manageBilling)) {
+      labels.add('Тариф');
+    }
+    return labels;
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = Supabase.instance.client.auth.currentUser;
@@ -332,6 +372,12 @@ class _MainShellState extends State<MainShell> {
         (metadata['organization_name'] as String?)?.trim() ?? '';
     final organizationName =
         _organizationAccess.organizationName ?? profileOrganizationName;
+    final userLabel = nickname.isNotEmpty
+        ? nickname
+        : displayName.isNotEmpty
+            ? displayName
+            : 'Пользователь';
+    final capabilities = _workspaceCapabilityLabels().join(' · ');
     final screens = [
       HomeScreen(
         email: email,
@@ -364,23 +410,66 @@ class _MainShellState extends State<MainShell> {
     return Scaffold(
       body: SafeArea(
         child: Column(children: [
-          // Полоска с email пользователя
           Container(
             color: AppTheme.blueDark,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
-            child: Row(children: [
-              const Icon(Icons.account_circle, size: 13, color: Colors.white54),
-              const SizedBox(width: 5),
-              Expanded(
-                  child: Text(email,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.account_circle,
+                  size: 15,
+                  color: Colors.white70,
+                ),
+                const SizedBox(width: 6),
+                Flexible(
+                  flex: 2,
+                  child: Text(
+                    userLabel,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    _organizationAccess.role.label,
+                    style: const TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  flex: 5,
+                  child: Tooltip(
+                    message: capabilities,
+                    child: Text(
+                      capabilities,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.right,
                       style: const TextStyle(
-                          fontSize: 10, color: Colors.white70))),
-              GestureDetector(
-                onTap: _signOut,
-                child: const Text('Выйти',
-                    style: TextStyle(fontSize: 10, color: Colors.white54)),
-              ),
-            ]),
+                        fontSize: 10,
+                        color: Colors.white70,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
           Expanded(
             child: IndexedStack(index: _tab, children: screens),

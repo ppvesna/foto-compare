@@ -22,8 +22,9 @@ Rule: every step must preserve the working application and be independently reve
   verified.
 - `005_access_control.sql` is an unapplied prototype based on the previous role set. It
   must be revised for job-scoped access, backed up, and validated on staging.
-- The `production` domain foundation now contains jobs, participants, functions, and a
-  job access policy. Local persistence and UI remain the next safe steps.
+- The `production` foundation now contains jobs, participants, functions, access policy,
+  a server adapter, and a narrow comparison-flow UI. Migration `012` is prepared for
+  staged installation and RLS verification.
 - The first `CloudStorage` port, mock, device-only settings adapter, and provider status
   UI are present. Supabase Storage and Google Drive remain disconnected.
 
@@ -87,6 +88,10 @@ providers and in-memory repositories before changing callers.
 Expose the current Supabase authentication through `AuthService`. Existing screens may
 continue to use their current UI while authentication details move behind the adapter.
 
+Progress: current-profile loading and editing are behind `AccountProfileService`, with
+a Supabase adapter and mock. Sign-in, registration, recovery, and session observation
+still use the existing application shell and will move only when their workflow changes.
+
 ### Step 9. Introduce organization context
 
 Add current organization, membership, and role to the application session. A personal
@@ -96,12 +101,11 @@ Progress: typed roles, permission matrix, mocks, Supabase adapters, shell integr
 organization creation, administration UI, and the server schema are present. Legacy
 remote role names are mapped in the client. Pending invitations, seat limits, owner
 participant UI, and protected nickname login are implemented in migration `010` and
-Edge Function adapters. The base server flow is deployed; recovery validation remains
-pending. Switching between several organizations is intentionally deferred.
+Edge Function adapters. The base server flow and invitation recovery are deployed and
+manually verified. Switching between several organizations is intentionally deferred.
 
 Interrupted-link recovery is implemented and deployed in migration `011`. The
-transactional server check passes; the final Magic Link browser callback still needs
-manual verification.
+transactional server check and full invitation browser callback pass manually.
 
 The existing `005_access_control.sql` still contains the previous role set. It must not
 be applied as the final production role model; revise it through a staged additive
@@ -110,8 +114,9 @@ migration and verify job-scoped RLS first.
 Progress: client administration contracts and owner/admin settings UI are connected.
 `006` reads roles from membership; `007–008` use authoritative personal plan data.
 `009` adds separate personal and effective organization plans. The current test
-environment has passed owner bootstrap and employee assignment; organization-plan
-inheritance, customer access, and job-scoped RLS still require staged validation.
+environment has passed owner bootstrap, employee assignment, organization-plan
+inheritance, and invitation completion. Migration `012` customer access and job-scoped
+RLS still require staged validation.
 
 Invitation progress: the owner can prepare email, nickname, role, and initial employee
 functions. A new invitee completes their own password and profile; an existing account
@@ -155,14 +160,19 @@ injection are still pending.
 Introduce `ProductionJob` and `Sample` as metadata around the current comparison flow.
 Existing checks without these fields remain valid.
 
-Progress: the domain-only `ProductionJob`, `JobParticipant`, three job functions, and
-effective access policy are implemented. Sample metadata, local repository, current-job
-selection, and protocol linkage remain pending.
+Progress: `ProductionJob`, `JobParticipant`, three job functions, the effective access
+policy, customer directory, unconfirmed customer requests, server job opening, current
+work selection, and local protocol linkage are implemented. Sample metadata and remote
+protocol synchronization remain pending.
 
 ### Step 15. Add schema migrations
 
 Add new tables and fields through additive, versioned migrations. Read old and new
 records; write new format only after migration verification.
+
+Progress: additive migration `012` defines customers, customer links, requests, jobs,
+participants, RPCs, and RLS. It must be installed and pass
+`CUSTOMER_WORKFLOW_V1_TEST_PLAN.md` before production use.
 
 ## Phase 4: Inspection boundary
 

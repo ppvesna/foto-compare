@@ -47,6 +47,13 @@ created only when the first approved migration step needs it.
 Currently implemented Architecture v2 modules:
 
 ```text
+lib/features/auth/
+  domain/account_profile.dart
+  domain/account_profile_service.dart
+  infrastructure/supabase_account_profile_service.dart
+  testing/mock_account_profile_service.dart
+  auth.dart
+
 lib/features/protocols/
   domain/check_protocol.dart
   infrastructure/check_history_service.dart
@@ -71,9 +78,13 @@ lib/features/organization/
   domain/organization_access.dart
   domain/organization_access_service.dart
   domain/organization_administration_service.dart
+  domain/customer_directory_service.dart
+  domain/organization_customer.dart
   domain/organization_member.dart
+  infrastructure/supabase_customer_directory_service.dart
   infrastructure/supabase_organization_administration_service.dart
   infrastructure/supabase_organization_access_service.dart
+  testing/mock_customer_directory_service.dart
   testing/mock_organization_administration_service.dart
   testing/mock_organization_access_service.dart
   organization.dart
@@ -81,6 +92,9 @@ lib/features/organization/
 lib/features/production/
   domain/job_access.dart
   domain/production_job.dart
+  domain/production_job_service.dart
+  infrastructure/supabase_production_job_service.dart
+  testing/mock_production_job_service.dart
   production.dart
 
 lib/capabilities/storage/
@@ -143,6 +157,11 @@ Public contracts: `AuthService`, `AccountRepository`, `SessionReader`.
 Dependencies: core, licensing/security contracts, and a remote authentication adapter.
 It does not own payments or feature entitlements.
 
+Current foundation: `AccountProfileService`, its Supabase adapter, and mock load and
+update the current user's email, nickname, and optional display name. Nickname
+uniqueness remains enforced by `user_profiles`; the adapter also refreshes Supabase Auth
+metadata so the application shell reflects a saved profile without a new sign-in.
+
 ### organization
 
 Responsibilities: organizations, memberships, the small owner/admin/employee/customer
@@ -166,10 +185,15 @@ snapshot. Migrations `006–008` are installed in the current test environment; 
 Migration `010` adds invitations, seat limits, member function defaults, and a unified
 active/pending participant list. The Edge Function adapter sends the email without
 exposing service credentials to Flutter. Owner bootstrap, employee assignment, and plan
-inheritance are verified. Invitation delivery, customer access, and job isolation are
-the next server tests.
+inheritance and invitation completion are verified.
 Migration `011` makes a one-time email callback recoverable: the same Auth account and
 seat are reused, and the owner may safely resend the invitation.
+
+Migration `012` and the customer-directory contract add approved customers, primary
+manager and customer-account links, and an owner/admin administration UI. Employees can
+read active customers and submit an unconfirmed name from the technical specification;
+they cannot create directory entries directly. Server installation and RLS verification
+remain the next release gate.
 
 ### inspection
 
@@ -214,9 +238,12 @@ Public contracts: `JobRepository`, `SampleRepository`, `ProductionContext`.
 Dependencies: auth organization context and sync. It does not run image comparison.
 
 Current foundation: `ProductionJob`, `JobParticipant`, manager/designer/inspection
-functions, and `JobAccessPolicy` exist as domain-only code. Owner and admin can access
-all organization jobs. Employees and customers require an explicit participant record.
-Persistence, job UI, and Supabase tables are not implemented yet.
+functions, and `JobAccessPolicy` define effective access. `ProductionJobService`, its
+Supabase adapter and mock open a work by organization number, approved customer, or
+unconfirmed customer request. Migration `012` persists jobs and participants. Owner and
+admin can access all organization jobs; employees and customers require an explicit
+participant record. Sample persistence and remote protocol synchronization remain
+pending.
 
 ### protocols
 

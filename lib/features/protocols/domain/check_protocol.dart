@@ -3,6 +3,9 @@ class CheckProtocol {
   final DateTime createdAt;
   final String jobId;
   final String jobNumber;
+  final String customerId;
+  final String customerName;
+  final bool customerConfirmed;
   final double score;
   final String verdict;
   final String refSize;
@@ -25,6 +28,9 @@ class CheckProtocol {
     required this.createdAt,
     this.jobId = '',
     this.jobNumber = '',
+    this.customerId = '',
+    this.customerName = '',
+    this.customerConfirmed = false,
     required this.score,
     required this.verdict,
     required this.refSize,
@@ -48,6 +54,9 @@ class CheckProtocol {
         createdAt: DateTime.parse(json['createdAt'] as String),
         jobId: json['jobId'] as String? ?? '',
         jobNumber: json['jobNumber'] as String? ?? '',
+        customerId: json['customerId'] as String? ?? '',
+        customerName: json['customerName'] as String? ?? '',
+        customerConfirmed: json['customerConfirmed'] as bool? ?? false,
         score: (json['score'] as num).toDouble(),
         verdict: json['verdict'] as String,
         refSize: json['refSize'] as String,
@@ -79,6 +88,9 @@ class CheckProtocol {
         'createdAt': createdAt.toIso8601String(),
         'jobId': jobId,
         'jobNumber': jobNumber,
+        'customerId': customerId,
+        'customerName': customerName,
+        'customerConfirmed': customerConfirmed,
         'score': score,
         'verdict': verdict,
         'refSize': refSize,

@@ -18,9 +18,11 @@ Existing screens and services are migrated only when a product change requires i
 In particular, Architecture v2 does not require an immediate refactor of
 `CompareScreen`.
 
-The implemented boundaries include `lib/features/protocols`,
-`lib/features/references`, the first `billing` and `organization` contracts, and the
-initial `capabilities/storage` contract and local settings adapter.
+The implemented boundaries include `lib/features/auth`, `lib/features/protocols`,
+`lib/features/references`, the first `billing`, `organization`, customer-directory,
+and production workflow contracts, plus the initial `capabilities/storage` contract
+and local settings adapter. The auth boundary currently owns editable current-profile
+data; the existing sign-in and registration screens remain unchanged.
 Entitlements and organization permissions now reach the current application shell as
 typed snapshots. Existing storage keys, file names, JSON, and current user access remain
 compatible. Migrations `006–008` now provide the tested organization and entitlement
@@ -149,8 +151,15 @@ same user identity.
 Nickname authentication is isolated in an unauthenticated Edge Function that accepts
 credentials and returns a Supabase session; the nickname-to-email mapping is no longer
 publicly readable. Email delivery and nickname login must be deployed and rate-limited
-as server functions, not implemented in the Flutter client. Job and chat isolation
-remain pending.
+as server functions, not implemented in the Flutter client.
+
+Migration `012` introduces the first job-scoped server model: an organization customer
+directory, customer-to-user and primary-manager links, unconfirmed customer requests,
+production jobs, participants, and RLS. Operators select an approved customer; when the
+customer is absent, they submit the name from the technical specification and continue
+the inspection. Owner or admin later resolves the request. Job and participant RLS must
+pass staged server tests before it becomes the security boundary for protocols, assets,
+and chat. Chat isolation remains pending.
 
 ## 7. Inspection domain
 
@@ -172,8 +181,10 @@ makes old results interpretable after the algorithm evolves.
 
 Current implementation note: the first `production` domain foundation defines
 `ProductionJob`, stable job IDs, `JobParticipant`, job functions, and the effective job
-access policy. It does not yet persist or synchronize jobs and does not alter the legacy
-comparison workflow.
+access policy. A narrow service now opens or updates the active server job from the
+legacy comparison screen without refactoring that screen. Customer identity is stored
+in new local protocols. Samples, remote protocol synchronization, and image assets
+remain separate future steps.
 
 ## 8. Comparison pipeline
 

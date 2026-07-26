@@ -23,6 +23,8 @@ void main() {
 
     expect(CheckHistoryService.lastCheck.value?.id, protocol.id);
     expect(CheckHistoryService.lastCheck.value?.jobNumber, protocol.jobNumber);
+    expect(CheckHistoryService.lastCheck.value?.customerName, 'Весна');
+    expect(CheckHistoryService.lastCheck.value?.customerConfirmed, isTrue);
     expect(CheckHistoryService.checks.value, hasLength(1));
     expect(CheckHistoryService.checks.value.single.stages.single.name, 'Цвет');
   });
@@ -33,6 +35,9 @@ CheckProtocol _protocol() => CheckProtocol(
       createdAt: DateTime.utc(2026, 7, 18, 10, 30),
       jobId: 'job-1',
       jobNumber: '1001',
+      customerId: 'customer-1',
+      customerName: 'Весна',
+      customerConfirmed: true,
       score: 98.5,
       verdict: 'PASS',
       refSize: '100×100',

@@ -5,6 +5,10 @@
 steps in `ORGANIZATION_V2_TEST_PLAN.md`. Never apply `005_access_control.sql`; it
 contains the obsolete role model.
 
+Migration `012` is validated separately through
+`CUSTOMER_WORKFLOW_V1_TEST_PLAN.md`. Do not treat customer or job isolation as
+production-ready until that plan passes.
+
 ## Preparation
 
 1. Create a dedicated user in Supabase Authentication or register it through Trimatrix.
@@ -53,16 +57,17 @@ After cleanup, repeat the test with another dedicated account or a changed role:
 | `admin` | Jobs and members allowed; billing and ownership denied |
 | `owner` | All organization permissions allowed |
 
-Per-job employee/customer isolation is covered by domain tests only at this checkpoint.
-It is not a remote security guarantee until job tables and RLS are installed.
+Per-job employee/customer isolation has domain tests and a prepared server migration.
+It is not a remote security guarantee until migration `012` is installed and its RLS
+tests pass.
 
 ## Current verified checkpoint
 
 The configured test environment has migrations `006–009` installed. A dedicated
 account was verified as an active Pro owner, and `printer_ivan` inherited the working
 Pro plan as an employee. Migrations `010–011` and both Edge Functions are deployed.
-The participant RPC and transactional recovery check pass; the repeated Magic Link
-callback remains in `INVITATION_V1_TEST_PLAN.md`.
+The participant RPC, transactional recovery, and invitation browser callback pass.
+Migration `012` is the next server checkpoint.
 
 ## Cleanup
 
