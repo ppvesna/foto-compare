@@ -20,6 +20,23 @@ void main() {
     expect(access.limit(UsageLimit.savedReferences), 50);
   });
 
+  test('organization plan remains separate from the personal plan', () {
+    final pro = EntitlementSnapshot.forPlan(PlanTier.pro);
+    final access = EntitlementSnapshot(
+      plan: PlanTier.pro,
+      personalPlan: PlanTier.free,
+      scope: EntitlementScope.organization,
+      organizationId: 'organization-1',
+      capabilities: pro.capabilities,
+      limits: pro.limits,
+    );
+
+    expect(access.plan, PlanTier.pro);
+    expect(access.personalPlan, PlanTier.free);
+    expect(access.usesOrganizationPlan, isTrue);
+    expect(access.allows(ProductCapability.exactDeltaE), isTrue);
+  });
+
   test('enterprise limits are unlimited', () {
     final access = EntitlementSnapshot.forPlan(PlanTier.enterprise);
 

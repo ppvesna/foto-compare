@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kDebugMode;
+import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'app/local_access_testing_service.dart';
@@ -9,12 +9,15 @@ import 'screens/start_screen.dart';
 import 'screens/compare_screen.dart';
 import 'screens/chat_screen.dart';
 import 'screens/home_screen.dart';
+import 'screens/invitation_setup_screen.dart';
 import 'screens/settings_screen.dart';
 import 'features/billing/billing.dart';
 import 'features/organization/organization.dart';
 import 'features/protocols/protocols.dart';
 import 'services/sync_service.dart';
 import 'widgets/xp_widgets.dart';
+
+String? _startupAuthError;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -23,7 +26,14 @@ void main() async {
   await Supabase.initialize(
     url: AppConfig.supabaseUrl,
     anonKey: AppConfig.supabaseAnonKey,
+    authOptions: const FlutterAuthClientOptions(
+      // Organization invitations are issued by the server and may be opened
+      // in another browser, so there is no client-side PKCE verifier.
+      authFlowType: AuthFlowType.implicit,
+      detectSessionInUri: !kIsWeb,
+    ),
   );
+  await _recoverWebAuthCallback();
 
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
@@ -32,6 +42,22 @@ void main() async {
   ]);
 
   runApp(const PhotoCompareApp());
+}
+
+Future<void> _recoverWebAuthCallback() async {
+  if (!kIsWeb) return;
+  final uri = Uri.base;
+  final fragment = uri.fragment;
+  final isCallback = fragment.contains('access_token=') ||
+      fragment.contains('error_description=');
+  if (!isCallback || Supabase.instance.client.auth.currentSession != null) {
+    return;
+  }
+  try {
+    await Supabase.instance.client.auth.getSessionFromUrl(uri);
+  } catch (error) {
+    _startupAuthError = error.toString();
+  }
 }
 
 class PhotoCompareApp extends StatelessWidget {
@@ -79,10 +105,69 @@ class _AuthGateState extends State<AuthGate> {
   @override
   Widget build(BuildContext context) {
     final session = Supabase.instance.client.auth.currentSession;
+    if (session == null && _startupAuthError != null) {
+      return _AuthLinkError(error: _startupAuthError!);
+    }
     if (session != null) {
+      final setupFlag = Supabase.instance.client.auth.currentUser
+          ?.userMetadata?['organization_invite_setup'];
+      if (setupFlag == true || setupFlag == 'true') {
+        return InvitationSetupScreen(
+          onCompleted: () {
+            if (mounted) setState(() {});
+          },
+        );
+      }
       return const MainShell();
     }
     return const StartScreen();
+  }
+}
+
+class _AuthLinkError extends StatelessWidget {
+  final String error;
+
+  const _AuthLinkError({required this.error});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFEAF6FC),
+      body: Center(
+        child: Container(
+          width: 480,
+          margin: const EdgeInsets.all(20),
+          padding: const EdgeInsets.all(22),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border.all(color: const Color(0xFFC9E2F0)),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Ссылка приглашения не сработала',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 10),
+              const Text(
+                'Ссылка могла устареть или уже использоваться. '
+                'Попросите владельца повторно отправить приглашение.',
+              ),
+              if (kDebugMode) ...[
+                const SizedBox(height: 12),
+                SelectableText(
+                  error,
+                  style: const TextStyle(fontSize: 11, color: Colors.black54),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -99,6 +184,7 @@ class _MainShellState extends State<MainShell> {
   int _settingsAccessRequest = 0;
   EntitlementSnapshot _entitlements = EntitlementSnapshot.legacyCompatible();
   OrganizationAccess _organizationAccess = OrganizationAccess.legacyPersonal();
+  String? _handledInvitationId;
 
   @override
   void initState() {
@@ -115,6 +201,10 @@ class _MainShellState extends State<MainShell> {
         // Keep cached access available when the session cannot refresh offline.
       }
     }
+    await _ensureCurrentUserProfile(client);
+    final organizationService =
+        SupabaseOrganizationAdministrationService(client);
+    final pendingInvitation = await organizationService.currentInvitation();
     var entitlements = await SupabaseEntitlementService(client).load();
     var organizationAccess =
         await SupabaseOrganizationAccessService(client).load();
@@ -134,6 +224,79 @@ class _MainShellState extends State<MainShell> {
       _entitlements = entitlements;
       _organizationAccess = organizationAccess;
     });
+    _scheduleInvitationDialog(pendingInvitation, organizationService);
+  }
+
+  void _scheduleInvitationDialog(
+    CurrentOrganizationInvitation? invitation,
+    OrganizationAdministrationService service,
+  ) {
+    if (invitation == null || invitation.id == _handledInvitationId) return;
+    _handledInvitationId = invitation.id;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      final functions = invitation.functions.isEmpty
+          ? ''
+          : '\nФункции: ${invitation.functions.map((value) => value.label).join(', ')}';
+      final accepted = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Приглашение в организацию'),
+          content: Text(
+            '${invitation.organizationName}\n'
+            'Роль: ${invitation.role.label}$functions',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Позже'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Принять'),
+            ),
+          ],
+        ),
+      );
+      if (accepted != true || !mounted) return;
+      final applied = await service.acceptCurrentInvitation();
+      if (!mounted) return;
+      if (!applied) {
+        xpDlg(
+          context,
+          'Приглашение',
+          'Приглашение уже недоступно или срок действия закончился.',
+        );
+        return;
+      }
+      await _loadAccess();
+    });
+  }
+
+  Future<void> _ensureCurrentUserProfile(SupabaseClient client) async {
+    final user = client.auth.currentUser;
+    if (user == null || user.email == null) return;
+    final metadata = user.userMetadata ?? {};
+    final nickname = (metadata['nickname'] as String?)?.trim().toLowerCase();
+    if (nickname == null || nickname.isEmpty) return;
+    try {
+      final profile = await client
+          .from('user_profiles')
+          .select('user_id')
+          .eq('user_id', user.id)
+          .maybeSingle();
+      if (profile != null) return;
+      await client.from('user_profiles').insert({
+        'user_id': user.id,
+        'email': user.email!,
+        'nickname': nickname,
+        'display_name': (metadata['display_name'] as String?)?.trim() ?? '',
+        'organization_name':
+            (metadata['organization_name'] as String?)?.trim() ?? '',
+      });
+    } catch (_) {
+      // Profile migration is optional during the staged rollout.
+    }
   }
 
   void _onTab(int i) {

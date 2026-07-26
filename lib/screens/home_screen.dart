@@ -34,6 +34,7 @@ class HomeScreen extends StatelessWidget {
   String get _shownPlan => entitlements.legacyFallback
       ? '${entitlements.plan.label} (переходный доступ)'
       : entitlements.plan.label;
+  String get _shownPersonalPlan => entitlements.personalPlan.label;
   String get _shownLimit {
     final limit = entitlements.limit(UsageLimit.checksPerDay);
     return limit == null ? 'без ограничения' : '$limit проверок в день';
@@ -50,7 +51,7 @@ class HomeScreen extends StatelessWidget {
             onTap: () => xpDlg(
               context,
               'Профиль',
-              'Email: ${email.isEmpty ? 'не указан' : email}\nНик: $_shownNick\nОрганизация: $_shownOrg\nРоль: ${organizationAccess.role.label}\nПлан: $_shownPlan\nЛимит: $_shownLimit',
+              'Email: ${email.isEmpty ? 'не указан' : email}\nНик: $_shownNick\nОрганизация: $_shownOrg\nРоль: ${organizationAccess.role.label}\n${entitlements.usesOrganizationPlan ? 'Личный план: $_shownPersonalPlan\nРабочий план: $_shownPlan' : 'План: $_shownPlan'}\nЛимит: $_shownLimit',
             ),
           ),
           XpMenuItem(
@@ -104,7 +105,7 @@ class HomeScreen extends StatelessWidget {
           }),
         ]),
       ),
-      XpStatusBar(left: 'Главная', right: 'План: Бесплатный'),
+      XpStatusBar(left: 'Главная', right: 'Рабочий план: $_shownPlan'),
     ]);
   }
 
@@ -267,7 +268,11 @@ class HomeScreen extends StatelessWidget {
               _profileRow('Имя', _shownName),
               _profileRow('Организация', _shownOrg),
               _profileRow('Роль', organizationAccess.role.label),
-              _profileRow('План', _shownPlan),
+              if (entitlements.usesOrganizationPlan) ...[
+                _profileRow('Личный план', _shownPersonalPlan),
+                _profileRow('Рабочий план', _shownPlan),
+              ] else
+                _profileRow('План', _shownPlan),
               _profileRow('Лимит', _shownLimit),
               _profileRow('Облако', 'протоколы и превью позже'),
             ]),

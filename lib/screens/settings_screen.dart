@@ -57,10 +57,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   AccessTestOverride _accessTestOverride = AccessTestOverride.disabled;
   bool _accessSaving = false;
   final _organizationNameCtrl = TextEditingController();
+  final _memberEmailCtrl = TextEditingController();
   final _memberNicknameCtrl = TextEditingController();
-  OrganizationUserProfile? _foundOrganizationUser;
-  List<OrganizationMember> _organizationMembers = const [];
+  final _memberDisplayNameCtrl = TextEditingController();
+  List<OrganizationParticipant> _organizationParticipants = const [];
   OrganizationRole _selectedMemberRole = OrganizationRole.employee;
+  Set<OrganizationMemberFunction> _selectedMemberFunctions = {
+    OrganizationMemberFunction.inspectionSpecialist,
+  };
   bool _organizationBusy = false;
 
   static const _sections = [
@@ -90,7 +94,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void dispose() {
     _organizationNameCtrl.dispose();
+    _memberEmailCtrl.dispose();
     _memberNicknameCtrl.dispose();
+    _memberDisplayNameCtrl.dispose();
     super.dispose();
   }
 
@@ -347,7 +353,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       title: 'Аккаунт и организация',
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         _infoRow('Email', email.isEmpty ? 'не указан' : email),
-        _infoRow('План', widget.entitlements.plan.label),
+        if (widget.entitlements.usesOrganizationPlan)
+          _infoRow('Личный план', widget.entitlements.personalPlan.label),
+        _infoRow(
+          widget.entitlements.usesOrganizationPlan ? 'Рабочий план' : 'План',
+          widget.entitlements.plan.label,
+        ),
         _infoRow('Роль', widget.organizationAccess.role.label),
         _infoRow(
           'Организация',
@@ -394,7 +405,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
         child:
             Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           _infoRow('Источник', _accessSourceLabel()),
-          _infoRow('План', widget.entitlements.plan.label),
+          _infoRow(
+            'Область тарифа',
+            widget.entitlements.usesOrganizationPlan
+                ? 'организация'
+                : 'личный профиль',
+          ),
+          if (widget.entitlements.usesOrganizationPlan)
+            _infoRow('Личный план', widget.entitlements.personalPlan.label),
+          _infoRow(
+            widget.entitlements.usesOrganizationPlan ? 'Рабочий план' : 'План',
+            widget.entitlements.plan.label,
+          ),
           _infoRow('Статус', _accessStatusLabel()),
           _infoRow('Роль', widget.organizationAccess.role.label),
           _infoRow(
@@ -537,6 +559,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final assignableRoles = OrganizationAdministrationPolicy.assignableRoles(
       access.role,
     ).toList();
+    final activeParticipants = _organizationParticipants
+        .where((participant) => !participant.isPending)
+        .length;
+    final pendingParticipants = _organizationParticipants
+        .where((participant) => participant.isPending)
+        .length;
+    final seatLimit = widget.entitlements.limit(UsageLimit.organizationSeats);
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       _settingsPanel(
         title: 'Организация',
@@ -545,7 +574,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _infoRow('Название', access.organizationName ?? 'не указано'),
           _infoRow('ID', access.organizationId ?? 'не определён'),
           _infoRow('Моя роль', access.role.label),
-          _infoRow('Участников', '${_organizationMembers.length}'),
+          _infoRow(
+            'Места',
+            seatLimit == null
+                ? '$activeParticipants активно, $pendingParticipants ожидают'
+                : '$activeParticipants активно, $pendingParticipants ожидают из $seatLimit',
+          ),
           _notePanel(
             access.role == OrganizationRole.owner
                 ? 'Владелец назначает администратора, сотрудников и заказчиков. Передача владения будет отдельной защищённой операцией.'
@@ -555,77 +589,108 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       const SizedBox(height: 10),
       _settingsPanel(
-        title: 'Найти пользователя по нику',
+        title: 'Пригласить участника',
         child:
             Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           XpInput(
-            placeholder: 'точный ник пользователя',
+            placeholder: 'Email сотрудника или заказчика',
+            controller: _memberEmailCtrl,
+            keyboardType: TextInputType.emailAddress,
+          ),
+          const SizedBox(height: 8),
+          XpInput(
+            placeholder: 'Ник: например printer_ivan',
             controller: _memberNicknameCtrl,
           ),
           const SizedBox(height: 8),
-          XpBtn(
-            label: _organizationBusy ? 'Ищем...' : 'Найти пользователя',
-            onPressed: _organizationBusy ? null : _findOrganizationUser,
+          XpInput(
+            placeholder: 'Имя пользователя',
+            controller: _memberDisplayNameCtrl,
           ),
-          if (_foundOrganizationUser != null) ...[
-            const SizedBox(height: 10),
-            _infoRow('Ник', _foundOrganizationUser!.nickname),
-            _infoRow(
-              'Имя',
-              _foundOrganizationUser!.displayName.isEmpty
-                  ? 'не указано'
-                  : _foundOrganizationUser!.displayName,
-            ),
-            _infoRow(
-              'Из регистрации',
-              _foundOrganizationUser!.organizationName.isEmpty
-                  ? 'организация не указана'
-                  : _foundOrganizationUser!.organizationName,
-            ),
-            _optionChips(
-              label: 'Назначить роль',
-              value: _selectedMemberRole.label,
-              values: assignableRoles.map((role) => role.label).toList(),
-              onSelect: (value) => setState(() {
-                _selectedMemberRole = assignableRoles.firstWhere(
-                  (role) => role.label == value,
-                );
-              }),
-            ),
-            XpBtn(
-              label: _organizationBusy
-                  ? 'Сохраняем...'
-                  : 'Назначить или изменить роль',
-              primary: true,
-              onPressed: _organizationBusy ? null : _assignOrganizationMember,
-            ),
-          ],
+          const SizedBox(height: 10),
+          _optionChips(
+            label: 'Общая роль',
+            value: _selectedMemberRole.label,
+            values: assignableRoles.map((role) => role.label).toList(),
+            onSelect: (value) => setState(() {
+              _selectedMemberRole = assignableRoles.firstWhere(
+                (role) => role.label == value,
+              );
+            }),
+          ),
+          if (_selectedMemberRole == OrganizationRole.employee)
+            _memberFunctionSelection(),
+          const SizedBox(height: 8),
+          XpBtn(
+            label: _organizationBusy
+                ? 'Отправляем...'
+                : 'Сохранить и отправить приглашение',
+            primary: true,
+            onPressed: _organizationBusy ? null : _inviteOrganizationMember,
+          ),
+          const SizedBox(height: 8),
+          _notePanel(
+            'Пароль создаёт сам пользователь после перехода по ссылке из письма. Функции сотрудника становятся начальными специализациями; доступ к конкретной работе назначается отдельно.',
+          ),
         ]),
       ),
       const SizedBox(height: 10),
       _settingsPanel(
         title: 'Участники',
-        child: _organizationBusy && _organizationMembers.isEmpty
+        child: _organizationBusy && _organizationParticipants.isEmpty
             ? const Padding(
                 padding: EdgeInsets.all(8),
                 child: Center(child: CircularProgressIndicator()),
               )
-            : _organizationMembers.isEmpty
+            : _organizationParticipants.isEmpty
                 ? const Text(
-                    'Список пока пуст или серверная схема 006 ещё не подключена.',
+                    'Список пока пуст или серверная схема приглашений ещё не подключена.',
                     style: TextStyle(fontSize: 11, color: Colors.black54),
                   )
-                : _table(
-                    headers: const ['Ник', 'Имя', 'Роль'],
-                    rows: _organizationMembers
-                        .map((member) => [
-                              member.nickname.isEmpty ? '-' : member.nickname,
-                              member.displayName.isEmpty
-                                  ? 'не указано'
-                                  : member.displayName,
-                              member.role.label,
-                            ])
-                        .toList(),
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _table(
+                        headers: const [
+                          'Email / ник',
+                          'Имя',
+                          'Роль и функции',
+                          'Статус',
+                        ],
+                        rows: _organizationParticipants
+                            .map(_organizationParticipantRow)
+                            .toList(),
+                      ),
+                      if (pendingParticipants > 0) ...[
+                        const SizedBox(height: 10),
+                        const Text(
+                          'Ожидающие приглашения',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: _organizationParticipants
+                              .where((participant) => participant.isPending)
+                              .map(
+                                (participant) => XpBtn(
+                                  label: 'Отменить ${participant.nickname}',
+                                  danger: true,
+                                  onPressed: _organizationBusy
+                                      ? null
+                                      : () => _cancelOrganizationInvitation(
+                                            participant,
+                                          ),
+                                ),
+                              )
+                              .toList(),
+                        ),
+                      ],
+                    ],
                   ),
       ),
     ]);
@@ -668,8 +733,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
     setState(() => _organizationBusy = true);
     try {
-      final members = await _organizationService.listMembers(organizationId);
-      if (mounted) setState(() => _organizationMembers = members);
+      final participants =
+          await _organizationService.listParticipants(organizationId);
+      if (mounted) {
+        setState(() => _organizationParticipants = participants);
+      }
     } catch (error) {
       if (mounted) {
         xpDlg(context, 'Участники недоступны', _accessError(error));
@@ -679,88 +747,187 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _findOrganizationUser() async {
+  Future<void> _inviteOrganizationMember() async {
+    final organizationId = widget.organizationAccess.organizationId;
+    final email = _memberEmailCtrl.text.trim().toLowerCase();
     final nickname = _memberNicknameCtrl.text.trim().toLowerCase();
-    if (nickname.isEmpty) {
-      xpDlg(context, 'Поиск пользователя', 'Введите точный ник.');
+    final displayName = _memberDisplayNameCtrl.text.trim();
+    if (organizationId == null) return;
+    if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email)) {
+      xpDlg(context, 'Приглашение', 'Введите корректный email.');
       return;
     }
-    setState(() {
-      _organizationBusy = true;
-      _foundOrganizationUser = null;
-    });
-    try {
-      final profile = await _organizationService.findUserByNickname(nickname);
-      if (!mounted) return;
-      setState(() => _foundOrganizationUser = profile);
-      if (profile == null) {
-        xpDlg(
-          context,
-          'Пользователь не найден',
-          'Пользователь должен зарегистрироваться, подтвердить email и хотя бы один раз войти в приложение.',
-        );
-      }
-    } catch (error) {
-      if (mounted) xpDlg(context, 'Ошибка поиска', _accessError(error));
-    } finally {
-      if (mounted) setState(() => _organizationBusy = false);
+    if (!RegExp(r'^[a-z0-9_]{3,24}$').hasMatch(nickname)) {
+      xpDlg(
+        context,
+        'Приглашение',
+        'Ник: 3-24 символа, латиница, цифры и подчёркивание.',
+      );
+      return;
     }
-  }
+    if (displayName.isEmpty) {
+      xpDlg(context, 'Приглашение', 'Введите имя пользователя.');
+      return;
+    }
 
-  Future<void> _assignOrganizationMember() async {
-    final access = widget.organizationAccess;
-    final organizationId = access.organizationId;
-    final profile = _foundOrganizationUser;
-    if (organizationId == null || profile == null) return;
-    if (!OrganizationAdministrationPolicy.canAssign(
-      actorRole: access.role,
-      currentRole: _organizationMemberRole(profile.userId),
-      requestedRole: _selectedMemberRole,
-    )) {
-      xpDlg(context, 'Роль запрещена', 'Текущая роль не может это назначить.');
-      return;
-    }
     setState(() => _organizationBusy = true);
     try {
-      await _organizationService.assignMember(
+      final result = await _organizationService.inviteMember(
         organizationId: organizationId,
-        userId: profile.userId,
+        email: email,
+        nickname: nickname,
+        displayName: displayName,
         role: _selectedMemberRole,
+        functions: _selectedMemberRole == OrganizationRole.employee
+            ? _selectedMemberFunctions
+            : const {},
       );
-      final members = await _organizationService.listMembers(organizationId);
+      final participants =
+          await _organizationService.listParticipants(organizationId);
       if (!mounted) return;
       setState(() {
-        _organizationMembers = members;
-        _foundOrganizationUser = null;
+        _organizationParticipants = participants;
+        _memberEmailCtrl.clear();
         _memberNicknameCtrl.clear();
+        _memberDisplayNameCtrl.clear();
       });
       xpDlg(
         context,
-        'Роль сохранена',
-        '${profile.nickname}: ${_selectedMemberRole.label}. Новые права появятся после обновления доступа или следующего входа пользователя.',
+        'Приглашение отправлено',
+        '${result.email}\nНик: ${result.nickname}\nРоль: ${_selectedMemberRole.label}',
       );
     } catch (error) {
-      if (mounted) xpDlg(context, 'Роль не сохранена', _accessError(error));
+      if (mounted) {
+        xpDlg(context, 'Приглашение не отправлено', _accessError(error));
+      }
     } finally {
       if (mounted) setState(() => _organizationBusy = false);
     }
   }
 
+  Future<void> _cancelOrganizationInvitation(
+    OrganizationParticipant participant,
+  ) async {
+    setState(() => _organizationBusy = true);
+    try {
+      await _organizationService.cancelInvitation(participant.id);
+      final organizationId = widget.organizationAccess.organizationId;
+      if (organizationId != null) {
+        final participants =
+            await _organizationService.listParticipants(organizationId);
+        if (mounted) {
+          setState(() => _organizationParticipants = participants);
+        }
+      }
+    } catch (error) {
+      if (mounted) {
+        xpDlg(context, 'Приглашение не отменено', _accessError(error));
+      }
+    } finally {
+      if (mounted) setState(() => _organizationBusy = false);
+    }
+  }
+
+  Widget _memberFunctionSelection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          'Функции сотрудника',
+          style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 4),
+        ...OrganizationMemberFunction.values.map(
+          (function) => Material(
+            type: MaterialType.transparency,
+            child: CheckboxListTile(
+              value: _selectedMemberFunctions.contains(function),
+              onChanged: (selected) {
+                setState(() {
+                  final next = Set<OrganizationMemberFunction>.from(
+                    _selectedMemberFunctions,
+                  );
+                  if (selected == true) {
+                    next.add(function);
+                  } else {
+                    next.remove(function);
+                  }
+                  _selectedMemberFunctions = next;
+                });
+              },
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              controlAffinity: ListTileControlAffinity.leading,
+              title: Text(
+                function.label,
+                style: const TextStyle(fontSize: 11),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  List<String> _organizationParticipantRow(
+    OrganizationParticipant participant,
+  ) {
+    final functions = participant.functions.isEmpty
+        ? '-'
+        : participant.functions.map((function) => function.label).join(', ');
+    final status = participant.isPending
+        ? participant.emailSent
+            ? 'Приглашение отправлено'
+            : 'Ожидает отправки email'
+        : 'Активен';
+    return [
+      '${participant.email}\n${participant.nickname}',
+      participant.displayName.isEmpty ? 'не указано' : participant.displayName,
+      '${participant.role.label}\n$functions',
+      status,
+    ];
+  }
+
   String _accessError(Object error) {
+    if (error is OrganizationInvitationException) {
+      switch (error.code) {
+        case 'nickname_conflict':
+          return 'Этот ник уже принадлежит другому аккаунту. Проверьте email или выберите другой ник.';
+        case 'email_conflict':
+          return 'Для этого email уже есть приглашение в другую организацию.';
+        case 'already_member':
+          return 'Этот пользователь уже состоит в организации.';
+        case 'seat_limit':
+          return 'Достигнут лимит участников текущего плана.';
+        case 'access_denied':
+          return 'Недостаточно прав для управления участниками.';
+        case 'invalid_email':
+          return 'Введите корректный email.';
+        case 'invalid_nickname':
+          return 'Ник: 3-24 символа, латиница, цифры и подчёркивание.';
+        case 'delivery_failed':
+          return 'Приглашение сохранено, но письмо не отправлено. Повторите отправку позже.';
+        case 'server_not_ready':
+          return 'Сервер приглашений ещё не обновлён.';
+        default:
+          return error.message;
+      }
+    }
     final text = error.toString();
     if (text.contains('current_organization_access_v2') ||
         text.contains('create_organization_v2') ||
         text.contains('PGRST202')) {
       return 'Серверная схема организации ещё не подключена. Сначала проверьте миграцию 006 на staging.';
     }
-    return text;
-  }
-
-  OrganizationRole? _organizationMemberRole(String userId) {
-    for (final member in _organizationMembers) {
-      if (member.userId == userId) return member.role;
+    if (text.contains('invite-organization-member') ||
+        text.contains('organization_invitations') ||
+        text.contains('list_organization_participants_v1')) {
+      return 'Приглашения ещё не подключены на сервере. Нужны миграция 010 и Edge Function приглашений.';
     }
-    return null;
+    if (text.contains('seat limit')) {
+      return 'Достигнут лимит участников текущего плана.';
+    }
+    return text;
   }
 
   Widget _accessTestingPanel() {
@@ -821,7 +988,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
       title: 'Управление подпиской',
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         _infoRow('Активация', 'через защищенный сервер'),
-        _infoRow('Тариф', widget.entitlements.plan.label),
+        if (widget.entitlements.usesOrganizationPlan)
+          _infoRow('Личный тариф', widget.entitlements.personalPlan.label),
+        _infoRow(
+          widget.entitlements.usesOrganizationPlan
+              ? 'Рабочий тариф организации'
+              : 'Тариф',
+          widget.entitlements.plan.label,
+        ),
         XpBtn(
           label: 'Изменить план',
           primary: true,

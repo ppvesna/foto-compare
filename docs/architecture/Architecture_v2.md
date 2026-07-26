@@ -132,9 +132,25 @@ Current administration checkpoint: organization creation, exact nickname discove
 member listing, and role assignment are exposed through a replaceable service contract.
 The Supabase adapter uses security-definer RPCs prepared in migration `006`; direct
 client writes are not the authority for role changes. Migrations `007–008` read
-server-managed plan data directly so subscription changes do not depend on JWT refresh.
-The current environment has verified a Pro owner and one-member organization. Job and
-chat isolation remain pending.
+server-managed personal plan data directly so subscription changes do not depend on
+JWT refresh. Migration `009` adds an organization-aware entitlement snapshot: personal
+plan data remains visible, while capabilities and limits come from the effective
+organization plan. At this transition checkpoint that plan is derived from the owner's
+protected server metadata; a future billing module will make the organization billing
+account the direct authority.
+
+Migration `010` adds pending invitations keyed by normalized email, seat-limit
+enforcement, initial employee functions, and atomic invitation acceptance for the
+matching confirmed account. Owners never create or receive employee passwords.
+Migration `011` adds recovery for an interrupted invite callback. It reuses the Auth
+account identified by the same normalized email, reactivates an expired or cancelled
+invitation, releases stale reservations, and keeps nickname ownership bound to the
+same user identity.
+Nickname authentication is isolated in an unauthenticated Edge Function that accepts
+credentials and returns a Supabase session; the nickname-to-email mapping is no longer
+publicly readable. Email delivery and nickname login must be deployed and rate-limited
+as server functions, not implemented in the Flutter client. Job and chat isolation
+remain pending.
 
 ## 7. Inspection domain
 

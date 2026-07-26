@@ -156,4 +156,27 @@ void main() {
     expect(service.lastAssignment?.userId, 'user-2');
     expect(service.lastAssignment?.role, OrganizationRole.employee);
   });
+
+  test('mock administration service records an email invitation', () async {
+    final service = MockOrganizationAdministrationService();
+
+    final result = await service.inviteMember(
+      organizationId: 'organization-1',
+      email: 'ivan@example.com',
+      nickname: 'printer_ivan',
+      displayName: 'Иван',
+      role: OrganizationRole.employee,
+      functions: const {
+        OrganizationMemberFunction.manager,
+        OrganizationMemberFunction.inspectionSpecialist,
+      },
+    );
+
+    expect(result.emailSent, isTrue);
+    expect(service.lastInvitation?.nickname, 'printer_ivan');
+    expect(
+      service.lastInvitation?.functions,
+      contains(OrganizationMemberFunction.manager),
+    );
+  });
 }

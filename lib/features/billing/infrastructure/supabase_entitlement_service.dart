@@ -16,6 +16,14 @@ class SupabaseEntitlementService implements EntitlementService {
     if (user == null) return EntitlementSnapshot.forPlan(PlanTier.free);
 
     try {
+      final remote = await client.rpc('current_entitlement_v3');
+      final metadata = _metadataFromResponse(remote);
+      if (metadata != null) return _fromMetadata(metadata);
+    } catch (_) {
+      // Entitlement v3 is optional until migration 009 is installed.
+    }
+
+    try {
       final remote = await client.rpc('current_entitlement_v2');
       final metadata = _metadataFromResponse(remote);
       if (metadata != null) return _fromMetadata(metadata);
@@ -57,8 +65,19 @@ class SupabaseEntitlementService implements EntitlementService {
   EntitlementSnapshot _fromMetadata(Map<String, dynamic> metadata) {
     final planName = metadata['plan'] as String? ?? 'free';
     final plan = _parsePlan(planName);
+    final personalPlan = _parsePlan(
+      metadata['personal_plan'] as String? ?? planName,
+    );
+    final scope = metadata['entitlement_scope'] == 'organization'
+        ? EntitlementScope.organization
+        : EntitlementScope.personal;
+    final organizationId = metadata['organization_id'] as String?;
     if (!_isActive(metadata, plan)) {
-      return EntitlementSnapshot.forPlan(PlanTier.free);
+      return EntitlementSnapshot.forPlan(PlanTier.free).copyWith(
+        personalPlan: personalPlan,
+        scope: scope,
+        organizationId: organizationId,
+      );
     }
 
     final defaults = EntitlementSnapshot.forPlan(plan);
@@ -79,6 +98,9 @@ class SupabaseEntitlementService implements EntitlementService {
 
     return EntitlementSnapshot(
       plan: plan,
+      personalPlan: personalPlan,
+      scope: scope,
+      organizationId: organizationId,
       capabilities: capabilities,
       limits: limits,
       validUntil: _parseDate(metadata['access_valid_until']),

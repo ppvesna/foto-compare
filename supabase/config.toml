@@ -1,0 +1,5 @@
+[functions.login-by-nickname]
+verify_jwt = false
+
+[functions.invite-organization-member]
+verify_jwt = true

@@ -94,16 +94,29 @@ account can be represented as a one-member organization to avoid two data models
 
 Progress: typed roles, permission matrix, mocks, Supabase adapters, shell integration,
 organization creation, administration UI, and the server schema are present. Legacy
-remote role names are mapped in the client. Switching and invitations remain pending.
+remote role names are mapped in the client. Pending invitations, seat limits, owner
+participant UI, and protected nickname login are implemented in migration `010` and
+Edge Function adapters. The base server flow is deployed; recovery validation remains
+pending. Switching between several organizations is intentionally deferred.
+
+Interrupted-link recovery is implemented and deployed in migration `011`. The
+transactional server check passes; the final Magic Link browser callback still needs
+manual verification.
 
 The existing `005_access_control.sql` still contains the previous role set. It must not
 be applied as the final production role model; revise it through a staged additive
 migration and verify job-scoped RLS first.
 
 Progress: client administration contracts and owner/admin settings UI are connected.
-`006` reads roles from membership; `007–008` use authoritative server plan data. The
-current test environment has passed owner bootstrap. Employee/customer assignment and
-job-scoped RLS still require staged validation.
+`006` reads roles from membership; `007–008` use authoritative personal plan data.
+`009` adds separate personal and effective organization plans. The current test
+environment has passed owner bootstrap and employee assignment; organization-plan
+inheritance, customer access, and job-scoped RLS still require staged validation.
+
+Invitation progress: the owner can prepare email, nickname, role, and initial employee
+functions. A new invitee completes their own password and profile; an existing account
+sees the pending invitation after a confirmed login and must accept it. The three
+employee functions are defaults only and do not replace per-job assignments.
 
 ### Step 10. Introduce entitlements
 

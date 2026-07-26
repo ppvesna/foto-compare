@@ -10,7 +10,10 @@ next migration step.
 - Back up `organizations`, `organization_members`, and `user_profiles`.
 - Apply migration `002` if `user_profiles` is absent, then apply
   `006_organization_access_v2.sql`, `007_organization_plan_authority.sql`, and
-  `008_current_entitlement_v2.sql` in order. Migration `004` is not required for
+  `008_current_entitlement_v2.sql`, then
+  `009_organization_entitlement_v3.sql`, then
+  `010_organization_invitations_v1.sql`, then
+  `011_organization_invitation_recovery_v1.sql` in order. Migration `004` is not required for
   organization roles; its chat schema will be replaced in a later job-scoped migration.
 - Do not apply `005_access_control.sql`; it contains the previous role model.
 - Use dedicated test email addresses and non-production organization names.
@@ -34,7 +37,7 @@ The registration organization field is only a profile hint.
 
 1. Give the dedicated account a temporary plan using `pro_plan_smoke_test.sql`. Do not
    use the role smoke-test here: the future owner must remain a personal user.
-2. With migration `008` installed, press `Refresh rights from server`. A full sign-out
+2. With migration `009` installed, press `Refresh rights from server`. A full sign-out
    is only a compatibility check for older builds.
 3. Open `Settings -> Organization` and create `Trimatrix Test Print`.
 4. Open `Settings -> Access` and press `Refresh rights from server`.
@@ -58,7 +61,8 @@ Expected application state: role `Owner`, billing and ownership permissions allo
 
 Expected: the owner sees the registered name and profile organization hint. Supabase
 contains one employee membership. The employee may inspect and view protocols but may
-not manage members, billing, or ownership.
+not manage members, billing, or ownership. The employee's personal plan remains Free,
+while the effective working plan is inherited from the Pro organization.
 
 ## Test 4: changing Employee to Customer changes effective access
 
@@ -90,9 +94,14 @@ change an existing administrator or owner.
 
 ## Verified checkpoint
 
-- Migrations `006–008` installed successfully in the configured test environment.
+- Migrations `006–009` installed successfully in the configured test environment.
+- Employee plan inheritance verified: personal Free, organization `vesna`, working Pro.
+- Migrations `010–011` and the invitation Edge Functions are deployed. The participant
+  RPC and transactional recovery check pass; the repeated Magic Link callback still
+  needs manual verification.
 - Active Pro entitlement loaded from server-managed metadata.
-- Organization creation, owner membership, member count, and organization name verified.
+- Organization creation, owner membership, member assignment, member count, and
+  organization name verified.
 - Employee, customer, and administrator account tests remain pending.
 
 ## Test 7: next chat tests

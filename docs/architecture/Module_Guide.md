@@ -161,9 +161,15 @@ They are assignments inside a production job.
 Current administration foundation: the owner/admin policy, public service contract,
 Supabase RPC adapter, mock, and settings UI exist. Migration `006` provides organization
 creation, exact nickname lookup, member listing, assignment, and current membership
-snapshot. Migrations `006–008` are installed in the current test environment and the
-owner bootstrap is verified. Employee/customer assignment and job isolation are the
-next server tests.
+snapshot. Migrations `006–008` are installed in the current test environment; migration
+`009` adds organization-plan inheritance while preserving the member's personal plan.
+Migration `010` adds invitations, seat limits, member function defaults, and a unified
+active/pending participant list. The Edge Function adapter sends the email without
+exposing service credentials to Flutter. Owner bootstrap, employee assignment, and plan
+inheritance are verified. Invitation delivery, customer access, and job isolation are
+the next server tests.
+Migration `011` makes a one-time email callback recoverable: the same Auth account and
+seat are reused, and the owner may safely resend the invitation.
 
 ### inspection
 

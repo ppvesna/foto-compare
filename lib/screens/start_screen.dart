@@ -433,31 +433,6 @@ class _StartScreenState extends State<StartScreen>
     return value.contains('@');
   }
 
-  Future<String?> _emailForLogin(String login) async {
-    final cleaned = login.trim();
-    if (_looksLikeEmail(cleaned)) return cleaned;
-    final nick = _normalizeNick(cleaned);
-    try {
-      final row = await Supabase.instance.client
-          .from('user_profiles')
-          .select('email')
-          .eq('nickname', nick)
-          .maybeSingle();
-      final email = row?['email'] as String?;
-      if (email != null && email.isNotEmpty) return email;
-    } catch (_) {
-      // Если Supabase-профили ещё не настроены, пробуем локальную связку.
-    }
-    return _localEmailForNick(nick);
-  }
-
-  Future<String?> _localEmailForNick(String nickname) async {
-    final nick = _normalizeNick(nickname);
-    if (nick.isEmpty) return null;
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString('nick_email_$nick');
-  }
-
   Future<void> _saveLocalNickEmail(String nickname, String email) async {
     final nick = _normalizeNick(nickname);
     final cleanEmail = email.trim();
@@ -469,6 +444,15 @@ class _StartScreenState extends State<StartScreen>
   }
 
   Future<bool> _isNickAvailable(String nickname) async {
+    try {
+      final response = await Supabase.instance.client.rpc(
+        'is_nickname_available_v1',
+        params: {'target_nickname': _normalizeNick(nickname)},
+      );
+      if (response is bool) return response;
+    } catch (_) {
+      // Migration 010 is optional during rollout.
+    }
     try {
       final row = await Supabase.instance.client
           .from('user_profiles')
@@ -511,23 +495,30 @@ class _StartScreenState extends State<StartScreen>
     }
     setState(() => _authBusy = true);
     try {
-      final email = await _emailForLogin(login);
-      if (email == null) {
-        if (mounted) {
-          xpDlg(
-            context,
-            'Ошибка входа',
-            'Ник не найден в профиле. Введите email аккаунта. После успешного входа связка ник-email сохранится на этом компьютере.',
-          );
+      if (_looksLikeEmail(login)) {
+        await Supabase.instance.client.auth.signInWithPassword(
+          email: login,
+          password: _passCtrl.text,
+        );
+      } else {
+        final response = await Supabase.instance.client.functions.invoke(
+          'login-by-nickname',
+          body: {
+            'nickname': _normalizeNick(login),
+            'password': _passCtrl.text,
+          },
+        );
+        final data = response.data;
+        if (data is! Map || data['refreshToken'] is! String) {
+          throw StateError('Invalid nickname or password');
         }
-        return;
+        await Supabase.instance.client.auth.setSession(
+          data['refreshToken'] as String,
+        );
       }
-      await Supabase.instance.client.auth.signInWithPassword(
-        email: email,
-        password: _passCtrl.text,
-      );
       final user = Supabase.instance.client.auth.currentUser;
       if (user != null) {
+        final email = user.email ?? login;
         final metadata = user.userMetadata ?? {};
         final nickname = metadata['nickname'] as String?;
         final displayName = metadata['display_name'] as String?;
@@ -539,7 +530,7 @@ class _StartScreenState extends State<StartScreen>
             displayName: displayName ?? '',
             organizationName: (metadata['organization_name'] as String?) ?? '',
           );
-        } else if (_looksLikeEmail(login)) {
+        } else if (_looksLikeEmail(email)) {
           await _saveLocalNickEmail(email.split('@').first, email);
         }
       }
@@ -625,6 +616,12 @@ class _StartScreenState extends State<StartScreen>
     final lower = text.toLowerCase();
     if (lower.contains('invalid login credentials')) {
       return 'Неверный email/ник или пароль. Попробуйте войти по email аккаунта.';
+    }
+    if (lower.contains('invalid nickname or password')) {
+      return 'Неверный ник или пароль.';
+    }
+    if (lower.contains('login-by-nickname')) {
+      return 'Защищённый вход по нику ещё не подключён на сервере. Пока войдите по email.';
     }
     if (lower.contains('email not confirmed')) {
       return 'Email ещё не подтверждён. Откройте письмо Supabase и подтвердите аккаунт.';

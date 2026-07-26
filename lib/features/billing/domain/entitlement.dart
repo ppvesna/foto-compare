@@ -1,5 +1,7 @@
 enum PlanTier { free, pro, enterprise }
 
+enum EntitlementScope { personal, organization }
+
 enum ProductCapability {
   runInspection,
   exactDeltaE,
@@ -18,6 +20,9 @@ enum UsageLimit { checksPerDay, savedReferences, organizationSeats }
 
 class EntitlementSnapshot {
   final PlanTier plan;
+  final PlanTier personalPlan;
+  final EntitlementScope scope;
+  final String? organizationId;
   final Set<ProductCapability> capabilities;
   final Map<UsageLimit, int?> limits;
   final bool legacyFallback;
@@ -25,11 +30,14 @@ class EntitlementSnapshot {
 
   const EntitlementSnapshot({
     required this.plan,
+    PlanTier? personalPlan,
+    this.scope = EntitlementScope.personal,
+    this.organizationId,
     required this.capabilities,
     required this.limits,
     this.legacyFallback = false,
     this.validUntil,
-  });
+  }) : personalPlan = personalPlan ?? plan;
 
   factory EntitlementSnapshot.forPlan(PlanTier plan) {
     switch (plan) {
@@ -122,10 +130,15 @@ class EntitlementSnapshot {
   bool allows(ProductCapability capability) =>
       capabilities.contains(capability);
 
+  bool get usesOrganizationPlan => scope == EntitlementScope.organization;
+
   int? limit(UsageLimit limit) => limits[limit];
 
   EntitlementSnapshot copyWith({
     PlanTier? plan,
+    PlanTier? personalPlan,
+    EntitlementScope? scope,
+    String? organizationId,
     Set<ProductCapability>? capabilities,
     Map<UsageLimit, int?>? limits,
     bool? legacyFallback,
@@ -133,6 +146,9 @@ class EntitlementSnapshot {
   }) {
     return EntitlementSnapshot(
       plan: plan ?? this.plan,
+      personalPlan: personalPlan ?? this.personalPlan,
+      scope: scope ?? this.scope,
+      organizationId: organizationId ?? this.organizationId,
       capabilities: capabilities ?? this.capabilities,
       limits: limits ?? this.limits,
       legacyFallback: legacyFallback ?? this.legacyFallback,

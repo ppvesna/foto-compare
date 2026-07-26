@@ -15,7 +15,15 @@ void main() {
       MaterialApp(
         home: Scaffold(
           body: SettingsScreen(
-            entitlements: EntitlementSnapshot.forPlan(PlanTier.pro),
+            entitlements: EntitlementSnapshot(
+              plan: PlanTier.pro,
+              personalPlan: PlanTier.free,
+              scope: EntitlementScope.organization,
+              organizationId: 'organization-1',
+              capabilities:
+                  EntitlementSnapshot.forPlan(PlanTier.pro).capabilities,
+              limits: EntitlementSnapshot.forPlan(PlanTier.pro).limits,
+            ),
             organizationAccess: OrganizationAccess.forRole(
               organizationId: 'organization-1',
               organizationName: 'vesna',
@@ -29,6 +37,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Текущий доступ'), findsOneWidget);
+    expect(find.text('Личный план'), findsWidgets);
+    expect(find.text('Рабочий план'), findsWidgets);
+    expect(find.text('Бесплатный'), findsWidgets);
     expect(find.text('Pro'), findsWidgets);
     expect(find.text('Сотрудник'), findsWidgets);
     expect(find.text('vesna'), findsOneWidget);
@@ -76,29 +87,11 @@ void main() {
     expect(find.text('Синхронизация с сервером'), findsNothing);
   });
 
-  testWidgets('owner finds a registered user and assigns an organization role',
+  testWidgets('owner prepares and sends an organization invitation',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(1440, 1000));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    final service = MockOrganizationAdministrationService(
-      profilesByNickname: const {
-        'printer_ivan': OrganizationUserProfile(
-          userId: 'user-2',
-          nickname: 'printer_ivan',
-          displayName: 'Иван Иванов',
-          organizationName: 'Тестовая типография',
-        ),
-      },
-      members: [
-        OrganizationMember(
-          userId: 'owner-1',
-          nickname: 'owner_oleg',
-          displayName: 'Олег',
-          role: OrganizationRole.owner,
-          joinedAt: DateTime(2026, 7, 21),
-        ),
-      ],
-    );
+    final service = MockOrganizationAdministrationService();
 
     await tester.pumpWidget(
       MaterialApp(
@@ -119,18 +112,22 @@ void main() {
 
     await tester.tap(find.text('Организация').first);
     await tester.pumpAndSettle();
-    expect(find.text('Найти пользователя по нику'), findsOneWidget);
-    expect(find.text('owner_oleg'), findsOneWidget);
+    expect(find.text('Пригласить участника'), findsOneWidget);
 
-    await tester.enterText(find.byType(TextField), 'printer_ivan');
-    await tester.tap(find.text('Найти пользователя'));
+    final fields = find.byType(TextField);
+    await tester.enterText(fields.at(0), 'ivan@example.com');
+    await tester.enterText(fields.at(1), 'printer_ivan');
+    await tester.enterText(fields.at(2), 'Иван Иванов');
+    await tester.tap(find.text('Сохранить и отправить приглашение'));
     await tester.pumpAndSettle();
-    expect(find.text('Иван Иванов'), findsOneWidget);
 
-    await tester.tap(find.text('Назначить или изменить роль'));
-    await tester.pumpAndSettle();
-    expect(service.lastAssignment?.userId, 'user-2');
-    expect(service.lastAssignment?.role, OrganizationRole.employee);
+    expect(service.lastInvitation?.email, 'ivan@example.com');
+    expect(service.lastInvitation?.nickname, 'printer_ivan');
+    expect(service.lastInvitation?.role, OrganizationRole.employee);
+    expect(
+      service.lastInvitation?.functions,
+      contains(OrganizationMemberFunction.inspectionSpecialist),
+    );
   });
 
   testWidgets('personal Pro user creates an organization and becomes owner',

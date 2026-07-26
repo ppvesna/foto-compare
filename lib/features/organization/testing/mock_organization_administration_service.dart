@@ -6,6 +6,7 @@ class MockOrganizationAdministrationService
     implements OrganizationAdministrationService {
   final Map<String, OrganizationUserProfile> profilesByNickname;
   final List<OrganizationMember> members;
+  final List<OrganizationParticipant> participants;
   String createdOrganizationId;
   String? lastCreatedOrganizationName;
   ({
@@ -13,13 +14,28 @@ class MockOrganizationAdministrationService
     String userId,
     OrganizationRole role
   })? lastAssignment;
+  ({
+    String organizationId,
+    String email,
+    String nickname,
+    String displayName,
+    OrganizationRole role,
+    Set<OrganizationMemberFunction> functions,
+  })? lastInvitation;
+  String? lastCancelledInvitationId;
+  CurrentOrganizationInvitation? pendingCurrentInvitation;
+  bool invitationAccepted;
 
   MockOrganizationAdministrationService({
     Map<String, OrganizationUserProfile>? profilesByNickname,
     List<OrganizationMember>? members,
+    List<OrganizationParticipant>? participants,
     this.createdOrganizationId = 'mock-organization-1',
+    this.pendingCurrentInvitation,
+    this.invitationAccepted = false,
   })  : profilesByNickname = profilesByNickname ?? {},
-        members = members ?? [];
+        members = members ?? [],
+        participants = participants ?? [];
 
   @override
   Future<String> createOrganization({required String name}) async {
@@ -38,6 +54,29 @@ class MockOrganizationAdministrationService
   }
 
   @override
+  Future<List<OrganizationParticipant>> listParticipants(
+    String organizationId,
+  ) async {
+    if (participants.isNotEmpty) return List.unmodifiable(participants);
+    return members
+        .map(
+          (member) => OrganizationParticipant(
+            id: member.userId,
+            userId: member.userId,
+            email: member.email,
+            nickname: member.nickname,
+            displayName: member.displayName,
+            role: member.role,
+            functions: member.functions,
+            status: OrganizationParticipantStatus.active,
+            emailSent: true,
+            createdAt: member.joinedAt,
+          ),
+        )
+        .toList();
+  }
+
+  @override
   Future<void> assignMember({
     required String organizationId,
     required String userId,
@@ -49,4 +88,42 @@ class MockOrganizationAdministrationService
       role: role,
     );
   }
+
+  @override
+  Future<OrganizationInvitationResult> inviteMember({
+    required String organizationId,
+    required String email,
+    required String nickname,
+    required String displayName,
+    required OrganizationRole role,
+    required Set<OrganizationMemberFunction> functions,
+  }) async {
+    lastInvitation = (
+      organizationId: organizationId,
+      email: email,
+      nickname: nickname,
+      displayName: displayName,
+      role: role,
+      functions: functions,
+    );
+    return OrganizationInvitationResult(
+      invitationId: 'mock-invitation-1',
+      email: email,
+      nickname: nickname,
+      existingAccount: false,
+      emailSent: true,
+    );
+  }
+
+  @override
+  Future<void> cancelInvitation(String invitationId) async {
+    lastCancelledInvitationId = invitationId;
+  }
+
+  @override
+  Future<CurrentOrganizationInvitation?> currentInvitation() async =>
+      pendingCurrentInvitation;
+
+  @override
+  Future<bool> acceptCurrentInvitation() async => invitationAccepted;
 }

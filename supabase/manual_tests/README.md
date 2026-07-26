@@ -1,7 +1,7 @@
 # Supabase access smoke tests
 
 `access_metadata_smoke_test.sql` is the legacy fallback test for protected Supabase
-`app_metadata`. The primary organization flow now uses migrations `006–008` and the
+`app_metadata`. The primary organization flow now uses migrations `006–011` and the
 steps in `ORGANIZATION_V2_TEST_PLAN.md`. Never apply `005_access_control.sql`; it
 contains the obsolete role model.
 
@@ -24,7 +24,7 @@ target_plan = pro
 target_role = customer
 ```
 
-Run the apply block and verification query. When migration `008` is installed, use
+Run the apply block and verification query. When migration `009` is installed, use
 `Refresh rights from server`; old installations may still require a full sign-out and
 sign-in to refresh JWT metadata.
 
@@ -58,9 +58,11 @@ It is not a remote security guarantee until job tables and RLS are installed.
 
 ## Current verified checkpoint
 
-The configured test environment has migrations `006–008` installed. A dedicated
-account was verified as an active Pro owner of a one-member organization. The next
-manual checks are employee and customer assignment by exact nickname.
+The configured test environment has migrations `006–009` installed. A dedicated
+account was verified as an active Pro owner, and `printer_ivan` inherited the working
+Pro plan as an employee. Migrations `010–011` and both Edge Functions are deployed.
+The participant RPC and transactional recovery check pass; the repeated Magic Link
+callback remains in `INVITATION_V1_TEST_PLAN.md`.
 
 ## Cleanup
 
