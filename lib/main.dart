@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'app/local_access_testing_service.dart';
+import 'capabilities/storage/storage.dart';
 import 'config/app_config.dart';
 import 'config/app_theme.dart';
 import 'screens/start_screen.dart';
@@ -184,6 +185,7 @@ class _MainShellState extends State<MainShell> {
   int _settingsAccessRequest = 0;
   EntitlementSnapshot _entitlements = EntitlementSnapshot.legacyCompatible();
   OrganizationAccess _organizationAccess = OrganizationAccess.legacyPersonal();
+  CloudStorage? _cloudStorage;
   String? _handledInvitationId;
 
   @override
@@ -220,9 +222,16 @@ class _MainShellState extends State<MainShell> {
       }
     }
     if (!mounted) return;
+    final currentUser = client.auth.currentUser;
     setState(() {
       _entitlements = entitlements;
       _organizationAccess = organizationAccess;
+      _cloudStorage = currentUser == null
+          ? null
+          : SupabaseCloudStorage(
+              client,
+              ownerUserId: currentUser.id,
+            );
     });
     _scheduleInvitationDialog(pendingInvitation, organizationService);
   }
@@ -403,6 +412,7 @@ class _MainShellState extends State<MainShell> {
         key: ValueKey('settings-access-$_settingsAccessRequest'),
         entitlements: _entitlements,
         organizationAccess: _organizationAccess,
+        cloudStorage: _cloudStorage,
         onAccessChanged: _loadAccess,
       ),
     ];

@@ -210,8 +210,11 @@ Flutter Web. AI integration follows through `AIProvider`, independently of the c
 engine and storage provider.
 
 Progress: the port, mock, local settings persistence, and device-only default are
-implemented. The next storage step is a real Supabase Storage adapter with organization
-policies; Google OAuth and Drive follow as a separate provider connection.
+implemented. The first real Supabase adapter and private per-user bucket policy are
+prepared by migration `013`; settings can verify the connection without uploading
+files. The next storage step is one explicit low-risk asset flow, followed by
+organization/job-scoped policies. Google OAuth and Drive remain a separate provider
+connection.
 
 ### Step 20. Add an outbox
 

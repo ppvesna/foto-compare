@@ -22,6 +22,7 @@ class SettingsScreen extends StatefulWidget {
   final OrganizationAdministrationService? organizationAdministrationService;
   final CustomerDirectoryService? customerDirectoryService;
   final AccountProfileService? accountProfileService;
+  final CloudStorage? cloudStorage;
 
   const SettingsScreen({
     super.key,
@@ -31,6 +32,7 @@ class SettingsScreen extends StatefulWidget {
     this.organizationAdministrationService,
     this.customerDirectoryService,
     this.accountProfileService,
+    this.cloudStorage,
   });
 
   @override
@@ -59,6 +61,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ColorMeasurementSettings.defaults;
   CameraCaptureSettings _cameraCaptureSettings = CameraCaptureSettings.defaults;
   StorageSettings _storageSettings = StorageSettings.defaults;
+  CloudConnection _cloudConnection = CloudConnection.disconnected;
+  bool _cloudConnectionChecking = false;
   AccessTestOverride _accessTestOverride = AccessTestOverride.disabled;
   bool _accessSaving = false;
   final _organizationNameCtrl = TextEditingController();
@@ -112,6 +116,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _loadColorMeasurementSettings();
     _loadCameraCaptureSettings();
     _loadStorageSettings();
+    _loadCloudConnection();
     _loadAccessTestOverride();
   }
 
@@ -138,6 +143,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (assignable.isNotEmpty && !assignable.contains(_selectedMemberRole)) {
         _selectedMemberRole = assignable.first;
       }
+    }
+    if (oldWidget.cloudStorage != widget.cloudStorage) {
+      _loadCloudConnection();
     }
   }
 
@@ -256,6 +264,43 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _loadStorageSettings() async {
     final settings = await StorageSettingsService.load();
     if (mounted) setState(() => _storageSettings = settings);
+  }
+
+  Future<void> _loadCloudConnection() async {
+    final storage = widget.cloudStorage;
+    if (storage == null) {
+      if (mounted) {
+        setState(() => _cloudConnection = CloudConnection.disconnected);
+      }
+      return;
+    }
+    final connection = await storage.connection();
+    if (mounted) setState(() => _cloudConnection = connection);
+  }
+
+  Future<void> _checkCloudConnection() async {
+    final storage = widget.cloudStorage;
+    if (storage == null || _cloudConnectionChecking) return;
+    setState(() => _cloudConnectionChecking = true);
+    final connection = await storage.connect();
+    if (!mounted) return;
+    setState(() {
+      _cloudConnection = connection;
+      _cloudConnectionChecking = false;
+    });
+    if (connection.state == CloudConnectionState.connected) {
+      xpDlg(
+        context,
+        'Облако доступно',
+        'Приватное хранилище Supabase подключено для ${connection.accountLabel ?? 'текущего пользователя'}. Автоматическая загрузка изображений пока выключена.',
+      );
+    } else {
+      xpDlg(
+        context,
+        'Облако недоступно',
+        'Не удалось открыть приватное хранилище. Проверьте, что миграция 013 установлена в Supabase.',
+      );
+    }
   }
 
   Future<void> _loadAccessTestOverride() async {
@@ -2320,6 +2365,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _storageSection() {
+    final cloudAllowed =
+        widget.entitlements.allows(ProductCapability.cloudAssets);
+    final cloudConnected =
+        _cloudConnection.state == CloudConnectionState.connected;
+    final cloudStatus = switch (_cloudConnection.state) {
+      CloudConnectionState.connected =>
+        'Подключено: ${_cloudConnection.accountLabel ?? 'текущий пользователь'}',
+      CloudConnectionState.error =>
+        'Не подключено. Требуется миграция хранилища.',
+      CloudConnectionState.disconnected => 'Подключение ещё не проверено.',
+    };
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       _settingsPanel(
         title: 'Место хранения изображений',
@@ -2337,8 +2393,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             location: AssetStorageLocation.supabaseStorage,
             icon: Icons.cloud_outlined,
             title: 'Облако приложения',
-            subtitle:
-                'Supabase Storage: превью и общие файлы. Подключение ещё не настроено.',
+            subtitle: cloudAllowed
+                ? '$cloudStatus Оригиналы автоматически не загружаются.'
+                : 'Supabase Storage доступен в плане Pro или Enterprise.',
+            available: cloudAllowed && cloudConnected,
           ),
           _storageLocationOption(
             location: AssetStorageLocation.googleDrive,
@@ -2358,6 +2416,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _notePanel(
             'Авторизация Trimatrix определяет пользователя, организацию и роль. Подключение облачного хранилища настраивается отдельно и не меняет права пользователя в приложении.',
           ),
+          const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: XpBtn(
+              key: const ValueKey('check-supabase-storage'),
+              label: _cloudConnectionChecking
+                  ? 'Проверяем подключение...'
+                  : 'Проверить Supabase Storage',
+              icon: Icons.cloud_done_outlined,
+              primary: cloudConnected,
+              onPressed: cloudAllowed &&
+                      widget.cloudStorage != null &&
+                      !_cloudConnectionChecking
+                  ? _checkCloudConnection
+                  : null,
+            ),
+          ),
         ]),
       ),
       const SizedBox(height: 10),
@@ -2370,7 +2445,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _infoRow('Превью и карты', 'облачная отправка выключена'),
           _infoRow('Права доступа', 'план + роль + доступ к работе'),
           _infoRow('Google OAuth', 'не подключён'),
-          _infoRow('Supabase Storage', 'не настроен'),
+          _infoRow(
+            'Supabase Storage',
+            cloudConnected ? 'приватное хранилище доступно' : 'не подключён',
+          ),
         ]),
       ),
       const SizedBox(height: 10),

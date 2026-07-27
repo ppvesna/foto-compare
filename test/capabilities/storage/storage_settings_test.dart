@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:photo_compare/capabilities/storage/storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -56,5 +57,18 @@ void main() {
 
     await storage.delete('asset-1');
     expect(() => storage.download('asset-1'), throwsA(isA<StateError>()));
+  });
+
+  test('Supabase asset paths are private and user-scoped', () {
+    final storage = SupabaseCloudStorage(
+      SupabaseClient('https://example.supabase.co', 'test-anon-key'),
+      ownerUserId: 'user-1',
+    );
+
+    expect(storage.objectPath('asset-1'), 'users/user-1/asset-1');
+    expect(
+      () => storage.objectPath('../another-user/asset-1'),
+      throwsArgumentError,
+    );
   });
 }

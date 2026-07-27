@@ -349,9 +349,10 @@ Defines `LocalStorage`, `CloudStorage`, asset metadata, cache, retention, checks
 upload policy.
 
 Current foundation: the vendor-neutral `CloudStorage` port, deterministic
-`MockCloudStorage`, device-only defaults, and persisted storage settings exist. No real
-Supabase or Google Drive adapter is connected yet, so the settings UI cannot imply that
-an upload occurred.
+`MockCloudStorage`, device-only defaults, and persisted storage settings exist.
+`SupabaseCloudStorage` now verifies and accesses the private per-user
+`trimatrix-assets` path prepared by migration `013`. No image workflow uploads assets
+automatically yet. Google Drive and organization/job-scoped paths remain disconnected.
 
 ### analytics
 

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:photo_compare/capabilities/storage/storage.dart';
 import 'package:photo_compare/features/auth/auth.dart';
 import 'package:photo_compare/features/billing/billing.dart';
 import 'package:photo_compare/features/organization/organization.dart';
@@ -124,6 +125,7 @@ void main() {
               organizationId: 'organization-1',
               role: OrganizationRole.admin,
             ),
+            cloudStorage: MockCloudStorage(),
             onAccessChanged: () async {},
           ),
         ),
@@ -140,6 +142,16 @@ void main() {
     expect(find.text('Google Drive пользователя'), findsOneWidget);
     expect(find.text('Диск организации'), findsOneWidget);
     expect(find.text('Синхронизация с сервером'), findsNothing);
+
+    await tester.tap(
+      find.byKey(const ValueKey('check-supabase-storage')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Облако доступно'), findsOneWidget);
+    await tester.tap(find.text('ОК'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Подключено: mock-account'), findsOneWidget);
   });
 
   testWidgets('owner prepares and sends an organization invitation',
