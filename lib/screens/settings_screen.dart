@@ -88,6 +88,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String? _customerRequestBeingCreatedId;
   String? _selectedCustomerManagerId;
   String? _selectedCustomerUserId;
+  String? _selectedManagedMemberUserId;
+  OrganizationRole? _selectedManagedMemberRole;
 
   static const _sections = [
     _SettingsSection('Аккаунт', 'профиль и синхронизация'),
@@ -721,6 +723,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final pendingParticipants = _organizationParticipants
         .where((participant) => participant.isPending)
         .length;
+    final manageableParticipants = _organizationParticipants
+        .where(
+          (participant) =>
+              !participant.isPending &&
+              participant.userId != null &&
+              participant.role != OrganizationRole.owner &&
+              !(access.role == OrganizationRole.admin &&
+                  participant.role == OrganizationRole.admin),
+        )
+        .toList();
     final seatLimit = widget.entitlements.limit(UsageLimit.organizationSeats);
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       _settingsPanel(
@@ -817,6 +829,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             .map(_organizationParticipantRow)
                             .toList(),
                       ),
+                      if (manageableParticipants.isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        const Text(
+                          'Изменить роль участника',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        _managedMemberRoleEditor(
+                          manageableParticipants,
+                          assignableRoles,
+                        ),
+                      ],
                       if (pendingParticipants > 0) ...[
                         const SizedBox(height: 10),
                         const Text(
@@ -1064,6 +1091,104 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  Widget _managedMemberRoleEditor(
+    List<OrganizationParticipant> participants,
+    List<OrganizationRole> assignableRoles,
+  ) {
+    final memberSelector = DropdownButtonFormField<String>(
+      key: const ValueKey('managed-member-selector'),
+      initialValue: _selectedManagedMemberUserId,
+      isExpanded: true,
+      decoration: const InputDecoration(
+        labelText: 'Участник',
+        border: OutlineInputBorder(),
+        isDense: true,
+      ),
+      items: participants
+          .map(
+            (participant) => DropdownMenuItem<String>(
+              key: ValueKey('managed-member-${participant.userId}'),
+              value: participant.userId,
+              child: Text(
+                _participantLabel(participant),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          )
+          .toList(),
+      onChanged: _organizationBusy
+          ? null
+          : (userId) {
+              final participant = participants.firstWhere(
+                (item) => item.userId == userId,
+              );
+              setState(() {
+                _selectedManagedMemberUserId = participant.userId;
+                _selectedManagedMemberRole = participant.role;
+              });
+            },
+    );
+    final roleSelector = DropdownButtonFormField<OrganizationRole>(
+      key: ValueKey(
+        'managed-role-${_selectedManagedMemberRole?.name ?? 'none'}',
+      ),
+      initialValue: _selectedManagedMemberRole,
+      isExpanded: true,
+      decoration: const InputDecoration(
+        labelText: 'Новая роль',
+        border: OutlineInputBorder(),
+        isDense: true,
+      ),
+      items: assignableRoles
+          .map(
+            (role) => DropdownMenuItem<OrganizationRole>(
+              key: ValueKey('managed-role-option-${role.name}'),
+              value: role,
+              child: Text(role.label),
+            ),
+          )
+          .toList(),
+      onChanged: _organizationBusy || _selectedManagedMemberUserId == null
+          ? null
+          : (role) => setState(() => _selectedManagedMemberRole = role),
+    );
+    final saveButton = XpBtn(
+      label: 'Сохранить роль',
+      primary: true,
+      onPressed: _organizationBusy ||
+              _selectedManagedMemberUserId == null ||
+              _selectedManagedMemberRole == null
+          ? null
+          : _assignExistingMemberRole,
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 720) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              memberSelector,
+              const SizedBox(height: 8),
+              roleSelector,
+              const SizedBox(height: 8),
+              saveButton,
+            ],
+          );
+        }
+        return Row(
+          children: [
+            Expanded(flex: 2, child: memberSelector),
+            const SizedBox(width: 8),
+            Expanded(child: roleSelector),
+            const SizedBox(width: 8),
+            saveButton,
+          ],
+        );
+      },
+    );
+  }
+
   Widget _customerRequestRow(OrganizationCustomerRequest request) {
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -1177,7 +1302,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final participants =
           await _organizationService.listParticipants(organizationId);
       if (mounted) {
-        setState(() => _organizationParticipants = participants);
+        setState(() {
+          _organizationParticipants = participants;
+          if (!participants.any(
+            (participant) => participant.userId == _selectedManagedMemberUserId,
+          )) {
+            _selectedManagedMemberUserId = null;
+            _selectedManagedMemberRole = null;
+          }
+        });
       }
     } catch (error) {
       if (mounted) {
@@ -1374,6 +1507,72 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return text;
   }
 
+  Future<void> _assignExistingMemberRole() async {
+    final organizationId = widget.organizationAccess.organizationId;
+    final userId = _selectedManagedMemberUserId;
+    final requestedRole = _selectedManagedMemberRole;
+    if (organizationId == null || userId == null || requestedRole == null) {
+      return;
+    }
+
+    OrganizationParticipant? participant;
+    for (final item in _organizationParticipants) {
+      if (!item.isPending && item.userId == userId) {
+        participant = item;
+        break;
+      }
+    }
+    if (participant == null) return;
+    if (!OrganizationAdministrationPolicy.canAssign(
+      actorRole: widget.organizationAccess.role,
+      currentRole: participant.role,
+      requestedRole: requestedRole,
+    )) {
+      xpDlg(
+        context,
+        'Роль не изменена',
+        'Текущая роль не имеет права выполнить это назначение.',
+      );
+      return;
+    }
+    if (participant.role == requestedRole) {
+      xpDlg(
+        context,
+        'Роль не изменена',
+        '${_participantLabel(participant)} уже имеет роль «${requestedRole.label}».',
+      );
+      return;
+    }
+
+    setState(() => _organizationBusy = true);
+    try {
+      await _organizationService.assignMember(
+        organizationId: organizationId,
+        userId: userId,
+        role: requestedRole,
+      );
+      final participants =
+          await _organizationService.listParticipants(organizationId);
+      if (!mounted) return;
+      setState(() {
+        _organizationParticipants = participants;
+        _selectedManagedMemberUserId = null;
+        _selectedManagedMemberRole = null;
+      });
+      xpDlg(
+        context,
+        'Роль сохранена',
+        '${_participantLabel(participant)}: ${requestedRole.label}.',
+      );
+    } catch (error) {
+      if (mounted) {
+        xpDlg(context, 'Роль не изменена', _accessError(error));
+      }
+    } finally {
+      if (mounted) setState(() => _organizationBusy = false);
+    }
+  }
+
   Future<void> _inviteOrganizationMember() async {
     final organizationId = widget.organizationAccess.organizationId;
     final email = _memberEmailCtrl.text.trim().toLowerCase();
@@ -1513,6 +1712,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
       '${participant.role.label}\n$functions',
       status,
     ];
+  }
+
+  String _participantLabel(OrganizationParticipant participant) {
+    if (participant.nickname.trim().isNotEmpty) {
+      return participant.nickname.trim();
+    }
+    if (participant.displayName.trim().isNotEmpty) {
+      return participant.displayName.trim();
+    }
+    return participant.email.trim();
   }
 
   String _accessError(Object error) {

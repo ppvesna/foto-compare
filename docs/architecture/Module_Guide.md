@@ -189,6 +189,10 @@ inheritance and invitation completion are verified.
 Migration `011` makes a one-time email callback recoverable: the same Auth account and
 seat are reused, and the owner may safely resend the invitation.
 
+The participant UI also changes an active member's role through the same protected RPC.
+Owner may appoint admin, employee, or customer. Admin may change only employee and
+customer accounts; owner and peer-admin records are excluded from the admin editor.
+
 Migration `012` and the customer-directory contract add approved customers, primary
 manager and customer-account links, and an owner/admin administration UI. Employees can
 read active customers and submit an unconfirmed name from the technical specification;

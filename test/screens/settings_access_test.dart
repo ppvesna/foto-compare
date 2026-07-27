@@ -187,6 +187,155 @@ void main() {
     );
   });
 
+  testWidgets('owner changes an active employee role to administrator',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1440, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final service = MockOrganizationAdministrationService(
+      participants: [
+        OrganizationParticipant(
+          id: 'employee-1',
+          userId: 'employee-1',
+          email: 'ivan@example.com',
+          nickname: 'printer_ivan',
+          displayName: 'Иван',
+          role: OrganizationRole.employee,
+          functions: const {
+            OrganizationMemberFunction.inspectionSpecialist,
+          },
+          status: OrganizationParticipantStatus.active,
+          emailSent: true,
+          createdAt: DateTime.utc(2026),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SettingsScreen(
+            entitlements: EntitlementSnapshot.forPlan(PlanTier.pro),
+            organizationAccess: OrganizationAccess.forRole(
+              organizationId: 'organization-1',
+              role: OrganizationRole.owner,
+            ),
+            organizationAdministrationService: service,
+            customerDirectoryService: MockCustomerDirectoryService(),
+            onAccessChanged: () async {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Организация').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Изменить роль участника'), findsOneWidget);
+
+    await tester
+        .ensureVisible(find.byKey(const ValueKey('managed-member-selector')));
+    await tester.tap(find.byKey(const ValueKey('managed-member-selector')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('printer_ivan').last);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('managed-role-employee')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('managed-role-option-admin')).last,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Сохранить роль'));
+    await tester.pumpAndSettle();
+
+    expect(service.lastAssignment?.organizationId, 'organization-1');
+    expect(service.lastAssignment?.userId, 'employee-1');
+    expect(service.lastAssignment?.role, OrganizationRole.admin);
+    expect(find.text('Роль сохранена'), findsOneWidget);
+  });
+
+  testWidgets('administrator cannot change another administrator',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1440, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final service = MockOrganizationAdministrationService(
+      participants: [
+        OrganizationParticipant(
+          id: 'admin-2',
+          userId: 'admin-2',
+          email: 'admin@example.com',
+          nickname: 'admin_two',
+          displayName: 'Администратор 2',
+          role: OrganizationRole.admin,
+          functions: const {},
+          status: OrganizationParticipantStatus.active,
+          emailSent: true,
+          createdAt: DateTime.utc(2026),
+        ),
+        OrganizationParticipant(
+          id: 'employee-1',
+          userId: 'employee-1',
+          email: 'ivan@example.com',
+          nickname: 'printer_ivan',
+          displayName: 'Иван',
+          role: OrganizationRole.employee,
+          functions: const {},
+          status: OrganizationParticipantStatus.active,
+          emailSent: true,
+          createdAt: DateTime.utc(2026),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SettingsScreen(
+            entitlements: EntitlementSnapshot.forPlan(PlanTier.pro),
+            organizationAccess: OrganizationAccess.forRole(
+              organizationId: 'organization-1',
+              role: OrganizationRole.admin,
+            ),
+            organizationAdministrationService: service,
+            customerDirectoryService: MockCustomerDirectoryService(),
+            onAccessChanged: () async {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Организация').first);
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('managed-member-selector')),
+    );
+    await tester.tap(find.byKey(const ValueKey('managed-member-selector')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('managed-member-admin-2')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('managed-member-employee-1')),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('printer_ivan').last);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('managed-role-employee')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('managed-role-option-admin')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('managed-role-option-customer')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('administrator adds a customer to the organization directory',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(1440, 1200));

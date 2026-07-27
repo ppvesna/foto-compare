@@ -123,6 +123,9 @@ functions. A new invitee completes their own password and profile; an existing a
 sees the pending invitation after a confirmed login and must accept it. The three
 employee functions are defaults only and do not replace per-job assignments.
 
+Active-member role changes are connected to the protected assignment RPC. The owner can
+appoint administrators; an administrator cannot change owner or administrator records.
+
 ### Step 10. Introduce entitlements
 
 Add `EntitlementService` with a permissive implementation matching today's behavior.
