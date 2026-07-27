@@ -212,9 +212,11 @@ engine and storage provider.
 Progress: the port, mock, local settings persistence, and device-only default are
 implemented. The first real Supabase adapter and private per-user bucket policy are
 prepared by migration `013`; settings can verify the connection without uploading
-files. The next storage step is one explicit low-risk asset flow, followed by
-organization/job-scoped policies. Google OAuth and Drive remain a separate provider
-connection.
+files. Migration `014` implements the first explicit low-risk flow: local-first
+protocol metadata and a bounded difference-map preview are copied to the private
+user cloud in the background. Originals remain device-only. The next storage step is
+organization/job-scoped reading and preview access. Google OAuth and Drive remain a
+separate provider connection.
 
 ### Step 20. Add an outbox
 

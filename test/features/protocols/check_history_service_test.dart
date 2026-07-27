@@ -1,6 +1,8 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 import 'package:photo_compare/features/protocols/protocols.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -27,6 +29,30 @@ void main() {
     expect(CheckHistoryService.lastCheck.value?.customerConfirmed, isTrue);
     expect(CheckHistoryService.checks.value, hasLength(1));
     expect(CheckHistoryService.checks.value.single.stages.single.name, 'Цвет');
+  });
+
+  test('cloud preview keeps detail within the 1280 pixel boundary', () async {
+    final source = img.Image(width: 2000, height: 1000)
+      ..setPixelRgb(100, 100, 255, 0, 0);
+
+    final preview = await ProtocolPreviewService.create(
+      Uint8List.fromList(img.encodePng(source)),
+    );
+    final decoded = img.decodePng(preview!);
+
+    expect(decoded, isNotNull);
+    expect(decoded!.width, ProtocolPreviewService.maxDimension);
+    expect(decoded.height, 640);
+  });
+
+  test('mock cloud protocol repository records metadata and preview', () async {
+    final repository = MockProtocolCloudRepository();
+    final preview = Uint8List.fromList([1, 2, 3]);
+
+    await repository.saveProtocol(_protocol(), previewPng: preview);
+
+    expect(repository.saves.single.protocol.id, 'protocol-1');
+    expect(repository.saves.single.previewPng, preview);
   });
 }
 

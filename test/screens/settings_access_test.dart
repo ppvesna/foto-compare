@@ -5,6 +5,7 @@ import 'package:photo_compare/features/auth/auth.dart';
 import 'package:photo_compare/features/billing/billing.dart';
 import 'package:photo_compare/features/organization/organization.dart';
 import 'package:photo_compare/screens/settings_screen.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   testWidgets('owner adds a nickname to the current account profile',
@@ -115,6 +116,7 @@ void main() {
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(1440, 1000));
     addTearDown(() => tester.binding.setSurfaceSize(null));
+    SharedPreferences.setMockInitialValues({});
 
     await tester.pumpWidget(
       MaterialApp(
@@ -152,6 +154,21 @@ void main() {
     await tester.tap(find.text('ОК'));
     await tester.pumpAndSettle();
     expect(find.textContaining('Подключено: mock-account'), findsOneWidget);
+
+    await tester.tap(find.text('Облако приложения'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Сохранить').last);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('Протоколы и уменьшенные превью'),
+      findsOneWidget,
+    );
+    final settings = await StorageSettingsService.load();
+    expect(settings.primaryLocation, AssetStorageLocation.supabaseStorage);
+    expect(settings.syncProtocolMetadata, isTrue);
+    expect(settings.syncPreviews, isTrue);
+    expect(settings.syncOriginals, isFalse);
   });
 
   testWidgets('owner prepares and sends an organization invitation',

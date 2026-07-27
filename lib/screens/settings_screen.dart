@@ -2369,6 +2369,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         widget.entitlements.allows(ProductCapability.cloudAssets);
     final cloudConnected =
         _cloudConnection.state == CloudConnectionState.connected;
+    final appCloudSelected = _storageSettings.primaryLocation ==
+        AssetStorageLocation.supabaseStorage;
     final cloudStatus = switch (_cloudConnection.state) {
       CloudConnectionState.connected =>
         'Подключено: ${_cloudConnection.accountLabel ?? 'текущий пользователь'}',
@@ -2441,8 +2443,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
         child:
             Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           _infoRow('Оригиналы', 'не загружаются; остаются у владельца'),
-          _infoRow('Протокол', 'последняя проверка хранится локально'),
-          _infoRow('Превью и карты', 'облачная отправка выключена'),
+          _infoRow(
+            'Протокол',
+            appCloudSelected
+                ? 'локально + приватная копия в Supabase'
+                : 'последняя проверка хранится локально',
+          ),
+          _infoRow(
+            'Превью и карты',
+            appCloudSelected
+                ? 'карта отличий до 1280 px в Supabase'
+                : 'облачная отправка выключена',
+          ),
           _infoRow('Права доступа', 'план + роль + доступ к работе'),
           _infoRow('Google OAuth', 'не подключён'),
           _infoRow(
@@ -2487,8 +2499,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
       child: InkWell(
         onTap: available
             ? () => setState(() {
+                  final cloudSelected =
+                      location == AssetStorageLocation.supabaseStorage;
                   _storageSettings = _storageSettings.copyWith(
                     primaryLocation: location,
+                    syncProtocolMetadata: cloudSelected,
+                    syncPreviews: cloudSelected,
+                    syncOriginals: false,
                   );
                 })
             : () => xpDlg(
@@ -2871,10 +2888,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await CameraCaptureSettingsService.save(_cameraCaptureSettings);
     await StorageSettingsService.save(_storageSettings);
     if (!mounted) return;
+    final cloudSelected = _storageSettings.primaryLocation ==
+        AssetStorageLocation.supabaseStorage;
     xpDlg(
       context,
       'Сохранено',
-      'Настройки применены локально. Хранилище изображений остаётся на устройстве; облачные подключения пока выключены.',
+      cloudSelected
+          ? 'Протоколы и уменьшенные превью будут сохраняться в Supabase. Оригиналы остаются на устройстве.'
+          : 'Настройки применены локально. Изображения и протоколы остаются на устройстве.',
     );
   }
 

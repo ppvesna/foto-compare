@@ -401,6 +401,14 @@ class _MainShellState extends State<MainShell> {
       CompareScreen(
         entitlements: _entitlements,
         organizationAccess: _organizationAccess,
+        protocolCloudRepository: user == null || _cloudStorage == null
+            ? null
+            : SupabaseProtocolCloudRepository(
+                Supabase.instance.client,
+                storage: _cloudStorage!,
+                ownerUserId: user.id,
+                organizationId: _organizationAccess.organizationId,
+              ),
       ),
       ChatScreen(
         email: email,

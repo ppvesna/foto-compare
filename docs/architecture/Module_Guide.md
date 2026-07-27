@@ -351,8 +351,14 @@ upload policy.
 Current foundation: the vendor-neutral `CloudStorage` port, deterministic
 `MockCloudStorage`, device-only defaults, and persisted storage settings exist.
 `SupabaseCloudStorage` now verifies and accesses the private per-user
-`trimatrix-assets` path prepared by migration `013`. No image workflow uploads assets
-automatically yet. Google Drive and organization/job-scoped paths remain disconnected.
+`trimatrix-assets` path prepared by migration `013`. No workflow uploads reference or
+sample originals. Google Drive and organization/job-scoped paths remain disconnected.
+
+Migration `014` and `ProtocolCloudRepository` add the first narrow cloud workflow.
+Completed checks remain local-first, then protocol JSON and a difference-map preview
+limited to 1280 pixels are uploaded in the background. Reference and sample originals
+are not accepted by this workflow. The initial RLS policy is owner-only; organization
+sharing requires the later job-scoped policy.
 
 ### analytics
 

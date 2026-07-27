@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
@@ -7,6 +8,7 @@ import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/app_theme.dart';
+import '../capabilities/storage/storage.dart';
 import '../features/billing/billing.dart';
 import '../features/capture/capture.dart';
 import '../features/color_analysis/color_analysis.dart';
@@ -55,6 +57,7 @@ class CompareScreen extends StatefulWidget {
   final OrganizationAccess organizationAccess;
   final CustomerDirectoryService? customerDirectoryService;
   final ProductionJobService? productionJobService;
+  final ProtocolCloudRepository? protocolCloudRepository;
 
   const CompareScreen({
     super.key,
@@ -62,6 +65,7 @@ class CompareScreen extends StatefulWidget {
     required this.organizationAccess,
     this.customerDirectoryService,
     this.productionJobService,
+    this.protocolCloudRepository,
   });
 
   @override
@@ -228,6 +232,7 @@ class _CompareScreenState extends State<CompareScreen>
   DateTime? _activeProtocolCreatedAt;
   String? _activeProtocolSampleImageId;
   int? _activeProtocolSampleNo;
+  Future<void> _cloudProtocolSyncQueue = Future<void>.value();
 
   static const int _uiImageCacheWidth = 1600;
 
@@ -1895,33 +1900,36 @@ class _CompareScreenState extends State<CompareScreen>
         ? _activeProtocolId!
         : now.millisecondsSinceEpoch.toString();
     if (mounted) setState(() => _sampleNo = sampleNumber);
-    await CheckHistoryService.saveLast(
-      CheckProtocol(
-        id: protocolId,
-        createdAt: now,
-        jobId: _currentJobId,
-        jobNumber: jobNumber,
-        customerId: _selectedCustomerId ?? '',
-        customerName: _currentCustomerName,
-        customerConfirmed: _customerConfirmed,
-        score: r.score,
-        verdict: _exactDeltaEReady ? _overallStatus(r.score) : 'Предварительно',
-        refSize: r.refSize,
-        cmpSize: r.cmpSize,
-        labId: _shortLabId(_refLabFingerprint?.labId),
-        referenceId: referenceId,
-        referenceLabel: _savedRefLabel ?? _layoutProfile?.name ?? 'Эталон',
-        sampleLabel: 'Отпечаток $sampleNumber',
-        sampleImageId: sampleImageId,
-        sampleNo: sampleNumber,
-        labMatch: _labFingerprintMatch,
-        deltaEFormula: _measurementSettings.deltaEFormula.shortLabel,
-        captureLighting: _cameraCaptureSettings.lighting.label,
-        captureFilter: _cameraCaptureSettings.opticalFilter.label,
-        apertureMm: _measurementSettings.aperture.diameterMm,
-        stages: _checkProtocolStages(r),
-      ),
+    final protocol = CheckProtocol(
+      id: protocolId,
+      createdAt: now,
+      jobId: _currentJobId,
+      jobNumber: jobNumber,
+      customerId: _selectedCustomerId ?? '',
+      customerName: _currentCustomerName,
+      customerConfirmed: _customerConfirmed,
+      score: r.score,
+      verdict: _exactDeltaEReady ? _overallStatus(r.score) : 'Предварительно',
+      refSize: r.refSize,
+      cmpSize: r.cmpSize,
+      labId: _shortLabId(_refLabFingerprint?.labId),
+      referenceId: referenceId,
+      referenceLabel: _savedRefLabel ?? _layoutProfile?.name ?? 'Эталон',
+      sampleLabel: 'Отпечаток $sampleNumber',
+      sampleImageId: sampleImageId,
+      sampleNo: sampleNumber,
+      labMatch: _labFingerprintMatch,
+      deltaEFormula: _measurementSettings.deltaEFormula.shortLabel,
+      captureLighting: _cameraCaptureSettings.lighting.label,
+      captureFilter: _cameraCaptureSettings.opticalFilter.label,
+      apertureMm: _measurementSettings.aperture.diameterMm,
+      stages: _checkProtocolStages(r),
     );
+    await CheckHistoryService.saveLast(protocol);
+    _cloudProtocolSyncQueue = _cloudProtocolSyncQueue.then(
+      (_) => _syncProtocolToCloud(protocol, r.diffL3),
+    );
+    unawaited(_cloudProtocolSyncQueue);
     if (mounted) {
       setState(() {
         _activeProtocolId = protocolId;
@@ -1929,6 +1937,37 @@ class _CompareScreenState extends State<CompareScreen>
         _activeProtocolSampleImageId = sampleImageId;
         _activeProtocolSampleNo = sampleNumber;
       });
+    }
+  }
+
+  Future<void> _syncProtocolToCloud(
+    CheckProtocol protocol,
+    Uint8List? differenceMap,
+  ) async {
+    final repository = widget.protocolCloudRepository;
+    if (repository == null ||
+        !_allows(ProductCapability.cloudSync) ||
+        !_allows(ProductCapability.cloudAssets)) {
+      return;
+    }
+    final settings = await StorageSettingsService.load();
+    if (settings.primaryLocation != AssetStorageLocation.supabaseStorage) {
+      return;
+    }
+    try {
+      final preview = differenceMap == null
+          ? null
+          : await ProtocolPreviewService.create(differenceMap);
+      await repository.saveProtocol(protocol, previewPng: preview);
+      _setCompareStatus(
+        preview == null
+            ? 'Протокол сохранён локально и в облаке.'
+            : 'Протокол и превью карты отличий сохранены в облаке.',
+      );
+    } catch (_) {
+      _setCompareStatus(
+        'Протокол сохранён локально. Облачная копия сейчас не сохранена.',
+      );
     }
   }
 
