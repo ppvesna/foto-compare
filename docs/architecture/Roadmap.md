@@ -215,8 +215,10 @@ prepared by migration `013`; settings can verify the connection without uploadin
 files. Migration `014` implements the first explicit low-risk flow: local-first
 protocol metadata and a bounded difference-map preview are copied to the private
 user cloud in the background. Originals remain device-only. The next storage step is
-organization/job-scoped reading and preview access. Google OAuth and Drive remain a
-separate provider connection.
+organization/job-scoped reading and preview access. Migration `015` implements that
+step using the existing production-job access function and exposes available protocols
+in the chat technical panel. Google OAuth and Drive remain a separate provider
+connection.
 
 ### Step 20. Add an outbox
 

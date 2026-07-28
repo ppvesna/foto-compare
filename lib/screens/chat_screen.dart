@@ -1,5 +1,8 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import '../config/app_theme.dart';
+import '../features/protocols/protocols.dart';
 import '../widgets/xp_widgets.dart';
 
 enum _ChatKind { internal, approval }
@@ -9,6 +12,7 @@ class ChatScreen extends StatefulWidget {
   final String displayName;
   final String nickname;
   final String organizationName;
+  final ProtocolCloudRepository? protocolCloudRepository;
 
   const ChatScreen({
     super.key,
@@ -16,6 +20,7 @@ class ChatScreen extends StatefulWidget {
     required this.displayName,
     required this.nickname,
     required this.organizationName,
+    this.protocolCloudRepository,
   });
 
   @override
@@ -27,6 +32,11 @@ class _ChatScreenState extends State<ChatScreen> {
   String _approvalStatus = 'Ожидает согласования';
   final _msgCtrl = TextEditingController();
   final _scrollCtrl = ScrollController();
+  List<CloudProtocolRecord> _cloudProtocols = const [];
+  CloudProtocolRecord? _selectedCloudProtocol;
+  Uint8List? _selectedCloudPreview;
+  bool _cloudProtocolsLoading = false;
+  String? _cloudProtocolsError;
 
   String get _userName {
     if (widget.displayName.trim().isNotEmpty) return widget.displayName.trim();
@@ -155,10 +165,73 @@ class _ChatScreenState extends State<ChatScreen> {
   ];
 
   @override
+  void initState() {
+    super.initState();
+    _loadCloudProtocols();
+  }
+
+  @override
+  void didUpdateWidget(covariant ChatScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.protocolCloudRepository != widget.protocolCloudRepository) {
+      _loadCloudProtocols();
+    }
+  }
+
+  @override
   void dispose() {
     _msgCtrl.dispose();
     _scrollCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadCloudProtocols() async {
+    final repository = widget.protocolCloudRepository;
+    if (repository == null || _cloudProtocolsLoading) return;
+    setState(() {
+      _cloudProtocolsLoading = true;
+      _cloudProtocolsError = null;
+    });
+    try {
+      final records = await repository.listAccessibleProtocols(limit: 20);
+      if (!mounted) return;
+      setState(() {
+        _cloudProtocols = records;
+        _selectedCloudProtocol = records.isEmpty ? null : records.first;
+        _selectedCloudPreview = null;
+      });
+      if (records.isNotEmpty) {
+        await _loadCloudPreview(records.first);
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _cloudProtocols = const [];
+        _selectedCloudProtocol = null;
+        _selectedCloudPreview = null;
+        _cloudProtocolsError =
+            'Облачные протоколы пока недоступны. Проверьте миграцию 015.';
+      });
+    } finally {
+      if (mounted) setState(() => _cloudProtocolsLoading = false);
+    }
+  }
+
+  Future<void> _loadCloudPreview(CloudProtocolRecord record) async {
+    final repository = widget.protocolCloudRepository;
+    if (repository == null) return;
+    setState(() {
+      _selectedCloudProtocol = record;
+      _selectedCloudPreview = null;
+    });
+    try {
+      final preview = await repository.loadPreview(record);
+      if (!mounted || _selectedCloudProtocol != record) return;
+      setState(() => _selectedCloudPreview = preview);
+    } catch (_) {
+      if (!mounted || _selectedCloudProtocol != record) return;
+      setState(() => _selectedCloudPreview = null);
+    }
   }
 
   @override
@@ -741,7 +814,10 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_chats[_activeChat].kind == _ChatKind.approval) {
       return _approvalPanel();
     }
-    final card = _messages.firstWhere((m) => m.card != null).card!;
+    final cloudRecord = _selectedCloudProtocol;
+    final card = cloudRecord == null
+        ? _messages.firstWhere((m) => m.card != null).card!
+        : _cloudCheckCard(cloudRecord.protocol);
     return Container(
       decoration: const BoxDecoration(
         color: Color(0xFFEAF6FC),
@@ -766,7 +842,9 @@ class _ChatScreenState extends State<ChatScreen> {
             child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _previewBox(),
+                  _cloudProtocolSelector(),
+                  const SizedBox(height: 10),
+                  _previewBox(_selectedCloudPreview),
                   const SizedBox(height: 10),
                   _techRows(card),
                   const SizedBox(height: 10),
@@ -776,12 +854,10 @@ class _ChatScreenState extends State<ChatScreen> {
                     Expanded(
                       child: XpBtn(
                         label: 'Карта',
-                        primary: true,
-                        onPressed: () => xpDlg(
-                          context,
-                          'Карта отличий',
-                          'Откроется удаленный просмотр Delta E и ЧБ-геометрии.',
-                        ),
+                        primary: _selectedCloudPreview != null,
+                        onPressed: _selectedCloudPreview == null
+                            ? null
+                            : _showCloudPreview,
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -800,6 +876,143 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ),
       ]),
+    );
+  }
+
+  Widget _cloudProtocolSelector() {
+    if (_cloudProtocolsLoading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 8),
+        child: Text(
+          'Загружаю доступные протоколы...',
+          style: TextStyle(fontSize: 10, color: Colors.black54),
+        ),
+      );
+    }
+    if (_cloudProtocolsError != null) {
+      return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Text(
+          _cloudProtocolsError!,
+          style: const TextStyle(fontSize: 10, color: Color(0xFF9A3412)),
+        ),
+        const SizedBox(height: 7),
+        XpBtn(label: 'Повторить', onPressed: _loadCloudProtocols),
+      ]);
+    }
+    if (_cloudProtocols.isEmpty) {
+      return Row(children: [
+        const Expanded(
+          child: Text(
+            'Доступных облачных протоколов пока нет.',
+            style: TextStyle(fontSize: 10, color: Colors.black54),
+          ),
+        ),
+        XpBtn(label: 'Обновить', onPressed: _loadCloudProtocols),
+      ]);
+    }
+    return Row(children: [
+      Expanded(
+        child: DropdownButtonFormField<CloudProtocolRecord>(
+          key: ValueKey(
+            'cloud-protocol-${_selectedCloudProtocol?.ownerUserId}-'
+            '${_selectedCloudProtocol?.protocol.id}-${_cloudProtocols.length}',
+          ),
+          initialValue: _selectedCloudProtocol,
+          isExpanded: true,
+          decoration: const InputDecoration(
+            labelText: 'Доступная проверка',
+            border: OutlineInputBorder(),
+            isDense: true,
+          ),
+          items: _cloudProtocols
+              .map(
+                (record) => DropdownMenuItem(
+                  value: record,
+                  child: Text(
+                    _cloudProtocolLabel(record.protocol),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              )
+              .toList(),
+          onChanged: (record) {
+            if (record != null) _loadCloudPreview(record);
+          },
+        ),
+      ),
+      const SizedBox(width: 7),
+      IconButton(
+        tooltip: 'Обновить протоколы',
+        onPressed: _loadCloudProtocols,
+        icon: const Icon(Icons.refresh),
+        color: AppTheme.blue,
+      ),
+    ]);
+  }
+
+  String _cloudProtocolLabel(CheckProtocol protocol) {
+    final job = protocol.jobNumber.trim().isEmpty
+        ? 'личная работа'
+        : '№ ${protocol.jobNumber}';
+    return '$job · ${protocol.sampleLabel} · ${protocol.score.toStringAsFixed(1)}%';
+  }
+
+  _SharedCheckCard _cloudCheckCard(CheckProtocol protocol) {
+    String metricFor(String fragment, String fallback) {
+      for (final stage in protocol.stages) {
+        if (stage.name.toLowerCase().contains(fragment)) return stage.metric;
+      }
+      return fallback;
+    }
+
+    return _SharedCheckCard(
+      id: protocol.id,
+      title: _cloudProtocolLabel(protocol),
+      verdict: protocol.verdict,
+      score: protocol.score,
+      deltaE: metricFor('цветовая карта', protocol.deltaEFormula),
+      geometry: metricFor('геометрия', 'нет данных'),
+      text: metricFor('ocr', 'нет данных'),
+      storage: 'Протокол и превью в облаке · оригиналы локально',
+    );
+  }
+
+  void _showCloudPreview() {
+    final preview = _selectedCloudPreview;
+    final record = _selectedCloudProtocol;
+    if (preview == null || record == null) return;
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => Dialog(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1100, maxHeight: 760),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 8, 8),
+              child: Row(children: [
+                Expanded(
+                  child: Text(
+                    _cloudProtocolLabel(record.protocol),
+                    style: const TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Закрыть',
+                  onPressed: () => Navigator.pop(dialogContext),
+                  icon: const Icon(Icons.close),
+                ),
+              ]),
+            ),
+            Flexible(
+              child: InteractiveViewer(
+                minScale: 0.5,
+                maxScale: 8,
+                child: Image.memory(preview, fit: BoxFit.contain),
+              ),
+            ),
+          ]),
+        ),
+      ),
     );
   }
 
@@ -838,7 +1051,12 @@ class _ChatScreenState extends State<ChatScreen> {
             child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _layoutPreviewBox(),
+                  _cloudProtocolSelector(),
+                  const SizedBox(height: 10),
+                  if (_selectedCloudPreview != null)
+                    _previewBox(_selectedCloudPreview)
+                  else
+                    _layoutPreviewBox(),
                   const SizedBox(height: 10),
                   _approvalRows(card),
                   const SizedBox(height: 10),
@@ -999,7 +1217,20 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Widget _previewBox() {
+  Widget _previewBox(Uint8List? preview) {
+    if (preview != null) {
+      return Container(
+        height: 172,
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          color: Colors.black,
+          border: Border.all(color: const Color(0xFFC9E2F0)),
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: AppTheme.shadowSubtle,
+        ),
+        child: Image.memory(preview, fit: BoxFit.contain),
+      );
+    }
     return Container(
       height: 172,
       decoration: BoxDecoration(

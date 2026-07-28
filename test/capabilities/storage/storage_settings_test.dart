@@ -70,5 +70,44 @@ void main() {
       () => storage.objectPath('../another-user/asset-1'),
       throwsArgumentError,
     );
+    expect(
+      storage.objectPath(
+        'preview.png',
+        scope: const CloudAssetScope.organizationJob(
+          organizationId: 'organization-1',
+          jobId: 'job-1',
+        ),
+      ),
+      'organizations/organization-1/jobs/job-1/preview.png',
+    );
+  });
+
+  test('mock cloud storage isolates personal and job assets', () async {
+    final storage = MockCloudStorage();
+    const scope = CloudAssetScope.organizationJob(
+      organizationId: 'organization-1',
+      jobId: 'job-1',
+    );
+    final bytes = Uint8List.fromList([4, 5, 6]);
+
+    final asset = await storage.upload(
+      CloudAssetUpload(
+        id: 'preview.png',
+        name: 'Preview',
+        mimeType: 'image/png',
+        bytes: bytes,
+        scope: scope,
+      ),
+    );
+
+    expect(
+      asset.storageKey,
+      'organizations/organization-1/jobs/job-1/preview.png',
+    );
+    expect(await storage.download('preview.png', scope: scope), bytes);
+    expect(
+      () => storage.download('preview.png'),
+      throwsA(isA<StateError>()),
+    );
   });
 }

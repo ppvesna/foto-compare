@@ -23,16 +23,20 @@ class SupabaseCloudStorage implements CloudStorage {
   @override
   AssetStorageLocation get location => AssetStorageLocation.supabaseStorage;
 
-  String objectPath(String assetId) {
-    final cleanId = assetId.trim();
-    if (cleanId.isEmpty ||
-        cleanId == '.' ||
-        cleanId == '..' ||
-        cleanId.contains('/') ||
-        cleanId.contains(r'\')) {
-      throw ArgumentError.value(assetId, 'assetId', 'Invalid cloud asset ID');
+  String objectPath(
+    String assetId, {
+    CloudAssetScope scope = const CloudAssetScope.personal(),
+  }) {
+    final cleanId = _pathSegment(assetId, 'assetId');
+    switch (scope.type) {
+      case CloudAssetScopeType.personal:
+        return 'users/$ownerUserId/$cleanId';
+      case CloudAssetScopeType.organizationJob:
+        final organizationId =
+            _pathSegment(scope.organizationId, 'organizationId');
+        final jobId = _pathSegment(scope.jobId, 'jobId');
+        return 'organizations/$organizationId/jobs/$jobId/$cleanId';
     }
-    return 'users/$ownerUserId/$cleanId';
   }
 
   @override
@@ -52,8 +56,9 @@ class SupabaseCloudStorage implements CloudStorage {
   @override
   Future<CloudAsset> upload(CloudAssetUpload upload) async {
     _requireCurrentUser();
+    final storageKey = objectPath(upload.id, scope: upload.scope);
     await client.storage.from(bucket).uploadBinary(
-          objectPath(upload.id),
+          storageKey,
           upload.bytes,
           fileOptions: FileOptions(
             contentType: upload.mimeType,
@@ -69,20 +74,32 @@ class SupabaseCloudStorage implements CloudStorage {
       name: upload.name,
       mimeType: upload.mimeType,
       sizeBytes: upload.bytes.length,
+      storageKey: storageKey,
+      scope: upload.scope,
       checksum: upload.checksum,
     );
   }
 
   @override
-  Future<Uint8List> download(String assetId) async {
+  Future<Uint8List> download(
+    String assetId, {
+    CloudAssetScope scope = const CloudAssetScope.personal(),
+  }) async {
     _requireCurrentUser();
-    return client.storage.from(bucket).download(objectPath(assetId));
+    return client.storage
+        .from(bucket)
+        .download(objectPath(assetId, scope: scope));
   }
 
   @override
-  Future<void> delete(String assetId) async {
+  Future<void> delete(
+    String assetId, {
+    CloudAssetScope scope = const CloudAssetScope.personal(),
+  }) async {
     _requireCurrentUser();
-    await client.storage.from(bucket).remove([objectPath(assetId)]);
+    await client.storage
+        .from(bucket)
+        .remove([objectPath(assetId, scope: scope)]);
   }
 
   Future<CloudConnection> _probe() async {
@@ -112,5 +129,17 @@ class SupabaseCloudStorage implements CloudStorage {
         client.auth.currentUser!.id != ownerUserId) {
       throw StateError('Supabase Storage is not connected for this user');
     }
+  }
+
+  String _pathSegment(String? value, String name) {
+    final clean = value?.trim() ?? '';
+    if (clean.isEmpty ||
+        clean == '.' ||
+        clean == '..' ||
+        clean.contains('/') ||
+        clean.contains(r'\')) {
+      throw ArgumentError.value(value, name, 'Invalid cloud path segment');
+    }
+    return clean;
   }
 }

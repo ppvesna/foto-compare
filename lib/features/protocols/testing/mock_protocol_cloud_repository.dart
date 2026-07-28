@@ -28,4 +28,33 @@ class MockProtocolCloudRepository implements ProtocolCloudRepository {
       ),
     );
   }
+
+  @override
+  Future<List<CloudProtocolRecord>> listAccessibleProtocols({
+    int limit = 30,
+  }) async {
+    return saves.reversed
+        .take(limit)
+        .map(
+          (save) => CloudProtocolRecord(
+            protocol: save.protocol,
+            ownerUserId: 'mock-user',
+            previewAssetId:
+                save.previewPng == null ? null : 'mock-${save.protocol.id}',
+          ),
+        )
+        .toList();
+  }
+
+  @override
+  Future<Uint8List?> loadPreview(CloudProtocolRecord record) async {
+    for (final save in saves.reversed) {
+      if (save.protocol.id == record.protocol.id) {
+        return save.previewPng == null
+            ? null
+            : Uint8List.fromList(save.previewPng!);
+      }
+    }
+    return null;
+  }
 }

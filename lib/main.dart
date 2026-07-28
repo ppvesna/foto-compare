@@ -186,6 +186,7 @@ class _MainShellState extends State<MainShell> {
   EntitlementSnapshot _entitlements = EntitlementSnapshot.legacyCompatible();
   OrganizationAccess _organizationAccess = OrganizationAccess.legacyPersonal();
   CloudStorage? _cloudStorage;
+  ProtocolCloudRepository? _protocolCloudRepository;
   String? _handledInvitationId;
 
   @override
@@ -223,14 +224,23 @@ class _MainShellState extends State<MainShell> {
     }
     if (!mounted) return;
     final currentUser = client.auth.currentUser;
+    final cloudStorage = currentUser == null
+        ? null
+        : SupabaseCloudStorage(
+            client,
+            ownerUserId: currentUser.id,
+          );
     setState(() {
       _entitlements = entitlements;
       _organizationAccess = organizationAccess;
-      _cloudStorage = currentUser == null
+      _cloudStorage = cloudStorage;
+      _protocolCloudRepository = currentUser == null || cloudStorage == null
           ? null
-          : SupabaseCloudStorage(
+          : SupabaseProtocolCloudRepository(
               client,
+              storage: cloudStorage,
               ownerUserId: currentUser.id,
+              organizationId: organizationAccess.organizationId,
             );
     });
     _scheduleInvitationDialog(pendingInvitation, organizationService);
@@ -401,20 +411,14 @@ class _MainShellState extends State<MainShell> {
       CompareScreen(
         entitlements: _entitlements,
         organizationAccess: _organizationAccess,
-        protocolCloudRepository: user == null || _cloudStorage == null
-            ? null
-            : SupabaseProtocolCloudRepository(
-                Supabase.instance.client,
-                storage: _cloudStorage!,
-                ownerUserId: user.id,
-                organizationId: _organizationAccess.organizationId,
-              ),
+        protocolCloudRepository: _protocolCloudRepository,
       ),
       ChatScreen(
         email: email,
         displayName: displayName,
         nickname: nickname,
         organizationName: organizationName,
+        protocolCloudRepository: _protocolCloudRepository,
       ),
       SettingsScreen(
         key: ValueKey('settings-access-$_settingsAccessRequest'),

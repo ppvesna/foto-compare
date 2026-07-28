@@ -34,25 +34,43 @@ class MockCloudStorage implements CloudStorage {
 
   @override
   Future<CloudAsset> upload(CloudAssetUpload upload) async {
-    _assets[upload.id] = upload;
+    final key = _key(upload.id, upload.scope);
+    _assets[key] = upload;
     return CloudAsset(
       id: upload.id,
       name: upload.name,
       mimeType: upload.mimeType,
       sizeBytes: upload.bytes.length,
+      storageKey: key,
+      scope: upload.scope,
       checksum: upload.checksum,
     );
   }
 
   @override
-  Future<Uint8List> download(String assetId) async {
-    final asset = _assets[assetId];
+  Future<Uint8List> download(
+    String assetId, {
+    CloudAssetScope scope = const CloudAssetScope.personal(),
+  }) async {
+    final asset = _assets[_key(assetId, scope)];
     if (asset == null) throw StateError('Asset not found: $assetId');
     return Uint8List.fromList(asset.bytes);
   }
 
   @override
-  Future<void> delete(String assetId) async {
-    _assets.remove(assetId);
+  Future<void> delete(
+    String assetId, {
+    CloudAssetScope scope = const CloudAssetScope.personal(),
+  }) async {
+    _assets.remove(_key(assetId, scope));
+  }
+
+  String _key(String assetId, CloudAssetScope scope) {
+    switch (scope.type) {
+      case CloudAssetScopeType.personal:
+        return 'personal/$assetId';
+      case CloudAssetScopeType.organizationJob:
+        return 'organizations/${scope.organizationId}/jobs/${scope.jobId}/$assetId';
+    }
   }
 }

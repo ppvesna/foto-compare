@@ -53,6 +53,9 @@ void main() {
 
     expect(repository.saves.single.protocol.id, 'protocol-1');
     expect(repository.saves.single.previewPng, preview);
+    final records = await repository.listAccessibleProtocols();
+    expect(records.single.protocol.jobNumber, '1001');
+    expect(await repository.loadPreview(records.single), preview);
   });
 }
 

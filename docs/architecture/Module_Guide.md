@@ -360,6 +360,12 @@ limited to 1280 pixels are uploaded in the background. Reference and sample orig
 are not accepted by this workflow. The initial RLS policy is owner-only; organization
 sharing requires the later job-scoped policy.
 
+Migration `015` applies the existing `can_view_production_job_v1` policy to cloud
+protocol rows and preview objects. New organization previews use
+`organizations/<organization>/jobs/<job>/...`; owner and admin can read every
+organization job, while employees and customers receive only assigned jobs. The chat
+technical panel reads through `ProtocolCloudRepository`, never around RLS.
+
 ### analytics
 
 Defines `AnalyticsService` and `DiagnosticsService`. Product events and technical logs
