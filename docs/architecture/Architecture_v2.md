@@ -96,15 +96,16 @@ by `EntitlementService`, which answers capability questions such as:
 - whether PDF reports, cloud images, AI, or organization features are enabled;
 - whether an offline license remains valid.
 
-`SubscriptionService` describes plan state. `PaymentService` handles transactions.
-Neither is called directly by Compare, OCR, reports, or settings. Those modules ask
-only for entitlements. This also supports Enterprise contracts that do not use the
-same payment flow as individual subscriptions.
+`SubscriptionService` describes plan state. `PaymentService` handles transactions and is
+used only by billing presentation/application code. Compare, OCR, reports, and other
+product modules ask only for entitlements. This also supports Enterprise contracts that
+do not use the same payment flow as individual subscriptions.
 
-Current implementation note: `EntitlementService`, plan presets, limits, mocks, and a
-Supabase access-snapshot adapter exist. Accounts without the new server function use an
-explicit legacy-compatible snapshot. This fallback is transitional and must be removed
-only after the access migration and subscription assignments are verified.
+Current implementation note: `EntitlementService`, plan presets, limits, `PaymentService`,
+mocks, and Supabase adapters exist. Migration `019` adds server-owned prices, safe billing
+profiles, test activation records, and assignment-backed `current_entitlement_v4`.
+Accounts without that function continue to use the older snapshots during rollout. Card
+numbers and security codes are never accepted or stored by the Flutter application.
 
 ### 6.1 Organization and job access
 
@@ -137,9 +138,9 @@ client writes are not the authority for role changes. Migrations `007–008` rea
 server-managed personal plan data directly so subscription changes do not depend on
 JWT refresh. Migration `009` adds an organization-aware entitlement snapshot: personal
 plan data remains visible, while capabilities and limits come from the effective
-organization plan. At this transition checkpoint that plan is derived from the owner's
-protected server metadata; a future billing module will make the organization billing
-account the direct authority.
+organization plan. Migration `019` makes an organization access assignment the direct
+authority after its owner activates a subscription. Owner metadata remains only as a
+compatibility fallback for organizations that have not yet received that assignment.
 
 Migration `010` adds pending invitations keyed by normalized email, seat-limit
 enforcement, initial employee functions, and atomic invitation acceptance for the
@@ -159,7 +160,13 @@ production jobs, participants, and RLS. Operators select an approved customer; w
 customer is absent, they submit the name from the technical specification and continue
 the inspection. Owner or admin later resolves the request. Job and participant RLS must
 pass staged server tests before it becomes the security boundary for protocols, assets,
-and chat. Chat isolation remains pending.
+and chat. Migration `016` prepares chat isolation by reusing the existing chat tables,
+removing prototype-wide policies, and applying organization membership or
+`can_view_production_job_v1` to every visible thread and message. Owner-to-employee
+Realtime messaging has passed a two-account server test. Migration `017` adds an
+explicit customer release boundary: a job remains internal until an owner, admin, or
+assigned manager shares it. Sharing exposes only that job thread and its job-scoped
+protocols and assets; the organization team thread remains internal.
 
 ## 7. Inspection domain
 

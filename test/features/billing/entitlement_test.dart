@@ -44,6 +44,23 @@ void main() {
     expect(access.limit(UsageLimit.organizationSeats), isNull);
   });
 
+  test('expired paid subscription records the fallback to Free', () {
+    final access = EntitlementSnapshot.forPlan(PlanTier.free).copyWith(
+      configuredPlan: PlanTier.pro,
+      personalPlan: PlanTier.pro,
+      scope: EntitlementScope.organization,
+      organizationId: 'organization-1',
+      validUntil: DateTime.utc(2026, 7, 30),
+      subscriptionStatus: 'active',
+    );
+
+    expect(access.plan, PlanTier.free);
+    expect(access.configuredPlan, PlanTier.pro);
+    expect(access.usesFallbackPlan, isTrue);
+    expect(access.subscriptionExpired, isTrue);
+    expect(access.allows(ProductCapability.exactDeltaE), isFalse);
+  });
+
   test('legacy fallback preserves all current application behavior', () {
     final access = EntitlementSnapshot.legacyCompatible();
 

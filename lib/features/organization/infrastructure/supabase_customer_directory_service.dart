@@ -13,13 +13,24 @@ class SupabaseCustomerDirectoryService implements CustomerDirectoryService {
     String organizationId, {
     bool includeArchived = false,
   }) async {
-    final response = await client.rpc(
-      'list_organization_customers_v1',
-      params: {
-        'target_organization': organizationId,
-        'include_archived': includeArchived,
-      },
-    );
+    Object? response;
+    try {
+      response = await client.rpc(
+        'list_organization_customers_v2',
+        params: {
+          'target_organization': organizationId,
+          'include_archived': includeArchived,
+        },
+      );
+    } catch (_) {
+      response = await client.rpc(
+        'list_organization_customers_v1',
+        params: {
+          'target_organization': organizationId,
+          'include_archived': includeArchived,
+        },
+      );
+    }
     if (response is! List) return const [];
     return response
         .whereType<Map>()
@@ -41,6 +52,13 @@ class SupabaseCustomerDirectoryService implements CustomerDirectoryService {
             createdByNickname: row['created_by_nickname'] as String? ?? '',
             updatedByUserId: row['updated_by_user_id'] as String?,
             updatedByNickname: row['updated_by_nickname'] as String? ?? '',
+            pendingInvitationId: row['pending_invitation_id'] as String?,
+            pendingInvitationEmail:
+                row['pending_invitation_email'] as String? ?? '',
+            pendingInvitationNickname:
+                row['pending_invitation_nickname'] as String? ?? '',
+            pendingInvitationDisplayName:
+                row['pending_invitation_display_name'] as String? ?? '',
             createdAt: _date(row['created_at']),
             updatedAt: _date(row['updated_at']),
           ),
@@ -104,6 +122,38 @@ class SupabaseCustomerDirectoryService implements CustomerDirectoryService {
       'archive_organization_customer_v1',
       params: {'target_customer': customerId},
     );
+  }
+
+  @override
+  Future<void> restoreCustomer(String customerId) async {
+    await client.rpc(
+      'restore_organization_customer_v1',
+      params: {'target_customer': customerId},
+    );
+  }
+
+  @override
+  Future<List<OrganizationCustomerJob>> listCustomerJobs(
+    String customerId,
+  ) async {
+    final response = await client.rpc(
+      'list_customer_jobs_v1',
+      params: {'target_customer': customerId},
+    );
+    if (response is! List) return const [];
+    return response
+        .whereType<Map>()
+        .map((value) => Map<String, dynamic>.from(value))
+        .map(
+          (row) => OrganizationCustomerJob(
+            id: row['job_id'] as String,
+            number: row['job_number'] as String? ?? '',
+            status: row['job_status'] as String? ?? '',
+            createdAt: _date(row['created_at']),
+            updatedAt: _date(row['updated_at']),
+          ),
+        )
+        .toList();
   }
 
   @override

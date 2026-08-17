@@ -16,11 +16,19 @@ class MockOrganizationAdministrationService
   })? lastAssignment;
   ({
     String organizationId,
+    String userId,
+    OrganizationRole role,
+    Set<OrganizationMemberFunction> functions,
+  })? lastMemberUpdate;
+  ({String organizationId, String userId})? lastMemberRemoval;
+  ({
+    String organizationId,
     String email,
     String nickname,
     String displayName,
     OrganizationRole role,
     Set<OrganizationMemberFunction> functions,
+    String? customerId,
   })? lastInvitation;
   String? lastCancelledInvitationId;
   CurrentOrganizationInvitation? pendingCurrentInvitation;
@@ -90,6 +98,32 @@ class MockOrganizationAdministrationService
   }
 
   @override
+  Future<void> updateMember({
+    required String organizationId,
+    required String userId,
+    required OrganizationRole role,
+    required Set<OrganizationMemberFunction> functions,
+  }) async {
+    lastMemberUpdate = (
+      organizationId: organizationId,
+      userId: userId,
+      role: role,
+      functions: functions,
+    );
+  }
+
+  @override
+  Future<void> removeMember({
+    required String organizationId,
+    required String userId,
+  }) async {
+    lastMemberRemoval = (
+      organizationId: organizationId,
+      userId: userId,
+    );
+  }
+
+  @override
   Future<OrganizationInvitationResult> inviteMember({
     required String organizationId,
     required String email,
@@ -97,6 +131,7 @@ class MockOrganizationAdministrationService
     required String displayName,
     required OrganizationRole role,
     required Set<OrganizationMemberFunction> functions,
+    String? customerId,
   }) async {
     lastInvitation = (
       organizationId: organizationId,
@@ -105,6 +140,7 @@ class MockOrganizationAdministrationService
       displayName: displayName,
       role: role,
       functions: functions,
+      customerId: customerId,
     );
     return OrganizationInvitationResult(
       invitationId: 'mock-invitation-1',

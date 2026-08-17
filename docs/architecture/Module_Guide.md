@@ -281,6 +281,11 @@ Dependencies: auth identity, organization, licensing, and remote subscription/pa
 adapters. Other product features depend only on `EntitlementService`; a payment result
 does not directly unlock functionality.
 
+Current checkpoint: `PaymentService` and `MockPaymentService` support quotes, safe billing
+profiles, and a test subscription activation. `SupabasePaymentService` calls protected
+RPCs from migration `019`; prices and final access assignments are decided on the server.
+No card number, CVV, or provider secret crosses this module boundary.
+
 ### collaboration
 
 Responsibilities: organization groups, messages, image/protocol references, comments,
@@ -290,6 +295,12 @@ Public contracts: `ChatRepository`, `MessageService`, `AttachmentAccessService`.
 
 Dependencies: auth, protocols, storage, sync, and security. Chat stores asset IDs and
 signed access references, not unrestricted file paths.
+
+Current foundation: `features/chat` contains thread/message domain models,
+`ChatRepository`, `MockChatRepository`, and `SupabaseChatRepository`. The first
+vertical slice loads personal and organization threads, sends text, and receives
+updates through Supabase Realtime. Protocol and image attachments remain references
+to the protocols/storage modules rather than duplicated binaries.
 
 ### settings
 
@@ -363,8 +374,17 @@ sharing requires the later job-scoped policy.
 Migration `015` applies the existing `can_view_production_job_v1` policy to cloud
 protocol rows and preview objects. New organization previews use
 `organizations/<organization>/jobs/<job>/...`; owner and admin can read every
-organization job, while employees and customers receive only assigned jobs. The chat
-technical panel reads through `ProtocolCloudRepository`, never around RLS.
+organization job, while employees and customers receive only assigned jobs. Chat
+attachments read through `ProtocolCloudRepository`, never around RLS.
+
+Migration `016` secures the existing chat tables, creates default personal and team
+threads, and provides job-scoped threads through `can_view_production_job_v1`.
+Customers are excluded from the organization-wide team thread.
+
+Migration `017` changes customer job access from automatic assignment to an explicit
+release controlled by owner, admin, or the job's assigned manager. `ChatRepository`
+lists manageable jobs and changes the release state only through server RPCs. A
+customer sees the job chat, protocols, and assets only while the job is shared.
 
 ### analytics
 

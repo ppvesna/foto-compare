@@ -4,7 +4,9 @@ import '../domain/organization_customer.dart';
 class MockCustomerDirectoryService implements CustomerDirectoryService {
   final List<OrganizationCustomer> customers;
   final List<OrganizationCustomerRequest> requests;
+  final List<OrganizationCustomerJob> jobs;
   String? archivedCustomerId;
+  String? restoredCustomerId;
   ({String requestId, String customerId})? resolvedRequest;
   ({
     String organizationId,
@@ -18,8 +20,10 @@ class MockCustomerDirectoryService implements CustomerDirectoryService {
   MockCustomerDirectoryService({
     List<OrganizationCustomer>? customers,
     List<OrganizationCustomerRequest>? requests,
+    List<OrganizationCustomerJob>? jobs,
   })  : customers = customers ?? [],
-        requests = requests ?? [];
+        requests = requests ?? [],
+        jobs = jobs ?? [];
 
   @override
   Future<List<OrganizationCustomer>> listCustomers(
@@ -68,6 +72,17 @@ class MockCustomerDirectoryService implements CustomerDirectoryService {
   Future<void> archiveCustomer(String customerId) async {
     archivedCustomerId = customerId;
   }
+
+  @override
+  Future<void> restoreCustomer(String customerId) async {
+    restoredCustomerId = customerId;
+  }
+
+  @override
+  Future<List<OrganizationCustomerJob>> listCustomerJobs(
+    String customerId,
+  ) async =>
+      List.unmodifiable(jobs);
 
   @override
   Future<void> resolveRequest({

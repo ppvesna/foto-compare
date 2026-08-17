@@ -2449,9 +2449,19 @@ class _CompareScreenState extends State<CompareScreen>
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               _railHeader('Порядок действий'),
-              ...actionWidgets,
-              const Spacer(),
-              _railNote(),
+              const SizedBox(height: 6),
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      ...actionWidgets,
+                      const SizedBox(height: 8),
+                      _railNote(),
+                    ],
+                  ),
+                ),
+              ),
             ],
           );
 

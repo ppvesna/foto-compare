@@ -18,6 +18,18 @@ abstract interface class OrganizationAdministrationService {
     required OrganizationRole role,
   });
 
+  Future<void> updateMember({
+    required String organizationId,
+    required String userId,
+    required OrganizationRole role,
+    required Set<OrganizationMemberFunction> functions,
+  });
+
+  Future<void> removeMember({
+    required String organizationId,
+    required String userId,
+  });
+
   Future<OrganizationInvitationResult> inviteMember({
     required String organizationId,
     required String email,
@@ -25,6 +37,7 @@ abstract interface class OrganizationAdministrationService {
     required String displayName,
     required OrganizationRole role,
     required Set<OrganizationMemberFunction> functions,
+    String? customerId,
   });
 
   Future<void> cancelInvitation(String invitationId);

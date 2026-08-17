@@ -7,9 +7,9 @@ import 'package:photo_compare/features/protocols/protocols.dart';
 import 'package:photo_compare/screens/chat_screen.dart';
 
 void main() {
-  testWidgets('chat shows an accessible cloud protocol and its preview',
+  testWidgets('chat opens an accessible cloud protocol from attach menu',
       (tester) async {
-    await tester.binding.setSurfaceSize(const Size(1440, 1000));
+    await tester.binding.setSurfaceSize(const Size(1024, 430));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final repository = MockProtocolCloudRepository();
     final preview = Uint8List.fromList(
@@ -55,8 +55,17 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('№ 1001'), findsOneWidget);
-    expect(find.textContaining('97.2%'), findsOneWidget);
+    expect(find.text('Технические данные'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('chat-attach-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Протокол проверки'), findsOneWidget);
+    expect(find.text('Карта отличий'), findsOneWidget);
+    await tester.tap(find.text('Протокол проверки'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('№ 1001'), findsWidgets);
+    expect(find.textContaining('97.2%'), findsWidgets);
     expect(find.byType(Image), findsWidgets);
   });
 }

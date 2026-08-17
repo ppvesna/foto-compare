@@ -12,6 +12,10 @@ class OrganizationCustomer {
   final String createdByNickname;
   final String? updatedByUserId;
   final String updatedByNickname;
+  final String? pendingInvitationId;
+  final String pendingInvitationEmail;
+  final String pendingInvitationNickname;
+  final String pendingInvitationDisplayName;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -29,11 +33,33 @@ class OrganizationCustomer {
     this.createdByNickname = '',
     this.updatedByUserId,
     this.updatedByNickname = '',
+    this.pendingInvitationId,
+    this.pendingInvitationEmail = '',
+    this.pendingInvitationNickname = '',
+    this.pendingInvitationDisplayName = '',
     required this.createdAt,
     required this.updatedAt,
   });
 
   String get displayLabel => code.isEmpty ? name : '$code · $name';
+
+  bool get hasPendingInvitation => pendingInvitationId != null;
+}
+
+class OrganizationCustomerJob {
+  final String id;
+  final String number;
+  final String status;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+
+  const OrganizationCustomerJob({
+    required this.id,
+    required this.number,
+    required this.status,
+    required this.createdAt,
+    required this.updatedAt,
+  });
 }
 
 class OrganizationCustomerRequest {

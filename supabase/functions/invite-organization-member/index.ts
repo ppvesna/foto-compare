@@ -63,6 +63,7 @@ Deno.serve(async (request: Request) => {
     const nickname = String(body.nickname ?? "").trim().toLowerCase();
     const displayName = String(body.displayName ?? "").trim();
     const role = String(body.role ?? "");
+    const customerId = String(body.customerId ?? "").trim();
     const functions = Array.isArray(body.functions)
       ? body.functions.map(String)
       : [];
@@ -84,6 +85,21 @@ Deno.serve(async (request: Request) => {
     if (invitationError) throw invitationError;
 
     const invitationId = String(invitation.invitation_id);
+    if (customerId) {
+      const { error: customerLinkError } = await callerClient.rpc(
+        "attach_organization_invitation_customer_v1",
+        {
+          target_invitation: invitationId,
+          target_customer: customerId,
+        },
+      );
+      if (customerLinkError) {
+        await callerClient.rpc("cancel_organization_invitation_v1", {
+          target_invitation: invitationId,
+        });
+        throw customerLinkError;
+      }
+    }
     const effectiveNickname = String(invitation.nickname);
     const isRegistered = invitation.is_registered === true;
     const existingUserId = invitation.user_id
@@ -170,6 +186,7 @@ Deno.serve(async (request: Request) => {
       isRegistered,
       emailSent: true,
       recovered: invitation.recovered === true,
+      customerId: customerId || null,
     });
   } catch (error) {
     const failure = invitationError(error);

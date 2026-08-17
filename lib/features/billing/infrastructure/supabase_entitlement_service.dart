@@ -16,6 +16,14 @@ class SupabaseEntitlementService implements EntitlementService {
     if (user == null) return EntitlementSnapshot.forPlan(PlanTier.free);
 
     try {
+      final remote = await client.rpc('current_entitlement_v4');
+      final metadata = _metadataFromResponse(remote);
+      if (metadata != null) return _fromMetadata(metadata);
+    } catch (_) {
+      // Billing v4 is optional until migration 019 is installed.
+    }
+
+    try {
       final remote = await client.rpc('current_entitlement_v3');
       final metadata = _metadataFromResponse(remote);
       if (metadata != null) return _fromMetadata(metadata);
@@ -72,11 +80,17 @@ class SupabaseEntitlementService implements EntitlementService {
         ? EntitlementScope.organization
         : EntitlementScope.personal;
     final organizationId = metadata['organization_id'] as String?;
+    final subscriptionStatus =
+        (metadata['subscription_status'] as String? ?? '').toLowerCase();
+    final validUntil = _parseDate(metadata['access_valid_until']);
     if (!_isActive(metadata, plan)) {
       return EntitlementSnapshot.forPlan(PlanTier.free).copyWith(
+        configuredPlan: plan,
         personalPlan: personalPlan,
         scope: scope,
         organizationId: organizationId,
+        validUntil: validUntil,
+        subscriptionStatus: subscriptionStatus,
       );
     }
 
@@ -98,12 +112,14 @@ class SupabaseEntitlementService implements EntitlementService {
 
     return EntitlementSnapshot(
       plan: plan,
+      configuredPlan: plan,
       personalPlan: personalPlan,
       scope: scope,
       organizationId: organizationId,
       capabilities: capabilities,
       limits: limits,
-      validUntil: _parseDate(metadata['access_valid_until']),
+      validUntil: validUntil,
+      subscriptionStatus: subscriptionStatus,
     );
   }
 

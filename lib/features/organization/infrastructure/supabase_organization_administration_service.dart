@@ -120,6 +120,38 @@ class SupabaseOrganizationAdministrationService
   }
 
   @override
+  Future<void> updateMember({
+    required String organizationId,
+    required String userId,
+    required OrganizationRole role,
+    required Set<OrganizationMemberFunction> functions,
+  }) async {
+    await client.rpc(
+      'update_organization_member_v1',
+      params: {
+        'target_organization': organizationId,
+        'target_user': userId,
+        'target_role': role.name,
+        'target_functions': functions.map((value) => value.name).toList(),
+      },
+    );
+  }
+
+  @override
+  Future<void> removeMember({
+    required String organizationId,
+    required String userId,
+  }) async {
+    await client.rpc(
+      'remove_organization_member_v1',
+      params: {
+        'target_organization': organizationId,
+        'target_user': userId,
+      },
+    );
+  }
+
+  @override
   Future<OrganizationInvitationResult> inviteMember({
     required String organizationId,
     required String email,
@@ -127,6 +159,7 @@ class SupabaseOrganizationAdministrationService
     required String displayName,
     required OrganizationRole role,
     required Set<OrganizationMemberFunction> functions,
+    String? customerId,
   }) async {
     late final FunctionResponse response;
     try {
@@ -139,6 +172,7 @@ class SupabaseOrganizationAdministrationService
           'displayName': displayName.trim(),
           'role': role.name,
           'functions': functions.map((value) => value.name).toList(),
+          if (customerId != null) 'customerId': customerId,
           if (kIsWeb) 'redirectUrl': Uri.base.origin,
         },
       );

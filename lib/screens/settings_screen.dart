@@ -1,7 +1,5 @@
-import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../app/local_access_testing_service.dart';
 import '../capabilities/storage/storage.dart';
 import '../config/app_theme.dart';
 import '../features/auth/auth.dart';
@@ -15,24 +13,47 @@ import '../features/protocols/protocols.dart';
 import '../services/compare_settings_service.dart';
 import '../widgets/xp_widgets.dart';
 
+enum _TeamDraftAction { invite, clear }
+
+enum _TeamAction { edit, resendInvitation, cancelInvitation, remove }
+
+enum _CustomerDraftAction { save, clear }
+
+enum _CustomerAction {
+  edit,
+  linkExistingRepresentative,
+  inviteRepresentative,
+  resendInvitation,
+  cancelInvitation,
+  openJobs,
+  archive,
+  restore,
+}
+
+enum _OrganizationWorkspace { team, customers }
+
 class SettingsScreen extends StatefulWidget {
   final EntitlementSnapshot entitlements;
   final OrganizationAccess organizationAccess;
   final Future<void> Function() onAccessChanged;
+  final int initialSection;
   final OrganizationAdministrationService? organizationAdministrationService;
   final CustomerDirectoryService? customerDirectoryService;
   final AccountProfileService? accountProfileService;
   final CloudStorage? cloudStorage;
+  final PaymentService? paymentService;
 
   const SettingsScreen({
     super.key,
     required this.entitlements,
     required this.organizationAccess,
     required this.onAccessChanged,
+    this.initialSection = 1,
     this.organizationAdministrationService,
     this.customerDirectoryService,
     this.accountProfileService,
     this.cloudStorage,
+    this.paymentService,
   });
 
   @override
@@ -63,8 +84,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   StorageSettings _storageSettings = StorageSettings.defaults;
   CloudConnection _cloudConnection = CloudConnection.disconnected;
   bool _cloudConnectionChecking = false;
-  AccessTestOverride _accessTestOverride = AccessTestOverride.disabled;
-  bool _accessSaving = false;
   final _organizationNameCtrl = TextEditingController();
   final _accountNicknameCtrl = TextEditingController();
   final _accountDisplayNameCtrl = TextEditingController();
@@ -73,6 +92,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _memberDisplayNameCtrl = TextEditingController();
   final _customerCodeCtrl = TextEditingController();
   final _customerNameCtrl = TextEditingController();
+  final _billingEmailCtrl = TextEditingController();
+  final _billingLegalNameCtrl = TextEditingController();
+  final _billingCountryCtrl = TextEditingController();
+  final _billingTaxIdCtrl = TextEditingController();
+  final _billingAddressCtrl = TextEditingController();
   List<OrganizationParticipant> _organizationParticipants = const [];
   List<OrganizationCustomer> _organizationCustomers = const [];
   List<OrganizationCustomerRequest> _customerRequests = const [];
@@ -88,17 +112,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
   AccountProfile? _accountProfile;
   bool _customerBusy = false;
   bool _customerDirectoryAvailable = true;
+  String? _customerDirectoryError;
+  String? _customerRequestsError;
   String? _editingCustomerId;
   String? _customerRequestBeingCreatedId;
   String? _selectedCustomerManagerId;
   String? _selectedCustomerUserId;
-  String? _selectedManagedMemberUserId;
-  OrganizationRole? _selectedManagedMemberRole;
+  bool _showArchivedCustomers = false;
+  _OrganizationWorkspace _organizationWorkspace = _OrganizationWorkspace.team;
+  BillingScope _billingScope = BillingScope.personal;
+  PlanTier _billingPlan = PlanTier.pro;
+  BillingPeriod _billingPeriod = BillingPeriod.month;
+  BillingQuote? _billingQuote;
+  bool _billingLoading = false;
+  bool _billingProfileSaving = false;
+  bool _billingActivating = false;
+  String? _billingError;
 
   static const _sections = [
     _SettingsSection('Аккаунт', 'профиль и синхронизация'),
     _SettingsSection('Доступ', 'план, роль и лимиты'),
-    _SettingsSection('Организация', 'участники и роли'),
+    _SettingsSection('Тариф и оплата', 'срок, сумма и реквизиты'),
+    _SettingsSection('Организация', 'команда и заказчики'),
     _SettingsSection('Камера', 'захват с ноутбука или USB'),
     _SettingsSection('Калибровка', 'точки, лупа и магнит'),
     _SettingsSection('Цвет', 'CMYK точки и Delta E'),
@@ -111,13 +146,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void initState() {
     super.initState();
+    if (widget.initialSection >= 0 &&
+        widget.initialSection < _sections.length) {
+      _section = widget.initialSection;
+    }
     _loadCalibrationSettings();
     _loadCompareSettings();
     _loadColorMeasurementSettings();
     _loadCameraCaptureSettings();
     _loadStorageSettings();
     _loadCloudConnection();
-    _loadAccessTestOverride();
+    _billingScope = _defaultBillingScope();
+    if (_section == 2) _loadBillingData();
   }
 
   @override
@@ -130,6 +170,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _memberDisplayNameCtrl.dispose();
     _customerCodeCtrl.dispose();
     _customerNameCtrl.dispose();
+    _billingEmailCtrl.dispose();
+    _billingLegalNameCtrl.dispose();
+    _billingCountryCtrl.dispose();
+    _billingTaxIdCtrl.dispose();
+    _billingAddressCtrl.dispose();
     super.dispose();
   }
 
@@ -147,6 +192,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (oldWidget.cloudStorage != widget.cloudStorage) {
       _loadCloudConnection();
     }
+    if (oldWidget.organizationAccess.organizationId !=
+            widget.organizationAccess.organizationId ||
+        oldWidget.organizationAccess.role != widget.organizationAccess.role) {
+      final nextScope = _defaultBillingScope();
+      if (_billingScope != nextScope &&
+          !_canUseOrganizationBilling(_billingScope)) {
+        _billingScope = nextScope;
+        _billingQuote = null;
+      }
+    }
   }
 
   OrganizationAdministrationService get _organizationService =>
@@ -160,6 +215,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   AccountProfileService get _accountService =>
       widget.accountProfileService ??
       SupabaseAccountProfileService(Supabase.instance.client);
+
+  PaymentService get _paymentService =>
+      widget.paymentService ?? SupabasePaymentService(Supabase.instance.client);
 
   Future<void> _loadAccountProfile({bool force = false}) async {
     if (_accountProfileLoading || (_accountProfileLoaded && !force)) return;
@@ -303,12 +361,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _loadAccessTestOverride() async {
-    if (!kDebugMode) return;
-    final value = await const LocalAccessTestingService().load();
-    if (mounted) setState(() => _accessTestOverride = value);
-  }
-
   final _dotRows = const [
     _DotGainRow('Cyan', 'C', 25, 1.5, 3.0, 4.5, 5.5),
     _DotGainRow('Magenta', 'M', 25, 1.8, 3.2, 4.8, 5.8),
@@ -431,6 +483,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         if (index == 0) {
           _loadAccountProfile();
         } else if (index == 2) {
+          _loadBillingData();
+        } else if (index == 3) {
           _loadOrganizationMembers();
           _loadCustomerDirectory();
         }
@@ -475,19 +529,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
               children: [
                 if (_section == 0) _accountSection(),
                 if (_section == 1) _accessSection(),
-                if (_section == 2) _organizationSection(),
-                if (_section == 3) _cameraSection(),
-                if (_section == 4) _calibrationSection(),
-                if (_section == 5) _colorSection(),
-                if (_section == 6) _densitySection(),
-                if (_section == 7) _barcodeSection(),
-                if (_section == 8) _inspectionSection(),
-                if (_section == 9) _storageSection(),
+                if (_section == 2) _billingSection(),
+                if (_section == 3) _organizationSection(),
+                if (_section == 4) _cameraSection(),
+                if (_section == 5) _calibrationSection(),
+                if (_section == 6) _colorSection(),
+                if (_section == 7) _densitySection(),
+                if (_section == 8) _barcodeSection(),
+                if (_section == 9) _inspectionSection(),
+                if (_section == 10) _storageSection(),
               ],
             ),
           ),
         ),
-        if (_section != 0)
+        if (_section != 0 && _section != 2 && _section != 3)
           Container(
             width: double.infinity,
             padding: const EdgeInsets.fromLTRB(12, 9, 12, 10),
@@ -620,7 +675,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
             widget.entitlements.usesOrganizationPlan ? 'Рабочий план' : 'План',
             widget.entitlements.plan.label,
           ),
+          if (widget.entitlements.usesFallbackPlan)
+            _infoRow(
+              'Тариф по подписке',
+              widget.entitlements.configuredPlan.label,
+            ),
           _infoRow('Статус', _accessStatusLabel()),
+          if (widget.entitlements.usesFallbackPlan) ...[
+            const SizedBox(height: 8),
+            _notePanel(
+              'Платный тариф неактивен. До его продления '
+              'применяются возможности бесплатного плана.',
+            ),
+          ],
           _infoRow('Роль', widget.organizationAccess.role.label),
           _infoRow(
             'Организация',
@@ -640,8 +707,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
             seatsLimit == null ? 'без ограничения' : '$seatsLimit',
           ),
           XpBtn(
-            label: _accessSaving ? 'Обновляем...' : 'Обновить права с сервера',
-            onPressed: _accessSaving ? null : _refreshAccess,
+            label: 'Открыть тариф и оплату',
+            primary: true,
+            onPressed: () {
+              setState(() => _section = 2);
+              _loadBillingData();
+            },
           ),
         ]),
       ),
@@ -695,9 +766,412 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         ]),
       ),
-      const SizedBox(height: 10),
-      if (kDebugMode) _accessTestingPanel() else _productionAccessPanel(),
     ]);
+  }
+
+  BillingScope _defaultBillingScope() {
+    return widget.organizationAccess.role == OrganizationRole.owner &&
+            widget.organizationAccess.organizationId != null
+        ? BillingScope.organization
+        : BillingScope.personal;
+  }
+
+  bool _canUseOrganizationBilling(BillingScope scope) {
+    if (scope == BillingScope.personal) return true;
+    return widget.organizationAccess.role == OrganizationRole.owner &&
+        widget.organizationAccess.organizationId != null;
+  }
+
+  String? get _billingOrganizationId =>
+      _billingScope == BillingScope.organization
+          ? widget.organizationAccess.organizationId
+          : null;
+
+  Future<void> _loadBillingData() async {
+    if (_billingLoading) return;
+    if (!_canUseOrganizationBilling(_billingScope)) {
+      _billingScope = BillingScope.personal;
+    }
+    final requestedScope = _billingScope;
+    final requestedOrganization = _billingOrganizationId;
+    setState(() {
+      _billingLoading = true;
+      _billingError = null;
+    });
+    try {
+      final quote = await _paymentService.quote(
+        plan: _billingPlan,
+        period: _billingPeriod,
+      );
+      final profile = await _paymentService.loadProfile(
+        scope: requestedScope,
+        organizationId: requestedOrganization,
+      );
+      if (!mounted || requestedScope != _billingScope) return;
+      setState(() {
+        _billingQuote = quote;
+        _billingEmailCtrl.text = profile.billingEmail;
+        _billingLegalNameCtrl.text = profile.legalName;
+        _billingCountryCtrl.text = profile.countryCode;
+        _billingTaxIdCtrl.text = profile.taxId;
+        _billingAddressCtrl.text = profile.billingAddress;
+      });
+    } catch (error) {
+      if (!mounted || requestedScope != _billingScope) return;
+      setState(() {
+        _billingQuote = null;
+        _billingError = _billingErrorMessage(error);
+      });
+    } finally {
+      if (mounted && requestedScope == _billingScope) {
+        setState(() => _billingLoading = false);
+      }
+    }
+  }
+
+  Future<void> _reloadBillingQuote() async {
+    final requestedPlan = _billingPlan;
+    final requestedPeriod = _billingPeriod;
+    setState(() {
+      _billingLoading = true;
+      _billingQuote = null;
+      _billingError = null;
+    });
+    try {
+      final quote = await _paymentService.quote(
+        plan: requestedPlan,
+        period: requestedPeriod,
+      );
+      if (!mounted ||
+          requestedPlan != _billingPlan ||
+          requestedPeriod != _billingPeriod) {
+        return;
+      }
+      setState(() => _billingQuote = quote);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _billingError = _billingErrorMessage(error));
+    } finally {
+      if (mounted &&
+          requestedPlan == _billingPlan &&
+          requestedPeriod == _billingPeriod) {
+        setState(() => _billingLoading = false);
+      }
+    }
+  }
+
+  Future<void> _changeBillingScope(BillingScope scope) async {
+    if (!_canUseOrganizationBilling(scope) || scope == _billingScope) return;
+    setState(() {
+      _billingScope = scope;
+      _billingQuote = null;
+      _billingError = null;
+    });
+    await _loadBillingData();
+  }
+
+  Future<void> _saveBillingProfile() async {
+    final email = _billingEmailCtrl.text.trim().toLowerCase();
+    final country = _billingCountryCtrl.text.trim().toUpperCase();
+    if (email.isNotEmpty &&
+        !RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email)) {
+      xpDlg(context, 'Реквизиты', 'Введите корректный email для счетов.');
+      return;
+    }
+    if (country.isNotEmpty && !RegExp(r'^[A-Z]{2}$').hasMatch(country)) {
+      xpDlg(context, 'Реквизиты',
+          'Код страны: две латинские буквы, например DE.');
+      return;
+    }
+
+    setState(() => _billingProfileSaving = true);
+    try {
+      await _paymentService.saveProfile(
+        scope: _billingScope,
+        organizationId: _billingOrganizationId,
+        profile: BillingProfile(
+          billingEmail: email,
+          legalName: _billingLegalNameCtrl.text.trim(),
+          countryCode: country,
+          taxId: _billingTaxIdCtrl.text.trim(),
+          billingAddress: _billingAddressCtrl.text.trim(),
+        ),
+      );
+      if (mounted) {
+        xpDlg(
+          context,
+          'Реквизиты сохранены',
+          'Данные для будущих счетов сохранены. Данные банковской карты Trimatrix не хранит.',
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        xpDlg(context, 'Реквизиты не сохранены', _billingErrorMessage(error));
+      }
+    } finally {
+      if (mounted) setState(() => _billingProfileSaving = false);
+    }
+  }
+
+  Future<void> _activateTestSubscription() async {
+    final quote = _billingQuote;
+    if (quote == null || _billingActivating) return;
+    final confirmed = await xpConfirm(
+      context,
+      'Тестовая активация',
+      'Активировать ${quote.plan.label} на ${quote.period.label.toLowerCase()} '
+          'за ${quote.formattedAmount}? Реальное списание не выполняется.',
+    );
+    if (!confirmed || !mounted) return;
+    setState(() => _billingActivating = true);
+    try {
+      final activation = await _paymentService.activateTestSubscription(
+        scope: _billingScope,
+        organizationId: _billingOrganizationId,
+        quote: quote,
+      );
+      await widget.onAccessChanged();
+      if (!mounted) return;
+      xpDlg(
+        context,
+        'Тариф активирован',
+        '${activation.plan.label} активен до ${_shortDate(activation.validUntil)}. '
+            'Операция тестовая, без списания денег.',
+      );
+    } catch (error) {
+      if (mounted) {
+        xpDlg(context, 'Тариф не активирован', _billingErrorMessage(error));
+      }
+    } finally {
+      if (mounted) setState(() => _billingActivating = false);
+    }
+  }
+
+  Widget _billingSection() {
+    final organizationBillingAvailable =
+        _canUseOrganizationBilling(BillingScope.organization);
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      _settingsPanel(
+        title: 'Текущий тариф',
+        child:
+            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          _infoRow(
+            widget.entitlements.usesOrganizationPlan
+                ? 'Рабочий тариф'
+                : 'Личный тариф',
+            widget.entitlements.plan.label,
+          ),
+          _infoRow('Статус', _accessStatusLabel()),
+          if (widget.entitlements.usesOrganizationPlan)
+            _infoRow('Личный тариф', widget.entitlements.personalPlan.label),
+        ]),
+      ),
+      const SizedBox(height: 10),
+      _settingsPanel(
+        title: 'Выбор подписки',
+        child:
+            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          _notePanel(
+            'Сейчас работает тестовый платёжный режим. '
+            'Сумма приходит с сервера, деньги не списываются. '
+            'Перед подключением реальной оплаты тестовый режим будет отключён.',
+          ),
+          const SizedBox(height: 12),
+          _optionChips(
+            label: 'Кому принадлежит тариф',
+            value: _billingScope.label,
+            values: [
+              BillingScope.personal.label,
+              if (organizationBillingAvailable) BillingScope.organization.label,
+            ],
+            onSelect: (value) => _changeBillingScope(
+              BillingScope.values.firstWhere((scope) => scope.label == value),
+            ),
+          ),
+          if (widget.organizationAccess.role == OrganizationRole.admin)
+            _notePanel(
+              'Тарифом организации управляет только владелец. '
+              'Здесь администратор может управлять только личной подпиской.',
+            ),
+          const SizedBox(height: 8),
+          _optionChips(
+            label: 'Тариф',
+            value: _billingPlan.label,
+            values: const [PlanTier.pro, PlanTier.enterprise]
+                .map((plan) => plan.label)
+                .toList(),
+            onSelect: (value) {
+              setState(() {
+                _billingPlan =
+                    PlanTier.values.firstWhere((plan) => plan.label == value);
+              });
+              _reloadBillingQuote();
+            },
+          ),
+          _optionChips(
+            label: 'Срок',
+            value: _billingPeriod.label,
+            values: BillingPeriod.values.map((period) => period.label).toList(),
+            onSelect: (value) {
+              setState(() {
+                _billingPeriod = BillingPeriod.values
+                    .firstWhere((period) => period.label == value);
+              });
+              _reloadBillingQuote();
+            },
+          ),
+          if (_billingLoading)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.all(12),
+                child: CircularProgressIndicator(),
+              ),
+            )
+          else if (_billingError != null) ...[
+            _notePanel(_billingError!),
+            const SizedBox(height: 8),
+            XpBtn(label: 'Повторить', onPressed: _loadBillingData),
+          ] else if (_billingQuote case final quote?) ...[
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEAF6FC),
+                border: Border.all(color: const Color(0xFF8FC6DF)),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${quote.plan.label} · ${quote.period.label}',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        quote.testMode
+                            ? 'Тестовая активация'
+                            : 'Сумма к оплате',
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: Colors.black54,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Text(
+                  quote.formattedAmount,
+                  key: const ValueKey('billing-quote-amount'),
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                    color: AppTheme.blueDark,
+                  ),
+                ),
+              ]),
+            ),
+            const SizedBox(height: 10),
+            XpBtn(
+              label: _billingActivating
+                  ? 'Активация…'
+                  : 'Активировать тестовую подписку',
+              primary: true,
+              onPressed: _billingActivating ? null : _activateTestSubscription,
+            ),
+          ],
+        ]),
+      ),
+      const SizedBox(height: 10),
+      _settingsPanel(
+        title: 'Реквизиты для счетов',
+        child:
+            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          const Text(
+            'Здесь хранятся только данные плательщика. '
+            'Номер карты, CVV и другие платёжные секреты в приложение не вводятся.',
+            style: TextStyle(fontSize: 11, height: 1.35),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _billingTextField(
+                controller: _billingEmailCtrl,
+                label: 'Email для счетов',
+                keyboardType: TextInputType.emailAddress,
+              ),
+              _billingTextField(
+                controller: _billingLegalNameCtrl,
+                label: 'Имя / название организации',
+              ),
+              _billingTextField(
+                controller: _billingCountryCtrl,
+                label: 'Код страны',
+                width: 180,
+              ),
+              _billingTextField(
+                controller: _billingTaxIdCtrl,
+                label: 'Налоговый номер',
+              ),
+              _billingTextField(
+                controller: _billingAddressCtrl,
+                label: 'Адрес для счёта',
+                width: 470,
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          XpBtn(
+            label:
+                _billingProfileSaving ? 'Сохранение…' : 'Сохранить реквизиты',
+            onPressed: _billingProfileSaving ? null : _saveBillingProfile,
+          ),
+        ]),
+      ),
+    ]);
+  }
+
+  Widget _billingTextField({
+    required TextEditingController controller,
+    required String label,
+    TextInputType? keyboardType,
+    double width = 280,
+  }) {
+    return SizedBox(
+      width: width,
+      child: TextField(
+        controller: controller,
+        keyboardType: keyboardType,
+        enabled: !_billingLoading && !_billingProfileSaving,
+        decoration: InputDecoration(
+          labelText: label,
+          border: const OutlineInputBorder(),
+        ),
+      ),
+    );
+  }
+
+  String _billingErrorMessage(Object error) {
+    final text = error.toString();
+    if (text.contains('billing_quote_v1') ||
+        text.contains('current_billing_profile_v1') ||
+        text.contains('PGRST202')) {
+      return 'Тестовый платёжный модуль ещё не подключён. '
+          'В Supabase нужно выполнить миграцию 019.';
+    }
+    if (text.contains('Organization billing access required')) {
+      return 'Тариф организации может менять только владелец.';
+    }
+    if (text.contains('Test payments are disabled')) {
+      return 'Тестовые платежи отключены на сервере.';
+    }
+    return text;
   }
 
   Widget _organizationSection() {
@@ -759,25 +1233,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       );
     }
 
-    final assignableRoles = OrganizationAdministrationPolicy.assignableRoles(
-      access.role,
-    ).toList();
     final activeParticipants = _organizationParticipants
         .where((participant) => !participant.isPending)
         .length;
     final pendingParticipants = _organizationParticipants
         .where((participant) => participant.isPending)
         .length;
-    final manageableParticipants = _organizationParticipants
-        .where(
-          (participant) =>
-              !participant.isPending &&
-              participant.userId != null &&
-              participant.role != OrganizationRole.owner &&
-              !(access.role == OrganizationRole.admin &&
-                  participant.role == OrganizationRole.admin),
-        )
-        .toList();
     final seatLimit = widget.entitlements.limit(UsageLimit.organizationSeats);
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       _settingsPanel(
@@ -801,129 +1262,416 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ]),
       ),
       const SizedBox(height: 10),
-      _settingsPanel(
-        title: 'Пригласить участника',
-        child:
-            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          XpInput(
-            placeholder: 'Email сотрудника или заказчика',
-            controller: _memberEmailCtrl,
-            keyboardType: TextInputType.emailAddress,
-          ),
-          const SizedBox(height: 8),
-          XpInput(
-            placeholder: 'Ник: например printer_ivan',
-            controller: _memberNicknameCtrl,
-          ),
-          const SizedBox(height: 8),
-          XpInput(
-            placeholder: 'Имя пользователя',
-            controller: _memberDisplayNameCtrl,
-          ),
-          const SizedBox(height: 10),
-          _optionChips(
-            label: 'Общая роль',
-            value: _selectedMemberRole.label,
-            values: assignableRoles.map((role) => role.label).toList(),
-            onSelect: (value) => setState(() {
-              _selectedMemberRole = assignableRoles.firstWhere(
-                (role) => role.label == value,
-              );
-            }),
-          ),
-          if (_selectedMemberRole == OrganizationRole.employee)
-            _memberFunctionSelection(),
-          const SizedBox(height: 8),
-          XpBtn(
-            label: _organizationBusy
-                ? 'Отправляем...'
-                : 'Сохранить и отправить приглашение',
-            primary: true,
-            onPressed: _organizationBusy ? null : _inviteOrganizationMember,
-          ),
-          const SizedBox(height: 8),
-          _notePanel(
-            'Пароль создаёт сам пользователь после перехода по ссылке из письма. Функции сотрудника становятся начальными специализациями; доступ к конкретной работе назначается отдельно.',
-          ),
-        ]),
-      ),
+      _organizationWorkspaceSelector(),
       const SizedBox(height: 10),
-      _settingsPanel(
-        title: 'Участники',
-        child: _organizationBusy && _organizationParticipants.isEmpty
-            ? const Padding(
-                padding: EdgeInsets.all(8),
-                child: Center(child: CircularProgressIndicator()),
-              )
-            : _organizationParticipants.isEmpty
-                ? const Text(
-                    'Список пока пуст или серверная схема приглашений ещё не подключена.',
-                    style: TextStyle(fontSize: 11, color: Colors.black54),
-                  )
-                : Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _table(
-                        headers: const [
-                          'Email / ник',
-                          'Имя',
-                          'Роль и функции',
-                          'Статус',
-                        ],
-                        rows: _organizationParticipants
-                            .map(_organizationParticipantRow)
-                            .toList(),
-                      ),
-                      if (manageableParticipants.isNotEmpty) ...[
-                        const SizedBox(height: 12),
-                        const Text(
-                          'Изменить роль участника',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        _managedMemberRoleEditor(
-                          manageableParticipants,
-                          assignableRoles,
-                        ),
-                      ],
-                      if (pendingParticipants > 0) ...[
-                        const SizedBox(height: 10),
-                        const Text(
-                          'Ожидающие приглашения',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: _organizationParticipants
-                              .where((participant) => participant.isPending)
-                              .map(
-                                (participant) => XpBtn(
-                                  label: 'Отменить ${participant.nickname}',
-                                  danger: true,
-                                  onPressed: _organizationBusy
-                                      ? null
-                                      : () => _cancelOrganizationInvitation(
-                                            participant,
-                                          ),
-                                ),
-                              )
-                              .toList(),
-                        ),
-                      ],
-                    ],
-                  ),
-      ),
-      const SizedBox(height: 10),
-      _customerDirectoryPanel(),
+      if (_organizationWorkspace == _OrganizationWorkspace.team)
+        _teamWorkspace(access)
+      else
+        _customersWorkspace(access),
     ]);
+  }
+
+  Widget _organizationWorkspaceSelector() {
+    return SegmentedButton<_OrganizationWorkspace>(
+      key: const ValueKey('organization-workspace-selector'),
+      segments: const [
+        ButtonSegment(
+          value: _OrganizationWorkspace.team,
+          label: Text('Команда'),
+        ),
+        ButtonSegment(
+          value: _OrganizationWorkspace.customers,
+          label: Text('Заказчики'),
+        ),
+      ],
+      selected: {_organizationWorkspace},
+      showSelectedIcon: false,
+      onSelectionChanged: (selection) {
+        setState(() {
+          _organizationWorkspace = selection.first;
+        });
+      },
+    );
+  }
+
+  Widget _teamWorkspace(OrganizationAccess access) {
+    final teamParticipants = _organizationParticipants
+        .where((participant) => participant.role != OrganizationRole.customer)
+        .toList();
+    final assignableRoles = OrganizationAdministrationPolicy.assignableRoles(
+      access.role,
+    ).where((role) => role != OrganizationRole.customer).toList();
+    return _settingsPanel(
+      title: 'Команда',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _notePanel(
+            'Заполните первую строку и выберите действие в меню ⋮. '
+            'Приглашение одновременно создаёт участника команды.',
+          ),
+          const SizedBox(height: 8),
+          _teamTable(teamParticipants, assignableRoles, access.role),
+        ],
+      ),
+    );
+  }
+
+  Widget _customersWorkspace(OrganizationAccess access) {
+    return _customerDirectoryPanel();
+  }
+
+  Widget _teamTable(
+    List<OrganizationParticipant> participants,
+    List<OrganizationRole> assignableRoles,
+    OrganizationRole actorRole,
+  ) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final tableWidth =
+            constraints.maxWidth < 980 ? 980.0 : constraints.maxWidth;
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: SizedBox(
+            width: tableWidth,
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                border: Border.all(color: const Color(0xFFC9E2F0)),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: Column(
+                children: [
+                  Container(
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFEAF6FC),
+                      border: Border(
+                        bottom: BorderSide(color: Color(0xFFC9E2F0)),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        _customerTableCell('Email', flex: 2, header: true),
+                        _customerTableCell('Ник', flex: 1, header: true),
+                        _customerTableCell('Имя', flex: 2, header: true),
+                        _customerTableCell('Роль', flex: 1, header: true),
+                        _customerTableCell('Функции', flex: 2, header: true),
+                        _customerTableCell('Статус', flex: 1, header: true),
+                        const SizedBox(width: 48),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    key: const ValueKey('team-draft-row'),
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFF2FAFE),
+                      border: Border(
+                        bottom: BorderSide(color: Color(0xFFC9E2F0)),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        _organizationTableInput(
+                          controller: _memberEmailCtrl,
+                          hint: 'email',
+                          flex: 2,
+                        ),
+                        _organizationTableInput(
+                          controller: _memberNicknameCtrl,
+                          hint: 'ник',
+                          flex: 1,
+                        ),
+                        _organizationTableInput(
+                          controller: _memberDisplayNameCtrl,
+                          hint: 'имя',
+                          flex: 2,
+                        ),
+                        _organizationTableRoleDropdown(
+                          roles: assignableRoles,
+                        ),
+                        _organizationTableFunctionSelector(),
+                        _customerTableCell('новый', flex: 1, draft: true),
+                        SizedBox(
+                          width: 48,
+                          height: 56,
+                          child: PopupMenuButton<_TeamDraftAction>(
+                            key: const ValueKey('team-draft-actions'),
+                            tooltip: 'Действия с новым сотрудником',
+                            enabled: !_organizationBusy,
+                            icon: const Icon(Icons.more_vert),
+                            onSelected: (action) {
+                              switch (action) {
+                                case _TeamDraftAction.invite:
+                                  _inviteOrganizationMember();
+                                case _TeamDraftAction.clear:
+                                  _clearMemberDraft();
+                              }
+                            },
+                            itemBuilder: (_) => const [
+                              PopupMenuItem(
+                                value: _TeamDraftAction.invite,
+                                child: Text('Пригласить сотрудника'),
+                              ),
+                              PopupMenuItem(
+                                value: _TeamDraftAction.clear,
+                                child: Text('Очистить строку'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  ...participants.asMap().entries.map(
+                        (entry) => _teamParticipantRow(
+                          entry.value,
+                          entry.key,
+                          assignableRoles,
+                          actorRole,
+                        ),
+                      ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _organizationTableInput({
+    required TextEditingController controller,
+    required String hint,
+    required int flex,
+    bool enabled = true,
+  }) {
+    return Expanded(
+      flex: flex,
+      child: Container(
+        height: 56,
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 7),
+        decoration: const BoxDecoration(
+          border: Border(right: BorderSide(color: Color(0xFFC9E2F0))),
+        ),
+        child: SizedBox(
+          height: 42,
+          child: TextField(
+            controller: controller,
+            enabled: enabled && !_organizationBusy,
+            textAlignVertical: TextAlignVertical.center,
+            style: const TextStyle(fontSize: 11, height: 1.2),
+            decoration: _organizationGridInputDecoration(hintText: hint),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _organizationTableRoleDropdown({
+    required List<OrganizationRole> roles,
+  }) {
+    final selected =
+        roles.contains(_selectedMemberRole) ? _selectedMemberRole : roles.first;
+    return Expanded(
+      child: Container(
+        height: 56,
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 7),
+        decoration: const BoxDecoration(
+          border: Border(right: BorderSide(color: Color(0xFFC9E2F0))),
+        ),
+        child: SizedBox(
+          height: 42,
+          child: DropdownButtonFormField<OrganizationRole>(
+            key: ValueKey('team-draft-role-${selected.name}'),
+            initialValue: selected,
+            isExpanded: true,
+            style: const TextStyle(
+              fontSize: 11,
+              height: 1.2,
+              color: Colors.black,
+            ),
+            decoration: _organizationGridInputDecoration(),
+            items: roles
+                .map(
+                  (role) => DropdownMenuItem(
+                    value: role,
+                    child: Text(role.label, overflow: TextOverflow.ellipsis),
+                  ),
+                )
+                .toList(),
+            onChanged: _organizationBusy
+                ? null
+                : (role) => setState(() => _selectedMemberRole = role!),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _organizationTableFunctionSelector() {
+    final enabled = _selectedMemberRole == OrganizationRole.employee;
+    final label = !enabled
+        ? '-'
+        : _selectedMemberFunctions.isEmpty
+            ? 'не выбраны'
+            : _selectedMemberFunctions
+                .map((function) => function.label)
+                .join(', ');
+    return Expanded(
+      flex: 2,
+      child: Container(
+        height: 56,
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 7),
+        decoration: const BoxDecoration(
+          border: Border(right: BorderSide(color: Color(0xFFC9E2F0))),
+        ),
+        child: PopupMenuButton<OrganizationMemberFunction>(
+          key: const ValueKey('team-draft-functions'),
+          enabled: enabled && !_organizationBusy,
+          tooltip: 'Функции сотрудника',
+          onSelected: (function) {
+            setState(() {
+              final next = Set<OrganizationMemberFunction>.from(
+                _selectedMemberFunctions,
+              );
+              next.contains(function)
+                  ? next.remove(function)
+                  : next.add(function);
+              _selectedMemberFunctions = next;
+            });
+          },
+          itemBuilder: (_) => OrganizationMemberFunction.values
+              .map(
+                (function) => CheckedPopupMenuItem(
+                  value: function,
+                  checked: _selectedMemberFunctions.contains(function),
+                  child: Text(function.label),
+                ),
+              )
+              .toList(),
+          child: SizedBox(
+            height: 42,
+            child: InputDecorator(
+              decoration: _organizationGridInputDecoration(),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 11, height: 1.2),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  InputDecoration _organizationGridInputDecoration({String? hintText}) {
+    const borderColor = Color(0xFFACC9D9);
+    const radius = BorderRadius.all(Radius.circular(6));
+    return InputDecoration(
+      hintText: hintText,
+      hintStyle: const TextStyle(color: Color(0xFF78909C), fontSize: 11),
+      isDense: true,
+      filled: true,
+      fillColor: Colors.white,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 11),
+      border: const OutlineInputBorder(
+        borderRadius: radius,
+        borderSide: BorderSide(color: borderColor),
+      ),
+      enabledBorder: const OutlineInputBorder(
+        borderRadius: radius,
+        borderSide: BorderSide(color: borderColor),
+      ),
+      focusedBorder: const OutlineInputBorder(
+        borderRadius: radius,
+        borderSide: BorderSide(color: Color(0xFF2D8EB9), width: 1.5),
+      ),
+    );
+  }
+
+  Widget _teamParticipantRow(
+    OrganizationParticipant participant,
+    int index,
+    List<OrganizationRole> assignableRoles,
+    OrganizationRole actorRole,
+  ) {
+    final functions = participant.functions.isEmpty
+        ? '-'
+        : participant.functions.map((function) => function.label).join(', ');
+    final status = participant.isPending
+        ? participant.emailSent
+            ? 'приглашён'
+            : 'ошибка email'
+        : participant.role == OrganizationRole.owner
+            ? 'владелец'
+            : 'активен';
+    final canManage = participant.role != OrganizationRole.owner &&
+        !(actorRole == OrganizationRole.admin &&
+            participant.role == OrganizationRole.admin);
+    return Container(
+      key: ValueKey('team-row-${participant.id}'),
+      decoration: BoxDecoration(
+        color: index.isEven ? Colors.white : const Color(0xFFF8FCFF),
+        border: const Border(
+          bottom: BorderSide(color: Color(0xFFE2EEF4)),
+        ),
+      ),
+      child: Row(
+        children: [
+          _customerTableCell(participant.email, flex: 2),
+          _customerTableCell(participant.nickname, flex: 1, bold: true),
+          _customerTableCell(
+            participant.displayName.isEmpty
+                ? 'не указано'
+                : participant.displayName,
+            flex: 2,
+          ),
+          _customerTableCell(participant.role.label, flex: 1),
+          _customerTableCell(functions, flex: 2),
+          _customerTableCell(status, flex: 1),
+          SizedBox(
+            width: 48,
+            child: PopupMenuButton<_TeamAction>(
+              tooltip: 'Действия с участником',
+              enabled: canManage && !_organizationBusy,
+              icon: const Icon(Icons.more_vert),
+              onSelected: (action) => _handleTeamAction(
+                action,
+                participant,
+                assignableRoles,
+              ),
+              itemBuilder: (_) => participant.isPending
+                  ? const [
+                      PopupMenuItem(
+                        value: _TeamAction.resendInvitation,
+                        child: Text('Повторить приглашение'),
+                      ),
+                      PopupMenuItem(
+                        value: _TeamAction.cancelInvitation,
+                        child: Text('Отменить приглашение'),
+                      ),
+                    ]
+                  : const [
+                      PopupMenuItem(
+                        value: _TeamAction.edit,
+                        child: Text('Изменить роль и функции'),
+                      ),
+                      PopupMenuItem(
+                        value: _TeamAction.remove,
+                        child: Text('Удалить из организации'),
+                      ),
+                    ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _customerDirectoryPanel() {
@@ -932,155 +1680,57 @@ class _SettingsScreenState extends State<SettingsScreen> {
           (participant) =>
               !participant.isPending &&
               participant.userId != null &&
-              participant.role != OrganizationRole.customer,
-        )
-        .toList();
-    final customerUsers = _organizationParticipants
-        .where(
-          (participant) =>
-              !participant.isPending &&
-              participant.userId != null &&
-              participant.role == OrganizationRole.customer,
+              (participant.userId == _selectedCustomerManagerId ||
+                  participant.role == OrganizationRole.owner ||
+                  participant.role == OrganizationRole.admin ||
+                  participant.functions.contains(
+                    OrganizationMemberFunction.manager,
+                  )),
         )
         .toList();
     return _settingsPanel(
-      title: 'Справочник заказчиков',
+      title: 'Заказчики',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (!_customerDirectoryAvailable)
             _notePanel(
-              'Справочник ещё не подключён на сервере. Нужна миграция 012.',
+              _customerDirectoryError ??
+                  'Справочник заказчиков недоступен на сервере.',
             )
           else ...[
-            Row(
-              children: [
-                Expanded(
-                  child: XpInput(
-                    placeholder: 'Код заказчика',
-                    controller: _customerCodeCtrl,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  flex: 2,
-                  child: XpInput(
-                    placeholder: 'Название заказчика',
-                    controller: _customerNameCtrl,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: _participantDropdown(
-                    label: 'Основной менеджер',
-                    value: _selectedCustomerManagerId,
-                    participants: managerCandidates,
-                    onChanged: (value) =>
-                        setState(() => _selectedCustomerManagerId = value),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _participantDropdown(
-                    label: 'Пользователь заказчика',
-                    value: _selectedCustomerUserId,
-                    participants: customerUsers,
-                    onChanged: (value) =>
-                        setState(() => _selectedCustomerUserId = value),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                if (_editingCustomerId != null) ...[
-                  Expanded(
-                    child: XpBtn(
-                      label: 'Отменить изменение',
-                      onPressed: _customerBusy ? null : _clearCustomerForm,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                ],
-                Expanded(
-                  child: XpBtn(
-                    label: _customerBusy
-                        ? 'Сохраняем...'
-                        : _editingCustomerId == null
-                            ? 'Добавить заказчика'
-                            : 'Сохранить заказчика',
-                    primary: true,
-                    onPressed: _customerBusy ? null : _saveCustomer,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            if (_customerBusy && _organizationCustomers.isEmpty)
-              const Center(child: CircularProgressIndicator())
-            else if (_organizationCustomers.isEmpty)
-              const Text(
-                'Заказчики ещё не добавлены.',
-                style: TextStyle(fontSize: 11, color: Colors.black54),
-              )
-            else ...[
-              _table(
-                headers: const [
-                  'Код / название',
-                  'Менеджер',
-                  'Пользователь',
-                  'Добавил',
-                ],
-                rows: _organizationCustomers
-                    .map(
-                      (customer) => [
-                        '${customer.code}\n${customer.name}',
-                        customer.primaryManagerNickname.isEmpty
-                            ? 'не назначен'
-                            : customer.primaryManagerNickname,
-                        customer.customerUserNickname.isEmpty
-                            ? 'не подключён'
-                            : customer.customerUserNickname,
-                        customer.createdByNickname.isEmpty
-                            ? 'неизвестно'
-                            : customer.createdByNickname ==
-                                    customer.updatedByNickname
-                                ? customer.createdByNickname
-                                : '${customer.createdByNickname}\nизм. ${customer.updatedByNickname.isEmpty ? 'неизвестно' : customer.updatedByNickname}',
-                      ],
-                    )
-                    .toList(),
+            if (_customerRequestsError != null) ...[
+              _notePanel(
+                'Справочник работает, но заявки «Заказчик не найден» '
+                'временно недоступны: $_customerRequestsError',
               ),
               const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: _organizationCustomers
-                    .expand(
-                      (customer) => [
-                        XpBtn(
-                          label: 'Изменить ${customer.code}',
-                          onPressed: _customerBusy
-                              ? null
-                              : () => _editCustomer(customer),
-                        ),
-                        XpBtn(
-                          label: 'В архив ${customer.code}',
-                          danger: true,
-                          onPressed: _customerBusy
-                              ? null
-                              : () => _archiveCustomer(customer),
-                        ),
-                      ],
-                    )
-                    .toList(),
-              ),
             ],
+            _notePanel(
+              'Заполните первую строку и выберите действие в меню ⋮. '
+              'Представитель приглашается из меню сохранённого заказчика.',
+            ),
+            Align(
+              alignment: Alignment.centerRight,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Показать архив'),
+                  const SizedBox(width: 6),
+                  Switch.adaptive(
+                    value: _showArchivedCustomers,
+                    onChanged: _customerBusy
+                        ? null
+                        : (value) {
+                            setState(() => _showArchivedCustomers = value);
+                            _loadCustomerDirectory();
+                          },
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            _customerDirectoryTable(managerCandidates),
             if (_customerRequests.isNotEmpty) ...[
               const SizedBox(height: 14),
               const Text(
@@ -1102,23 +1752,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
     required List<OrganizationParticipant> participants,
     required ValueChanged<String?> onChanged,
   }) {
+    final participantsByUserId = <String, OrganizationParticipant>{};
+    for (final participant in participants) {
+      final userId = participant.userId;
+      if (userId != null && userId.isNotEmpty) {
+        participantsByUserId.putIfAbsent(userId, () => participant);
+      }
+    }
+    final selectedValue =
+        value != null && participantsByUserId.containsKey(value) ? value : '';
+
     return DropdownButtonFormField<String>(
-      key: ValueKey('$label-${value ?? 'none'}'),
-      initialValue: value,
+      key: ValueKey('$label-$selectedValue'),
+      initialValue: selectedValue,
       isExpanded: true,
-      decoration: InputDecoration(
-        labelText: label,
-        border: const OutlineInputBorder(),
-        isDense: true,
-      ),
+      style: const TextStyle(fontSize: 11, height: 1.2, color: Colors.black),
+      decoration: _organizationGridInputDecoration(hintText: label),
       items: [
         const DropdownMenuItem<String>(
           value: '',
           child: Text('Не выбран'),
         ),
-        ...participants.map(
+        ...participantsByUserId.values.map(
           (participant) => DropdownMenuItem<String>(
-            value: participant.userId,
+            value: participant.userId!,
             child: Text(
               participant.nickname.isEmpty
                   ? participant.displayName
@@ -1136,101 +1793,290 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _managedMemberRoleEditor(
-    List<OrganizationParticipant> participants,
-    List<OrganizationRole> assignableRoles,
+  Widget _customerDirectoryTable(
+    List<OrganizationParticipant> managerCandidates,
   ) {
-    final memberSelector = DropdownButtonFormField<String>(
-      key: const ValueKey('managed-member-selector'),
-      initialValue: _selectedManagedMemberUserId,
-      isExpanded: true,
-      decoration: const InputDecoration(
-        labelText: 'Участник',
-        border: OutlineInputBorder(),
-        isDense: true,
-      ),
-      items: participants
-          .map(
-            (participant) => DropdownMenuItem<String>(
-              key: ValueKey('managed-member-${participant.userId}'),
-              value: participant.userId,
-              child: Text(
-                _participantLabel(participant),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          )
-          .toList(),
-      onChanged: _organizationBusy
-          ? null
-          : (userId) {
-              final participant = participants.firstWhere(
-                (item) => item.userId == userId,
-              );
-              setState(() {
-                _selectedManagedMemberUserId = participant.userId;
-                _selectedManagedMemberRole = participant.role;
-              });
-            },
-    );
-    final roleSelector = DropdownButtonFormField<OrganizationRole>(
-      key: ValueKey(
-        'managed-role-${_selectedManagedMemberRole?.name ?? 'none'}',
-      ),
-      initialValue: _selectedManagedMemberRole,
-      isExpanded: true,
-      decoration: const InputDecoration(
-        labelText: 'Новая роль',
-        border: OutlineInputBorder(),
-        isDense: true,
-      ),
-      items: assignableRoles
-          .map(
-            (role) => DropdownMenuItem<OrganizationRole>(
-              key: ValueKey('managed-role-option-${role.name}'),
-              value: role,
-              child: Text(role.label),
-            ),
-          )
-          .toList(),
-      onChanged: _organizationBusy || _selectedManagedMemberUserId == null
-          ? null
-          : (role) => setState(() => _selectedManagedMemberRole = role),
-    );
-    final saveButton = XpBtn(
-      label: 'Сохранить роль',
-      primary: true,
-      onPressed: _organizationBusy ||
-              _selectedManagedMemberUserId == null ||
-              _selectedManagedMemberRole == null
-          ? null
-          : _assignExistingMemberRole,
-    );
-
     return LayoutBuilder(
       builder: (context, constraints) {
-        if (constraints.maxWidth < 720) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              memberSelector,
-              const SizedBox(height: 8),
-              roleSelector,
-              const SizedBox(height: 8),
-              saveButton,
-            ],
-          );
-        }
-        return Row(
-          children: [
-            Expanded(flex: 2, child: memberSelector),
-            const SizedBox(width: 8),
-            Expanded(child: roleSelector),
-            const SizedBox(width: 8),
-            saveButton,
-          ],
+        final tableWidth =
+            constraints.maxWidth < 900 ? 900.0 : constraints.maxWidth;
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: SizedBox(
+            width: tableWidth,
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                border: Border.all(color: const Color(0xFFC9E2F0)),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: Column(children: [
+                Container(
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFEAF6FC),
+                    border: Border(
+                      bottom: BorderSide(color: Color(0xFFC9E2F0)),
+                    ),
+                  ),
+                  child: Row(children: [
+                    _customerTableCell('Код', flex: 1, header: true),
+                    _customerTableCell('Заказчик', flex: 2, header: true),
+                    _customerTableCell('Менеджер', flex: 1, header: true),
+                    _customerTableCell('Представитель', flex: 2, header: true),
+                    _customerTableCell('Статус', flex: 1, header: true),
+                    const SizedBox(width: 48),
+                  ]),
+                ),
+                Container(
+                  key: const ValueKey('customer-draft-row'),
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFF2FAFE),
+                    border: Border(
+                      bottom: BorderSide(color: Color(0xFFC9E2F0)),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      _organizationTableInput(
+                        controller: _customerCodeCtrl,
+                        hint: 'код',
+                        flex: 1,
+                        enabled: !_customerBusy,
+                      ),
+                      _organizationTableInput(
+                        controller: _customerNameCtrl,
+                        hint: 'название',
+                        flex: 2,
+                        enabled: !_customerBusy,
+                      ),
+                      Expanded(
+                        child: Container(
+                          height: 56,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 7,
+                          ),
+                          decoration: const BoxDecoration(
+                            border: Border(
+                              right: BorderSide(color: Color(0xFFC9E2F0)),
+                            ),
+                          ),
+                          child: _participantDropdown(
+                            label: 'менеджер',
+                            value: _selectedCustomerManagerId,
+                            participants: managerCandidates,
+                            onChanged: (value) => setState(
+                              () => _selectedCustomerManagerId = value,
+                            ),
+                          ),
+                        ),
+                      ),
+                      _customerTableCell(
+                        _editingCustomerId == null
+                            ? 'после сохранения через ⋮'
+                            : 'связь сохранится',
+                        flex: 2,
+                        draft: true,
+                      ),
+                      _customerTableCell(
+                        _editingCustomerId == null ? 'новый' : 'изменение',
+                        flex: 1,
+                        draft: true,
+                      ),
+                      SizedBox(
+                        width: 48,
+                        height: 56,
+                        child: PopupMenuButton<_CustomerDraftAction>(
+                          key: const ValueKey('customer-draft-actions'),
+                          tooltip: 'Действия с новым заказчиком',
+                          enabled: !_customerBusy,
+                          icon: const Icon(Icons.more_vert),
+                          onSelected: (action) {
+                            switch (action) {
+                              case _CustomerDraftAction.save:
+                                _saveCustomer();
+                              case _CustomerDraftAction.clear:
+                                _clearCustomerForm();
+                            }
+                          },
+                          itemBuilder: (_) => [
+                            PopupMenuItem(
+                              value: _CustomerDraftAction.save,
+                              child: Text(
+                                _editingCustomerId == null
+                                    ? 'Создать заказчика'
+                                    : 'Сохранить изменения',
+                              ),
+                            ),
+                            const PopupMenuItem(
+                              value: _CustomerDraftAction.clear,
+                              child: Text('Очистить строку'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                ..._organizationCustomers.asMap().entries.map((entry) {
+                  final customer = entry.value;
+                  final representative =
+                      customer.customerUserNickname.isNotEmpty
+                          ? customer.customerUserNickname
+                          : customer.pendingInvitationNickname.isNotEmpty
+                              ? customer.pendingInvitationNickname
+                              : customer.pendingInvitationEmail.isNotEmpty
+                                  ? customer.pendingInvitationEmail
+                                  : 'не назначен';
+                  final status = !customer.active
+                      ? 'в архиве'
+                      : customer.customerUserId != null
+                          ? 'активен'
+                          : customer.hasPendingInvitation
+                              ? 'приглашён'
+                              : 'без доступа';
+                  final hasExistingCustomerUser = _organizationParticipants.any(
+                    (participant) =>
+                        !participant.isPending &&
+                        participant.userId != null &&
+                        participant.role == OrganizationRole.customer,
+                  );
+                  return Container(
+                    decoration: BoxDecoration(
+                      color: entry.key.isEven
+                          ? Colors.white
+                          : const Color(0xFFF8FCFF),
+                      border: const Border(
+                        bottom: BorderSide(color: Color(0xFFE2EEF4)),
+                      ),
+                    ),
+                    child: Row(children: [
+                      _customerTableCell(customer.code, flex: 1, bold: true),
+                      _customerTableCell(customer.name, flex: 2, bold: true),
+                      _customerTableCell(
+                        customer.primaryManagerNickname.isEmpty
+                            ? 'не назначен'
+                            : customer.primaryManagerNickname,
+                        flex: 1,
+                      ),
+                      _customerTableCell(
+                        representative,
+                        flex: 2,
+                      ),
+                      _customerTableCell(status, flex: 1),
+                      SizedBox(
+                        width: 48,
+                        child: PopupMenuButton<_CustomerAction>(
+                          tooltip: 'Действия с заказчиком',
+                          enabled: !_customerBusy,
+                          icon: const Icon(Icons.more_vert),
+                          onSelected: (action) {
+                            _handleCustomerAction(action, customer);
+                          },
+                          itemBuilder: (_) => [
+                            if (customer.active) ...[
+                              const PopupMenuItem(
+                                value: _CustomerAction.edit,
+                                child: Row(children: [
+                                  Icon(Icons.edit_outlined, size: 18),
+                                  SizedBox(width: 9),
+                                  Text('Изменить'),
+                                ]),
+                              ),
+                              if (hasExistingCustomerUser &&
+                                  !customer.hasPendingInvitation)
+                                PopupMenuItem(
+                                  value: _CustomerAction
+                                      .linkExistingRepresentative,
+                                  child: Text(
+                                    customer.customerUserId == null
+                                        ? 'Выбрать зарегистрированного'
+                                        : 'Сменить представителя',
+                                  ),
+                                ),
+                              PopupMenuItem(
+                                value: customer.hasPendingInvitation
+                                    ? _CustomerAction.resendInvitation
+                                    : _CustomerAction.inviteRepresentative,
+                                child: Text(
+                                  customer.hasPendingInvitation
+                                      ? 'Повторить приглашение'
+                                      : 'Пригласить представителя',
+                                ),
+                              ),
+                              if (customer.hasPendingInvitation)
+                                const PopupMenuItem(
+                                  value: _CustomerAction.cancelInvitation,
+                                  child: Text('Отменить приглашение'),
+                                ),
+                            ],
+                            const PopupMenuItem(
+                              value: _CustomerAction.openJobs,
+                              child: Text('Открыть работы'),
+                            ),
+                            if (customer.active)
+                              const PopupMenuItem(
+                                value: _CustomerAction.archive,
+                                child: Row(children: [
+                                  Icon(
+                                    Icons.archive_outlined,
+                                    size: 18,
+                                    color: Color(0xFFB42318),
+                                  ),
+                                  SizedBox(width: 9),
+                                  Text(
+                                    'В архив',
+                                    style: TextStyle(color: Color(0xFFB42318)),
+                                  ),
+                                ]),
+                              )
+                            else
+                              const PopupMenuItem(
+                                value: _CustomerAction.restore,
+                                child: Text('Восстановить из архива'),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ]),
+                  );
+                }),
+              ]),
+            ),
+          ),
         );
       },
+    );
+  }
+
+  Widget _customerTableCell(
+    String text, {
+    required int flex,
+    bool header = false,
+    bool bold = false,
+    bool draft = false,
+  }) {
+    return Expanded(
+      flex: flex,
+      child: Container(
+        height: header ? 40 : (draft ? 56 : 48),
+        alignment: Alignment.centerLeft,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: const BoxDecoration(
+          border: Border(right: BorderSide(color: Color(0xFFC9E2F0))),
+        ),
+        child: Text(
+          text,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: header ? 10 : 11,
+            height: 1.2,
+            fontWeight: header || bold ? FontWeight.w900 : FontWeight.normal,
+          ),
+        ),
+      ),
     );
   }
 
@@ -1347,15 +2193,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final participants =
           await _organizationService.listParticipants(organizationId);
       if (mounted) {
-        setState(() {
-          _organizationParticipants = participants;
-          if (!participants.any(
-            (participant) => participant.userId == _selectedManagedMemberUserId,
-          )) {
-            _selectedManagedMemberUserId = null;
-            _selectedManagedMemberRole = null;
-          }
-        });
+        setState(() => _organizationParticipants = participants);
       }
     } catch (error) {
       if (mounted) {
@@ -1377,21 +2215,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
     setState(() => _customerBusy = true);
     try {
-      final customers = await _customerService.listCustomers(organizationId);
-      final requests =
-          await _customerService.listPendingRequests(organizationId);
+      final customers = await _customerService.listCustomers(
+        organizationId,
+        includeArchived: _showArchivedCustomers,
+      );
+      var requests = const <OrganizationCustomerRequest>[];
+      String? requestsError;
+      try {
+        requests = await _customerService.listPendingRequests(organizationId);
+      } catch (error) {
+        requestsError = _customerError(error);
+      }
       if (!mounted) return;
       setState(() {
         _organizationCustomers = customers;
         _customerRequests = requests;
         _customerDirectoryAvailable = true;
+        _customerDirectoryError = null;
+        _customerRequestsError = requestsError;
         _requestCustomerSelections.removeWhere(
           (requestId, _) => !requests.any((request) => request.id == requestId),
         );
       });
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
-      setState(() => _customerDirectoryAvailable = false);
+      setState(() {
+        _customerDirectoryAvailable = false;
+        _customerDirectoryError =
+            'Справочник заказчиков недоступен: ${_customerError(error)}';
+      });
     } finally {
       if (mounted) setState(() => _customerBusy = false);
     }
@@ -1428,14 +2280,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
         );
       }
       _clearCustomerForm(notify: false);
-      final customers = await _customerService.listCustomers(organizationId);
-      final requests =
-          await _customerService.listPendingRequests(organizationId);
+      final customers = await _customerService.listCustomers(
+        organizationId,
+        includeArchived: _showArchivedCustomers,
+      );
+      var requests = const <OrganizationCustomerRequest>[];
+      String? requestsError;
+      try {
+        requests = await _customerService.listPendingRequests(organizationId);
+      } catch (error) {
+        requestsError = _customerError(error);
+      }
       if (!mounted) return;
       setState(() {
         _organizationCustomers = customers;
         _customerRequests = requests;
         _customerDirectoryAvailable = true;
+        _customerDirectoryError = null;
+        _customerRequestsError = requestsError;
       });
     } catch (error) {
       if (mounted) {
@@ -1447,13 +2309,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _editCustomer(OrganizationCustomer customer) {
+    final managerIds = _organizationParticipants
+        .where(
+          (participant) =>
+              !participant.isPending &&
+              participant.role != OrganizationRole.customer,
+        )
+        .map((participant) => participant.userId)
+        .whereType<String>()
+        .toSet();
+    final customerIds = _organizationParticipants
+        .where(
+          (participant) =>
+              !participant.isPending &&
+              participant.role == OrganizationRole.customer,
+        )
+        .map((participant) => participant.userId)
+        .whereType<String>()
+        .toSet();
+
     setState(() {
       _editingCustomerId = customer.id;
       _customerRequestBeingCreatedId = null;
       _customerCodeCtrl.text = customer.code;
       _customerNameCtrl.text = customer.name;
-      _selectedCustomerManagerId = customer.primaryManagerUserId;
-      _selectedCustomerUserId = customer.customerUserId;
+      _selectedCustomerManagerId =
+          managerIds.contains(customer.primaryManagerUserId)
+              ? customer.primaryManagerUserId
+              : null;
+      _selectedCustomerUserId = customerIds.contains(customer.customerUserId)
+          ? customer.customerUserId
+          : null;
     });
   }
 
@@ -1474,13 +2360,47 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Future<void> _confirmArchiveCustomer(
+    OrganizationCustomer customer,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Переместить заказчика в архив?'),
+        content: Text(
+          '${customer.code} · ${customer.name}\n\n'
+          'Новые работы больше не смогут выбирать этого заказчика.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFB42318),
+            ),
+            child: const Text('В архив'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      await _archiveCustomer(customer);
+    }
+  }
+
   Future<void> _archiveCustomer(OrganizationCustomer customer) async {
     setState(() => _customerBusy = true);
     try {
       await _customerService.archiveCustomer(customer.id);
       final organizationId = widget.organizationAccess.organizationId;
       if (organizationId != null) {
-        final customers = await _customerService.listCustomers(organizationId);
+        final customers = await _customerService.listCustomers(
+          organizationId,
+          includeArchived: _showArchivedCustomers,
+        );
         if (mounted) setState(() => _organizationCustomers = customers);
       }
     } catch (error) {
@@ -1552,70 +2472,594 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return text;
   }
 
-  Future<void> _assignExistingMemberRole() async {
-    final organizationId = widget.organizationAccess.organizationId;
-    final userId = _selectedManagedMemberUserId;
-    final requestedRole = _selectedManagedMemberRole;
-    if (organizationId == null || userId == null || requestedRole == null) {
-      return;
-    }
+  void _clearMemberDraft() {
+    setState(() {
+      _memberEmailCtrl.clear();
+      _memberNicknameCtrl.clear();
+      _memberDisplayNameCtrl.clear();
+      _selectedMemberRole = OrganizationRole.employee;
+      _selectedMemberFunctions = {
+        OrganizationMemberFunction.inspectionSpecialist,
+      };
+    });
+  }
 
-    OrganizationParticipant? participant;
-    for (final item in _organizationParticipants) {
-      if (!item.isPending && item.userId == userId) {
-        participant = item;
-        break;
+  Future<void> _handleTeamAction(
+    _TeamAction action,
+    OrganizationParticipant participant,
+    List<OrganizationRole> assignableRoles,
+  ) async {
+    switch (action) {
+      case _TeamAction.edit:
+        await _editTeamParticipant(participant, assignableRoles);
+      case _TeamAction.resendInvitation:
+        await _resendTeamInvitation(participant);
+      case _TeamAction.cancelInvitation:
+        await _cancelOrganizationInvitation(participant);
+      case _TeamAction.remove:
+        await _confirmRemoveTeamParticipant(participant);
+    }
+  }
+
+  Future<void> _resendTeamInvitation(
+    OrganizationParticipant participant,
+  ) async {
+    final organizationId = widget.organizationAccess.organizationId;
+    if (organizationId == null) return;
+    setState(() => _organizationBusy = true);
+    try {
+      await _organizationService.inviteMember(
+        organizationId: organizationId,
+        email: participant.email,
+        nickname: participant.nickname,
+        displayName: participant.displayName,
+        role: participant.role,
+        functions: participant.functions,
+      );
+      final participants =
+          await _organizationService.listParticipants(organizationId);
+      if (!mounted) return;
+      setState(() => _organizationParticipants = participants);
+      xpDlg(
+        context,
+        'Приглашение отправлено',
+        'Письмо для ${_participantLabel(participant)} отправлено повторно.',
+      );
+    } catch (error) {
+      if (mounted) {
+        xpDlg(context, 'Приглашение не отправлено', _accessError(error));
       }
+    } finally {
+      if (mounted) setState(() => _organizationBusy = false);
     }
-    if (participant == null) return;
-    if (!OrganizationAdministrationPolicy.canAssign(
-      actorRole: widget.organizationAccess.role,
-      currentRole: participant.role,
-      requestedRole: requestedRole,
-    )) {
-      xpDlg(
-        context,
-        'Роль не изменена',
-        'Текущая роль не имеет права выполнить это назначение.',
+  }
+
+  Future<void> _editTeamParticipant(
+    OrganizationParticipant participant,
+    List<OrganizationRole> assignableRoles,
+  ) async {
+    var selectedRole = participant.role;
+    var selectedFunctions = Set<OrganizationMemberFunction>.from(
+      participant.functions,
+    );
+    final result = await showDialog<
+        ({
+          OrganizationRole role,
+          Set<OrganizationMemberFunction> functions,
+        })>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text('Изменить ${_participantLabel(participant)}'),
+          content: SizedBox(
+            width: 440,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                DropdownButtonFormField<OrganizationRole>(
+                  key: const ValueKey('team-edit-role'),
+                  initialValue: selectedRole,
+                  decoration: const InputDecoration(
+                    labelText: 'Роль',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: assignableRoles
+                      .map(
+                        (role) => DropdownMenuItem(
+                          value: role,
+                          child: Text(role.label),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (role) => setDialogState(
+                    () => selectedRole = role!,
+                  ),
+                ),
+                if (selectedRole == OrganizationRole.employee) ...[
+                  const SizedBox(height: 10),
+                  const Text(
+                    'Функции',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  ...OrganizationMemberFunction.values.map(
+                    (function) => CheckboxListTile(
+                      value: selectedFunctions.contains(function),
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                      title: Text(function.label),
+                      onChanged: (checked) => setDialogState(() {
+                        final next = Set<OrganizationMemberFunction>.from(
+                          selectedFunctions,
+                        );
+                        checked == true
+                            ? next.add(function)
+                            : next.remove(function);
+                        selectedFunctions = next;
+                      }),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Отменить'),
+            ),
+            FilledButton(
+              key: const ValueKey('team-edit-save'),
+              onPressed: () => Navigator.pop(
+                dialogContext,
+                (
+                  role: selectedRole,
+                  functions: selectedRole == OrganizationRole.employee
+                      ? selectedFunctions
+                      : <OrganizationMemberFunction>{},
+                ),
+              ),
+              child: const Text('Сохранить'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result == null || participant.userId == null) return;
+
+    final organizationId = widget.organizationAccess.organizationId;
+    if (organizationId == null) return;
+    setState(() => _organizationBusy = true);
+    try {
+      await _organizationService.updateMember(
+        organizationId: organizationId,
+        userId: participant.userId!,
+        role: result.role,
+        functions: result.functions,
       );
-      return;
+      final participants =
+          await _organizationService.listParticipants(organizationId);
+      if (!mounted) return;
+      setState(() => _organizationParticipants = participants);
+    } catch (error) {
+      if (mounted) {
+        xpDlg(context, 'Участник не изменён', _accessError(error));
+      }
+    } finally {
+      if (mounted) setState(() => _organizationBusy = false);
     }
-    if (participant.role == requestedRole) {
-      xpDlg(
-        context,
-        'Роль не изменена',
-        '${_participantLabel(participant)} уже имеет роль «${requestedRole.label}».',
-      );
-      return;
-    }
+  }
+
+  Future<void> _confirmRemoveTeamParticipant(
+    OrganizationParticipant participant,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Удалить из организации?'),
+        content: Text(
+          '${_participantLabel(participant)} потеряет рабочие права. '
+          'Его личный аккаунт не удаляется.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Отменить'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Удалить'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || participant.userId == null) return;
+    final organizationId = widget.organizationAccess.organizationId;
+    if (organizationId == null) return;
 
     setState(() => _organizationBusy = true);
     try {
-      await _organizationService.assignMember(
+      await _organizationService.removeMember(
         organizationId: organizationId,
-        userId: userId,
-        role: requestedRole,
+        userId: participant.userId!,
+      );
+      final participants =
+          await _organizationService.listParticipants(organizationId);
+      if (!mounted) return;
+      setState(() => _organizationParticipants = participants);
+    } catch (error) {
+      if (mounted) {
+        xpDlg(context, 'Участник не удалён', _accessError(error));
+      }
+    } finally {
+      if (mounted) setState(() => _organizationBusy = false);
+    }
+  }
+
+  Future<void> _handleCustomerAction(
+    _CustomerAction action,
+    OrganizationCustomer customer,
+  ) async {
+    switch (action) {
+      case _CustomerAction.edit:
+        _editCustomer(customer);
+      case _CustomerAction.linkExistingRepresentative:
+        await _linkExistingCustomerRepresentative(customer);
+      case _CustomerAction.inviteRepresentative:
+      case _CustomerAction.resendInvitation:
+        await _inviteCustomerRepresentative(customer);
+      case _CustomerAction.cancelInvitation:
+        await _cancelCustomerInvitation(customer);
+      case _CustomerAction.openJobs:
+        await _openCustomerJobs(customer);
+      case _CustomerAction.archive:
+        await _confirmArchiveCustomer(customer);
+      case _CustomerAction.restore:
+        await _restoreCustomer(customer);
+    }
+  }
+
+  Future<void> _linkExistingCustomerRepresentative(
+    OrganizationCustomer customer,
+  ) async {
+    final candidates = _organizationParticipants
+        .where(
+          (participant) =>
+              !participant.isPending &&
+              participant.userId != null &&
+              participant.role == OrganizationRole.customer,
+        )
+        .toList();
+    if (candidates.isEmpty) return;
+
+    String? selectedUserId = candidates.any(
+      (participant) => participant.userId == customer.customerUserId,
+    )
+        ? customer.customerUserId
+        : candidates.first.userId;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text('Представитель: ${customer.name}'),
+          content: SizedBox(
+            width: 440,
+            child: DropdownButtonFormField<String>(
+              initialValue: selectedUserId,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: 'Зарегистрированный заказчик',
+                border: OutlineInputBorder(),
+              ),
+              items: candidates
+                  .map(
+                    (participant) => DropdownMenuItem(
+                      value: participant.userId,
+                      child: Text(
+                        participant.nickname.isNotEmpty
+                            ? participant.nickname
+                            : participant.displayName,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (value) =>
+                  setDialogState(() => selectedUserId = value),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Отменить'),
+            ),
+            FilledButton(
+              onPressed: selectedUserId == null
+                  ? null
+                  : () => Navigator.pop(dialogContext, true),
+              child: const Text('Подключить'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (confirmed != true || selectedUserId == null || !mounted) return;
+
+    final organizationId = widget.organizationAccess.organizationId;
+    if (organizationId == null) return;
+    setState(() => _customerBusy = true);
+    try {
+      await _customerService.saveCustomer(
+        organizationId: organizationId,
+        code: customer.code,
+        name: customer.name,
+        managerUserId: customer.primaryManagerUserId,
+        customerUserId: selectedUserId,
+        customerId: customer.id,
+      );
+      final customers = await _customerService.listCustomers(
+        organizationId,
+        includeArchived: _showArchivedCustomers,
+      );
+      if (mounted) setState(() => _organizationCustomers = customers);
+    } catch (error) {
+      if (mounted) {
+        xpDlg(
+          context,
+          'Представитель не подключён',
+          _customerError(error),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _customerBusy = false);
+    }
+  }
+
+  Future<void> _restoreCustomer(OrganizationCustomer customer) async {
+    setState(() => _customerBusy = true);
+    try {
+      await _customerService.restoreCustomer(customer.id);
+      final organizationId = widget.organizationAccess.organizationId;
+      if (organizationId != null) {
+        final customers = await _customerService.listCustomers(
+          organizationId,
+          includeArchived: _showArchivedCustomers,
+        );
+        if (mounted) setState(() => _organizationCustomers = customers);
+      }
+    } catch (error) {
+      if (mounted) {
+        xpDlg(
+          context,
+          'Заказчик не восстановлен',
+          _customerError(error),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _customerBusy = false);
+    }
+  }
+
+  Future<void> _inviteCustomerRepresentative(
+    OrganizationCustomer customer,
+  ) async {
+    var email = customer.pendingInvitationEmail;
+    var nickname = customer.pendingInvitationNickname;
+    var displayName = customer.pendingInvitationDisplayName;
+    final draft =
+        await showDialog<({String email, String nickname, String displayName})>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Представитель: ${customer.name}'),
+        content: SizedBox(
+          width: 440,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextFormField(
+                initialValue: email,
+                onChanged: (value) => email = value,
+                keyboardType: TextInputType.emailAddress,
+                decoration: const InputDecoration(
+                  labelText: 'Email',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                initialValue: nickname,
+                onChanged: (value) => nickname = value,
+                decoration: const InputDecoration(
+                  labelText: 'Ник',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                initialValue: displayName,
+                onChanged: (value) => displayName = value,
+                decoration: const InputDecoration(
+                  labelText: 'Имя',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Отменить'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(
+              dialogContext,
+              (
+                email: email.trim().toLowerCase(),
+                nickname: nickname.trim().toLowerCase(),
+                displayName: displayName.trim(),
+              ),
+            ),
+            child: Text(
+              customer.hasPendingInvitation ? 'Повторить' : 'Пригласить',
+            ),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || draft == null) return;
+    if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(draft.email)) {
+      xpDlg(context, 'Приглашение', 'Введите корректный email.');
+      return;
+    }
+    if (!RegExp(r'^[a-z0-9_]{3,24}$').hasMatch(draft.nickname)) {
+      xpDlg(
+        context,
+        'Приглашение',
+        'Ник: 3-24 символа, латиница, цифры и подчёркивание.',
+      );
+      return;
+    }
+    if (draft.displayName.isEmpty) {
+      xpDlg(context, 'Приглашение', 'Введите имя представителя.');
+      return;
+    }
+
+    final organizationId = widget.organizationAccess.organizationId;
+    if (organizationId == null) return;
+    setState(() => _customerBusy = true);
+    try {
+      await _organizationService.inviteMember(
+        organizationId: organizationId,
+        email: draft.email,
+        nickname: draft.nickname,
+        displayName: draft.displayName,
+        role: OrganizationRole.customer,
+        functions: const {},
+        customerId: customer.id,
+      );
+      final customers = await _customerService.listCustomers(
+        organizationId,
+        includeArchived: _showArchivedCustomers,
       );
       final participants =
           await _organizationService.listParticipants(organizationId);
       if (!mounted) return;
       setState(() {
+        _organizationCustomers = customers;
         _organizationParticipants = participants;
-        _selectedManagedMemberUserId = null;
-        _selectedManagedMemberRole = null;
       });
       xpDlg(
         context,
-        'Роль сохранена',
-        '${_participantLabel(participant)}: ${requestedRole.label}.',
+        'Приглашение отправлено',
+        'Представитель ${draft.nickname} привязан к ${customer.displayLabel}.',
       );
     } catch (error) {
       if (mounted) {
-        xpDlg(context, 'Роль не изменена', _accessError(error));
+        xpDlg(context, 'Приглашение не отправлено', _accessError(error));
       }
     } finally {
-      if (mounted) setState(() => _organizationBusy = false);
+      if (mounted) setState(() => _customerBusy = false);
     }
+  }
+
+  Future<void> _cancelCustomerInvitation(
+    OrganizationCustomer customer,
+  ) async {
+    final invitationId = customer.pendingInvitationId;
+    final organizationId = widget.organizationAccess.organizationId;
+    if (invitationId == null || organizationId == null) return;
+    setState(() => _customerBusy = true);
+    try {
+      await _organizationService.cancelInvitation(invitationId);
+      final customers = await _customerService.listCustomers(
+        organizationId,
+        includeArchived: _showArchivedCustomers,
+      );
+      final participants =
+          await _organizationService.listParticipants(organizationId);
+      if (!mounted) return;
+      setState(() {
+        _organizationCustomers = customers;
+        _organizationParticipants = participants;
+      });
+    } catch (error) {
+      if (mounted) {
+        xpDlg(context, 'Приглашение не отменено', _accessError(error));
+      }
+    } finally {
+      if (mounted) setState(() => _customerBusy = false);
+    }
+  }
+
+  Future<void> _openCustomerJobs(OrganizationCustomer customer) async {
+    setState(() => _customerBusy = true);
+    try {
+      final jobs = await _customerService.listCustomerJobs(customer.id);
+      if (!mounted) return;
+      if (jobs.isEmpty) {
+        xpDlg(
+          context,
+          'Работы: ${customer.name}',
+          'Работы заказчика пока отсутствуют.',
+        );
+        return;
+      }
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text('Работы: ${customer.name}'),
+          content: SizedBox(
+            width: 560,
+            child: ListView.separated(
+              shrinkWrap: true,
+              itemCount: jobs.length,
+              separatorBuilder: (_, __) => const Divider(height: 1),
+              itemBuilder: (_, index) {
+                final job = jobs[index];
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(job.number),
+                  subtitle: Text(
+                    '${_customerJobStatusLabel(job.status)} · '
+                    '${_shortDate(job.updatedAt)}',
+                  ),
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Закрыть'),
+            ),
+          ],
+        ),
+      );
+    } catch (error) {
+      if (mounted) {
+        xpDlg(context, 'Работы недоступны', _customerError(error));
+      }
+    } finally {
+      if (mounted) setState(() => _customerBusy = false);
+    }
+  }
+
+  String _customerJobStatusLabel(String status) {
+    switch (status) {
+      case 'completed':
+        return 'завершена';
+      case 'archived':
+        return 'в архиве';
+      default:
+        return 'активна';
+    }
+  }
+
+  String _shortDate(DateTime value) {
+    final local = value.toLocal();
+    String two(int number) => number.toString().padLeft(2, '0');
+    return '${two(local.day)}.${two(local.month)}.${local.year}';
   }
 
   Future<void> _inviteOrganizationMember() async {
@@ -1623,6 +3067,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final email = _memberEmailCtrl.text.trim().toLowerCase();
     final nickname = _memberNicknameCtrl.text.trim().toLowerCase();
     final displayName = _memberDisplayNameCtrl.text.trim();
+    final invitationRole = _selectedMemberRole;
     if (organizationId == null) return;
     if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email)) {
       xpDlg(context, 'Приглашение', 'Введите корректный email.');
@@ -1648,8 +3093,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         email: email,
         nickname: nickname,
         displayName: displayName,
-        role: _selectedMemberRole,
-        functions: _selectedMemberRole == OrganizationRole.employee
+        role: invitationRole,
+        functions: invitationRole == OrganizationRole.employee
             ? _selectedMemberFunctions
             : const {},
       );
@@ -1658,14 +3103,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (!mounted) return;
       setState(() {
         _organizationParticipants = participants;
-        _memberEmailCtrl.clear();
-        _memberNicknameCtrl.clear();
-        _memberDisplayNameCtrl.clear();
+        _clearMemberDraftWithoutNotify();
       });
       xpDlg(
         context,
         'Приглашение отправлено',
-        '${result.email}\nНик: ${result.nickname}\nРоль: ${_selectedMemberRole.label}',
+        '${result.email}\nНик: ${result.nickname}\nРоль: ${invitationRole.label}',
       );
     } catch (error) {
       if (mounted) {
@@ -1674,6 +3117,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } finally {
       if (mounted) setState(() => _organizationBusy = false);
     }
+  }
+
+  void _clearMemberDraftWithoutNotify() {
+    _memberEmailCtrl.clear();
+    _memberNicknameCtrl.clear();
+    _memberDisplayNameCtrl.clear();
+    _selectedMemberRole = OrganizationRole.employee;
+    _selectedMemberFunctions = {
+      OrganizationMemberFunction.inspectionSpecialist,
+    };
   }
 
   Future<void> _cancelOrganizationInvitation(
@@ -1697,66 +3150,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } finally {
       if (mounted) setState(() => _organizationBusy = false);
     }
-  }
-
-  Widget _memberFunctionSelection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const Text(
-          'Функции сотрудника',
-          style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800),
-        ),
-        const SizedBox(height: 4),
-        ...OrganizationMemberFunction.values.map(
-          (function) => Material(
-            type: MaterialType.transparency,
-            child: CheckboxListTile(
-              value: _selectedMemberFunctions.contains(function),
-              onChanged: (selected) {
-                setState(() {
-                  final next = Set<OrganizationMemberFunction>.from(
-                    _selectedMemberFunctions,
-                  );
-                  if (selected == true) {
-                    next.add(function);
-                  } else {
-                    next.remove(function);
-                  }
-                  _selectedMemberFunctions = next;
-                });
-              },
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              controlAffinity: ListTileControlAffinity.leading,
-              title: Text(
-                function.label,
-                style: const TextStyle(fontSize: 11),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  List<String> _organizationParticipantRow(
-    OrganizationParticipant participant,
-  ) {
-    final functions = participant.functions.isEmpty
-        ? '-'
-        : participant.functions.map((function) => function.label).join(', ');
-    final status = participant.isPending
-        ? participant.emailSent
-            ? 'Приглашение отправлено'
-            : 'Ожидает отправки email'
-        : 'Активен';
-    return [
-      '${participant.email}\n${participant.nickname}',
-      participant.displayName.isEmpty ? 'не указано' : participant.displayName,
-      '${participant.role.label}\n$functions',
-      status,
-    ];
   }
 
   String _participantLabel(OrganizationParticipant participant) {
@@ -1811,89 +3204,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return text;
   }
 
-  Widget _accessTestingPanel() {
-    return _settingsPanel(
-      title: 'Тестирование доступа',
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        _toggleRow(
-          'Локальный тестовый режим',
-          'не меняет Supabase, платежи и серверные права',
-          _accessTestOverride.enabled,
-          (value) => setState(() {
-            _accessTestOverride = _accessTestOverride.copyWith(enabled: value);
-          }),
-        ),
-        _optionChips(
-          label: 'Тестовый план',
-          value: _accessTestOverride.plan.label,
-          values: PlanTier.values.map((plan) => plan.label).toList(),
-          onSelect: (value) => setState(() {
-            _accessTestOverride = _accessTestOverride.copyWith(
-              plan: PlanTier.values.firstWhere((plan) => plan.label == value),
-            );
-          }),
-        ),
-        _optionChips(
-          label: 'Тестовая роль',
-          value: _accessTestOverride.role.label,
-          values: OrganizationRole.values.map((role) => role.label).toList(),
-          onSelect: (value) => setState(() {
-            _accessTestOverride = _accessTestOverride.copyWith(
-              role: OrganizationRole.values
-                  .firstWhere((role) => role.label == value),
-            );
-          }),
-        ),
-        Row(children: [
-          Expanded(
-            child: XpBtn(
-              label: 'Отключить тест',
-              onPressed: _accessSaving ? null : _clearAccessTestOverride,
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: XpBtn(
-              label: 'Применить режим',
-              primary: true,
-              onPressed: _accessSaving ? null : _applyAccessTestOverride,
-            ),
-          ),
-        ]),
-      ]),
-    );
-  }
-
-  Widget _productionAccessPanel() {
-    return _settingsPanel(
-      title: 'Управление подпиской',
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        _infoRow('Активация', 'через защищенный сервер'),
-        if (widget.entitlements.usesOrganizationPlan)
-          _infoRow('Личный тариф', widget.entitlements.personalPlan.label),
-        _infoRow(
-          widget.entitlements.usesOrganizationPlan
-              ? 'Рабочий тариф организации'
-              : 'Тариф',
-          widget.entitlements.plan.label,
-        ),
-        XpBtn(
-          label: 'Изменить план',
-          primary: true,
-          onPressed: () => xpDlg(
-            context,
-            'Платежи не подключены',
-            'Тариф будет активироваться после подтверждения платежа сервером.',
-          ),
-        ),
-      ]),
-    );
-  }
-
   String _accessSourceLabel() {
-    if (kDebugMode && _accessTestOverride.enabled) {
-      return 'локальный тестовый режим';
-    }
     if (widget.entitlements.legacyFallback) {
       return 'переходный доступ';
     }
@@ -1901,12 +3212,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   String _accessStatusLabel() {
-    if (kDebugMode && _accessTestOverride.enabled) return 'тест';
     if (widget.entitlements.legacyFallback) return 'переходный';
     final validUntil = widget.entitlements.validUntil;
-    if (validUntil == null) return 'активен';
-    final local = validUntil.toLocal();
-    return 'активен до ${local.day.toString().padLeft(2, '0')}.${local.month.toString().padLeft(2, '0')}.${local.year}';
+    final date = validUntil == null ? null : _shortDate(validUntil);
+    if (widget.entitlements.subscriptionExpired) {
+      return 'истёк ${date ?? ''}'.trim();
+    }
+    switch (widget.entitlements.subscriptionStatus) {
+      case 'trialing':
+        return date == null ? 'пробный период' : 'пробный период до $date';
+      case 'grace':
+        return date == null ? 'льготный период' : 'льготный период до $date';
+      case 'paused':
+        return 'приостановлен';
+      case 'cancelled':
+        return 'отменён';
+      case 'active':
+      case '':
+        return date == null ? 'активен' : 'активен до $date';
+      default:
+        return 'неактивен';
+    }
   }
 
   String _capabilityLabel(ProductCapability capability) {
@@ -1967,64 +3293,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         return 'макеты, версии и исправления';
       case JobFunction.inspectionSpecialist:
         return 'эталон, образцы, сравнение и протокол';
-    }
-  }
-
-  Future<void> _applyAccessTestOverride() async {
-    if (!kDebugMode || _accessSaving) return;
-    setState(() => _accessSaving = true);
-    try {
-      await const LocalAccessTestingService().save(_accessTestOverride);
-      await widget.onAccessChanged();
-      if (mounted) {
-        xpDlg(
-          context,
-          'Тестовый режим',
-          _accessTestOverride.enabled
-              ? 'Применены план ${_accessTestOverride.plan.label} и роль ${_accessTestOverride.role.label}.'
-              : 'Тестовый режим отключён.',
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _accessSaving = false);
-    }
-  }
-
-  Future<void> _refreshAccess() async {
-    if (_accessSaving) return;
-    setState(() => _accessSaving = true);
-    try {
-      await widget.onAccessChanged();
-      if (mounted) {
-        xpDlg(
-          context,
-          'Права обновлены',
-          'Роль организации и возможности плана повторно запрошены у Supabase.',
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _accessSaving = false);
-    }
-  }
-
-  Future<void> _clearAccessTestOverride() async {
-    if (!kDebugMode || _accessSaving) return;
-    setState(() {
-      _accessSaving = true;
-      _accessTestOverride = AccessTestOverride.disabled;
-    });
-    try {
-      await const LocalAccessTestingService().clear();
-      await widget.onAccessChanged();
-      if (mounted) {
-        xpDlg(
-          context,
-          'Тестовый режим',
-          'Отключён. Восстановлен серверный или переходный доступ.',
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _accessSaving = false);
     }
   }
 

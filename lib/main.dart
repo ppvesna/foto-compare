@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'app/local_access_testing_service.dart';
 import 'capabilities/storage/storage.dart';
 import 'config/app_config.dart';
 import 'config/app_theme.dart';
@@ -13,6 +12,7 @@ import 'screens/home_screen.dart';
 import 'screens/invitation_setup_screen.dart';
 import 'screens/settings_screen.dart';
 import 'features/billing/billing.dart';
+import 'features/chat/chat.dart';
 import 'features/organization/organization.dart';
 import 'features/protocols/protocols.dart';
 import 'services/sync_service.dart';
@@ -183,10 +183,12 @@ class _MainShellState extends State<MainShell> {
   int _tab = 0;
   int _chatBadge = 4;
   int _settingsAccessRequest = 0;
+  int _settingsInitialSection = 1;
   EntitlementSnapshot _entitlements = EntitlementSnapshot.legacyCompatible();
   OrganizationAccess _organizationAccess = OrganizationAccess.legacyPersonal();
   CloudStorage? _cloudStorage;
   ProtocolCloudRepository? _protocolCloudRepository;
+  ChatRepository? _chatRepository;
   String? _handledInvitationId;
 
   @override
@@ -208,20 +210,9 @@ class _MainShellState extends State<MainShell> {
     final organizationService =
         SupabaseOrganizationAdministrationService(client);
     final pendingInvitation = await organizationService.currentInvitation();
-    var entitlements = await SupabaseEntitlementService(client).load();
-    var organizationAccess =
+    final entitlements = await SupabaseEntitlementService(client).load();
+    final organizationAccess =
         await SupabaseOrganizationAccessService(client).load();
-    if (kDebugMode) {
-      final testOverride = await const LocalAccessTestingService().load();
-      if (testOverride.enabled) {
-        entitlements = EntitlementSnapshot.forPlan(testOverride.plan);
-        organizationAccess = OrganizationAccess.forRole(
-          organizationId: organizationAccess.organizationId,
-          organizationName: organizationAccess.organizationName,
-          role: testOverride.role,
-        );
-      }
-    }
     if (!mounted) return;
     final currentUser = client.auth.currentUser;
     final cloudStorage = currentUser == null
@@ -241,6 +232,12 @@ class _MainShellState extends State<MainShell> {
               storage: cloudStorage,
               ownerUserId: currentUser.id,
               organizationId: organizationAccess.organizationId,
+            );
+      _chatRepository = currentUser == null
+          ? null
+          : SupabaseChatRepository(
+              client,
+              currentUserId: currentUser.id,
             );
     });
     _scheduleInvitationDialog(pendingInvitation, organizationService);
@@ -336,6 +333,7 @@ class _MainShellState extends State<MainShell> {
   void _openAccessSettings() {
     setState(() {
       _settingsAccessRequest++;
+      _settingsInitialSection = 2;
       _tab = 3;
     });
   }
@@ -380,6 +378,23 @@ class _MainShellState extends State<MainShell> {
     return labels;
   }
 
+  String _topPlanLabel() {
+    String shortDate(DateTime value) {
+      final local = value.toLocal();
+      String two(int number) => number.toString().padLeft(2, '0');
+      return '${two(local.day)}.${two(local.month)}.${local.year}';
+    }
+
+    if (_entitlements.usesFallbackPlan) {
+      return '${_entitlements.configuredPlan.label} истёк · '
+          '${_entitlements.plan.label}';
+    }
+    final validUntil = _entitlements.validUntil;
+    return validUntil == null
+        ? _entitlements.plan.label
+        : '${_entitlements.plan.label} · до ${shortDate(validUntil)}';
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = Supabase.instance.client.auth.currentUser;
@@ -414,16 +429,19 @@ class _MainShellState extends State<MainShell> {
         protocolCloudRepository: _protocolCloudRepository,
       ),
       ChatScreen(
+        currentUserId: user?.id ?? '',
         email: email,
         displayName: displayName,
         nickname: nickname,
         organizationName: organizationName,
         protocolCloudRepository: _protocolCloudRepository,
+        chatRepository: _chatRepository,
       ),
       SettingsScreen(
         key: ValueKey('settings-access-$_settingsAccessRequest'),
         entitlements: _entitlements,
         organizationAccess: _organizationAccess,
+        initialSection: _settingsInitialSection,
         cloudStorage: _cloudStorage,
         onAccessChanged: _loadAccess,
       ),
@@ -469,6 +487,30 @@ class _MainShellState extends State<MainShell> {
                     style: const TextStyle(
                       fontSize: 10,
                       fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 7),
+                Container(
+                  key: const ValueKey('top-plan-status'),
+                  constraints: const BoxConstraints(maxWidth: 170),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: _entitlements.usesFallbackPlan
+                        ? const Color(0xFFD97706)
+                        : const Color(0xFF2D8EB9),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: Colors.white24),
+                  ),
+                  child: Text(
+                    _topPlanLabel(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
                       color: Colors.white,
                     ),
                   ),

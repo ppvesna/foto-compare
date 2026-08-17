@@ -21,6 +21,10 @@ abstract interface class CustomerDirectoryService {
 
   Future<void> archiveCustomer(String customerId);
 
+  Future<void> restoreCustomer(String customerId);
+
+  Future<List<OrganizationCustomerJob>> listCustomerJobs(String customerId);
+
   Future<void> resolveRequest({
     required String requestId,
     required String customerId,

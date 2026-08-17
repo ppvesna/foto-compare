@@ -133,10 +133,11 @@ Replace future plan checks with capability checks only.
 
 Progress: implemented for inspection start, daily limits, barcode, OCR, AI, exact Delta
 E, protocol history, and collaboration navigation. The server entitlement snapshot is
-active in the current test environment; payment activation remains pending.
+active in the current test environment. Migration `019` adds an assignment-backed v4
+snapshot and a deliberately isolated test activation flow.
 
-The settings UI now displays the effective snapshot and offers a debug-only local plan
-and role override. Production builds do not expose this override.
+The settings UI displays the effective server snapshot. The former debug-only local plan
+and role override is no longer applied, so the UI has one authoritative access source.
 
 ### Step 11. Add subscription and license mocks
 
@@ -217,8 +218,11 @@ protocol metadata and a bounded difference-map preview are copied to the private
 user cloud in the background. Originals remain device-only. The next storage step is
 organization/job-scoped reading and preview access. Migration `015` implements that
 step using the existing production-job access function and exposes available protocols
-in the chat technical panel. Google OAuth and Drive remain a separate provider
-connection.
+through chat attachments. Migration `016` adds the first secure text-chat slice and
+Realtime updates; owner/employee messaging has passed the first two-account test.
+Migration `017` adds manager-controlled customer release for one job at a time.
+Customer visibility and revocation still require a dedicated two-account server test.
+Google OAuth and Drive remain a separate provider connection.
 
 ### Step 20. Add an outbox
 
@@ -247,10 +251,17 @@ Support device-only, on-demand, and full-cloud modes.
 Replace subscription mocks with a backend adapter. Entitlements remain the only API
 used by product features.
 
+Progress: test-stage adapter and server assignment flow implemented. Production provider,
+renewal state, cancellation, and webhook reconciliation remain pending.
+
 ### Step 25. Connect payments
 
 Add a payment adapter and server-side webhook processing. The client must not mark a
 subscription paid based only on a local payment callback.
+
+Progress: `PaymentService`, mock, Supabase test adapter, server prices, billing profiles,
+and payment-attempt audit records are implemented. This is not real payment processing;
+the test flag must be disabled before a production provider is connected.
 
 ### Step 26. Add enterprise licensing
 

@@ -1,26 +1,32 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import '../config/app_theme.dart';
+import '../features/chat/chat.dart';
 import '../features/protocols/protocols.dart';
 import '../widgets/xp_widgets.dart';
 
 enum _ChatKind { internal, approval }
 
 class ChatScreen extends StatefulWidget {
+  final String currentUserId;
   final String email;
   final String displayName;
   final String nickname;
   final String organizationName;
   final ProtocolCloudRepository? protocolCloudRepository;
+  final ChatRepository? chatRepository;
 
   const ChatScreen({
     super.key,
+    this.currentUserId = '',
     required this.email,
     required this.displayName,
     required this.nickname,
     required this.organizationName,
     this.protocolCloudRepository,
+    this.chatRepository,
   });
 
   @override
@@ -37,6 +43,23 @@ class _ChatScreenState extends State<ChatScreen> {
   Uint8List? _selectedCloudPreview;
   bool _cloudProtocolsLoading = false;
   String? _cloudProtocolsError;
+  List<ChatThread> _serverThreads = const [];
+  List<ChatMessage> _serverMessages = const [];
+  bool _serverChatsLoading = false;
+  bool _serverMessagesLoading = false;
+  bool _sendingMessage = false;
+  bool _customerAccessUpdating = false;
+  String? _serverChatError;
+  StreamSubscription<List<ChatMessage>>? _messageSubscription;
+
+  bool get _usesServerChat => widget.chatRepository != null;
+
+  ChatThread? get _activeServerThread {
+    if (_serverThreads.isEmpty || _activeChat >= _serverThreads.length) {
+      return null;
+    }
+    return _serverThreads[_activeChat];
+  }
 
   String get _userName {
     if (widget.displayName.trim().isNotEmpty) return widget.displayName.trim();
@@ -168,6 +191,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     _loadCloudProtocols();
+    _loadServerChats();
   }
 
   @override
@@ -176,12 +200,17 @@ class _ChatScreenState extends State<ChatScreen> {
     if (oldWidget.protocolCloudRepository != widget.protocolCloudRepository) {
       _loadCloudProtocols();
     }
+    if (oldWidget.chatRepository != widget.chatRepository) {
+      _messageSubscription?.cancel();
+      _loadServerChats();
+    }
   }
 
   @override
   void dispose() {
     _msgCtrl.dispose();
     _scrollCtrl.dispose();
+    _messageSubscription?.cancel();
     super.dispose();
   }
 
@@ -234,73 +263,165 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  Future<void> _loadServerChats({String? preferredJobId}) async {
+    final repository = widget.chatRepository;
+    if (repository == null || _serverChatsLoading) return;
+    final activeThreadId = _activeServerThread?.id;
+    setState(() {
+      _serverChatsLoading = true;
+      _serverChatError = null;
+    });
+    try {
+      await repository.ensureDefaultThreads();
+      final threads = await repository.listThreads();
+      if (!mounted) return;
+      setState(() {
+        _serverThreads = threads;
+        final preferredIndex = preferredJobId == null
+            ? -1
+            : threads.indexWhere((thread) => thread.jobId == preferredJobId);
+        final preservedIndex = activeThreadId == null
+            ? -1
+            : threads.indexWhere((thread) => thread.id == activeThreadId);
+        _activeChat = preferredIndex >= 0
+            ? preferredIndex
+            : preservedIndex >= 0
+                ? preservedIndex
+                : 0;
+      });
+      await _loadServerMessages();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _serverThreads = const [];
+        _serverMessages = const [];
+        _serverChatError =
+            'Управление чатами пока недоступно. Примените миграцию 017.';
+      });
+    } finally {
+      if (mounted) setState(() => _serverChatsLoading = false);
+    }
+  }
+
+  Future<void> _loadServerMessages() async {
+    final repository = widget.chatRepository;
+    final thread = _activeServerThread;
+    if (repository == null || thread == null || _serverMessagesLoading) return;
+    setState(() => _serverMessagesLoading = true);
+    try {
+      final messages = await repository.listMessages(thread.id);
+      if (!mounted || _activeServerThread?.id != thread.id) return;
+      setState(() => _serverMessages = messages);
+      await _watchServerMessages(thread.id);
+      _scrollMessagesToEnd();
+    } catch (_) {
+      if (!mounted || _activeServerThread?.id != thread.id) return;
+      setState(() {
+        _serverMessages = const [];
+        _serverChatError = 'Не удалось загрузить сообщения.';
+      });
+    } finally {
+      if (mounted) setState(() => _serverMessagesLoading = false);
+    }
+  }
+
+  Future<void> _watchServerMessages(String threadId) async {
+    await _messageSubscription?.cancel();
+    final repository = widget.chatRepository;
+    if (repository == null || !mounted) return;
+    _messageSubscription = repository.watchMessages(threadId).listen(
+      (messages) {
+        if (!mounted || _activeServerThread?.id != threadId) return;
+        setState(() {
+          _serverMessages = messages;
+          _serverChatError = null;
+        });
+        _scrollMessagesToEnd();
+      },
+      onError: (_) {
+        if (!mounted || _activeServerThread?.id != threadId) return;
+        setState(() {
+          _serverChatError =
+              'Живое обновление недоступно. Сообщения обновятся при повторном входе.';
+        });
+      },
+    );
+  }
+
+  Future<void> _selectChat(int index) async {
+    if (index == _activeChat) return;
+    setState(() {
+      _activeChat = index;
+      if (_usesServerChat) {
+        _serverMessages = const [];
+        _serverChatError = null;
+      }
+    });
+    if (_usesServerChat) await _loadServerMessages();
+  }
+
+  void _scrollMessagesToEnd() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollCtrl.hasClients) return;
+      _scrollCtrl.animateTo(
+        _scrollCtrl.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOut,
+      );
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Column(children: [
-      XpMenuBar(icon: 'CH', menus: [
-        XpMenu(label: 'Файл', items: [
-          XpMenuItem(
-            label: 'Новая группа',
-            icon: '+G',
-            onTap: () => xpDlg(
-              context,
-              'Новая группа',
-              'Группа будет привязана к организации и проверкам.',
+    if (_usesServerChat && _serverThreads.isEmpty) {
+      if (_serverChatsLoading) {
+        return const Center(child: CircularProgressIndicator());
+      }
+      return _serverChatEmptyState();
+    }
+    return LayoutBuilder(builder: (_, constraints) {
+      final compact = constraints.maxWidth < 760;
+      if (compact) {
+        return Column(children: [
+          SizedBox(height: 122, child: _chatStrip()),
+          Expanded(child: _chatPane()),
+        ]);
+      }
+      return Row(children: [
+        SizedBox(width: 286, child: _chatList()),
+        Expanded(child: _chatPane()),
+      ]);
+    });
+  }
+
+  Widget _serverChatEmptyState() {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 440),
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Icon(
+              Icons.forum_outlined,
+              size: 44,
+              color: AppTheme.blue,
             ),
-          ),
-          XpMenuItem(
-            label: 'Поделиться проверкой',
-            icon: 'SH',
-            onTap: () => xpDlg(
-              context,
-              'Поделиться проверкой',
-              'В чат попадет карточка результата, протокол и выбранные превью.',
+            const SizedBox(height: 12),
+            Text(
+              _serverChatError ?? 'Доступных чатов пока нет.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 13, height: 1.4),
             ),
-          ),
-        ]),
-        XpMenu(label: 'Доступ', items: [
-          XpMenuItem(
-            label: 'Участники',
-            icon: 'US',
-            onTap: () => xpDlg(
-              context,
-              'Участники',
-              '$_userName ($_userNick), Мария, Иван. Роли и права позже будут браться из Supabase.',
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: _loadServerChats,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Повторить'),
             ),
-          ),
-          XpMenuItem(
-            label: 'Картинки',
-            icon: 'IM',
-            onTap: () => xpDlg(
-              context,
-              'Доступ к картинкам',
-              'Оригиналы остаются на устройстве, а в чат можно отправлять превью, карты и временные ссылки.',
-            ),
-          ),
-        ]),
-      ]),
-      Expanded(
-        child: LayoutBuilder(builder: (_, constraints) {
-          final compact = constraints.maxWidth < 920;
-          if (compact) {
-            return Column(children: [
-              SizedBox(height: 122, child: _chatStrip()),
-              Expanded(child: _chatPane()),
-              SizedBox(height: 232, child: _techPanel()),
-            ]);
-          }
-          return Row(children: [
-            SizedBox(width: 276, child: _chatList()),
-            Expanded(child: _chatPane()),
-            SizedBox(width: 330, child: _techPanel()),
-          ]);
-        }),
+          ]),
+        ),
       ),
-      XpStatusBar(
-        left: _chatTitle(_chats[_activeChat]),
-        right: 'Чат организации · картинки по разрешению',
-      ),
-    ]);
+    );
   }
 
   String _chatTitle(_ChatItem chat) {
@@ -322,14 +443,14 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         _listHeader(),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
+        const Padding(
+          padding: EdgeInsets.fromLTRB(10, 0, 10, 8),
           child: XpInput(placeholder: 'Поиск'),
         ),
         Expanded(
           child: ListView.builder(
             padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-            itemCount: _chats.length,
+            itemCount: _usesServerChat ? _serverThreads.length : _chats.length,
             itemBuilder: (_, i) => _chatTile(i),
           ),
         ),
@@ -346,7 +467,7 @@ class _ChatScreenState extends State<ChatScreen> {
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-            itemCount: _chats.length,
+            itemCount: _usesServerChat ? _serverThreads.length : _chats.length,
             itemBuilder: (_, i) => SizedBox(width: 218, child: _chatTile(i)),
           ),
         ),
@@ -385,9 +506,9 @@ class _ChatScreenState extends State<ChatScreen> {
         Expanded(
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(
+            const Text(
               'TriMatrix',
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w900),
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900),
             ),
             Text(
               _organizationName == 'TriMatrix'
@@ -398,26 +519,27 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ]),
         ),
-        XpBtn(
-          label: '+',
-          width: 46,
-          onPressed: () => xpDlg(
-            context,
-            'Новый чат',
-            'Здесь появится создание группы, личного чата или обсуждения проверки.',
-          ),
-        ),
       ]),
     );
   }
 
   Widget _chatTile(int index) {
-    final chat = _chats[index];
+    final serverThread = _usesServerChat ? _serverThreads[index] : null;
+    final chat = serverThread == null ? _chats[index] : null;
     final active = index == _activeChat;
-    final title = _chatTitle(chat);
-    final subtitle = _chatSubtitle(chat);
+    final title = serverThread?.title ?? _chatTitle(chat!);
+    final subtitle = serverThread == null
+        ? _chatSubtitle(chat!)
+        : _serverThreadSubtitle(serverThread);
+    final time = serverThread == null
+        ? chat!.time
+        : _shortDateTime(serverThread.updatedAt);
+    final unread = serverThread == null ? chat!.unread : 0;
+    final color = serverThread == null
+        ? chat!.color
+        : _serverThreadColor(serverThread.kind);
     return InkWell(
-      onTap: () => setState(() => _activeChat = index),
+      onTap: () => _selectChat(index),
       borderRadius: BorderRadius.circular(16),
       child: Container(
         margin: const EdgeInsets.only(bottom: 7),
@@ -431,7 +553,7 @@ class _ChatScreenState extends State<ChatScreen> {
           boxShadow: active ? AppTheme.shadowSubtle : null,
         ),
         child: Row(children: [
-          _avatar(title, chat.color, size: 40),
+          _avatar(title, color, size: 40),
           const SizedBox(width: 9),
           Expanded(
             child:
@@ -448,7 +570,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                 ),
                 Text(
-                  chat.time,
+                  time,
                   style: const TextStyle(fontSize: 9, color: Colors.black45),
                 ),
               ]),
@@ -461,7 +583,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     style: const TextStyle(fontSize: 10, color: Colors.black54),
                   ),
                 ),
-                if (chat.unread > 0) _unread(chat.unread),
+                if (unread > 0) _unread(unread),
               ]),
             ]),
           ),
@@ -470,9 +592,48 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  String _serverThreadSubtitle(ChatThread thread) {
+    switch (thread.kind) {
+      case ChatThreadKind.organization:
+        return 'общий чат команды';
+      case ChatThreadKind.job:
+        return 'обсуждение работы и протоколов';
+      case ChatThreadKind.direct:
+        return 'личный диалог';
+      case ChatThreadKind.personal:
+        return 'видно только вам';
+    }
+  }
+
+  Color _serverThreadColor(ChatThreadKind kind) {
+    switch (kind) {
+      case ChatThreadKind.organization:
+        return AppTheme.blue;
+      case ChatThreadKind.job:
+        return const Color(0xFF0EA5A4);
+      case ChatThreadKind.direct:
+        return const Color(0xFF16A34A);
+      case ChatThreadKind.personal:
+        return const Color(0xFF64748B);
+    }
+  }
+
+  String _shortDateTime(DateTime value) {
+    final local = value.toLocal();
+    final now = DateTime.now();
+    if (local.year == now.year &&
+        local.month == now.month &&
+        local.day == now.day) {
+      return '${local.hour.toString().padLeft(2, '0')}:'
+          '${local.minute.toString().padLeft(2, '0')}';
+    }
+    return '${local.day.toString().padLeft(2, '0')}.'
+        '${local.month.toString().padLeft(2, '0')}';
+  }
+
   Widget _chatPane() {
+    if (_usesServerChat) return _serverChatPane();
     final chat = _chats[_activeChat];
-    final messages = _visibleMessages;
     return Container(
       color: const Color(0xFFF4FAFD),
       child: Column(children: [
@@ -481,8 +642,8 @@ class _ChatScreenState extends State<ChatScreen> {
           child: ListView.builder(
             controller: _scrollCtrl,
             padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
-            itemCount: messages.length,
-            itemBuilder: (_, i) => _messageBubble(messages[i]),
+            itemCount: _visibleMessages.length,
+            itemBuilder: (_, i) => _messageBubble(_visibleMessages[i]),
           ),
         ),
         _composer(),
@@ -490,8 +651,139 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  Widget _serverChatPane() {
+    final thread = _activeServerThread!;
+    return Container(
+      color: const Color(0xFFF4FAFD),
+      child: Column(children: [
+        _chatHeaderContent(
+          title: thread.title,
+          subtitle: _serverThreadSubtitle(thread),
+          color: _serverThreadColor(thread.kind),
+        ),
+        if (thread.kind == ChatThreadKind.job) _customerAccessBar(thread),
+        if (_serverChatError != null) _serverChatErrorBanner(),
+        Expanded(
+          child: _serverMessagesLoading
+              ? const Center(child: CircularProgressIndicator())
+              : _serverMessages.isEmpty
+                  ? const Center(
+                      child: Text(
+                        'Сообщений пока нет',
+                        style: TextStyle(color: Colors.black54),
+                      ),
+                    )
+                  : ListView.builder(
+                      controller: _scrollCtrl,
+                      padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+                      itemCount: _serverMessages.length,
+                      itemBuilder: (_, i) => _messageBubble(
+                        _serverMessageView(_serverMessages[i]),
+                      ),
+                    ),
+        ),
+        _composer(),
+      ]),
+    );
+  }
+
+  Widget _serverChatErrorBanner() {
+    return Container(
+      color: const Color(0xFFFFF4D6),
+      padding: const EdgeInsets.fromLTRB(12, 6, 6, 6),
+      child: Row(children: [
+        const Icon(
+          Icons.info_outline,
+          size: 16,
+          color: Color(0xFF8A4B00),
+        ),
+        const SizedBox(width: 7),
+        Expanded(
+          child: Text(
+            _serverChatError!,
+            style: const TextStyle(
+              fontSize: 10,
+              color: Color(0xFF6B3B00),
+            ),
+          ),
+        ),
+        IconButton(
+          tooltip: 'Обновить чат',
+          visualDensity: VisualDensity.compact,
+          onPressed: _loadServerMessages,
+          icon: const Icon(Icons.refresh, size: 18),
+        ),
+      ]),
+    );
+  }
+
+  Widget _customerAccessBar(ChatThread thread) {
+    final shared = thread.customerShared;
+    final color = shared ? const Color(0xFF137A45) : const Color(0xFF8A4B00);
+    return Container(
+      key: const ValueKey('customer-access-bar'),
+      color: shared ? const Color(0xFFE8F7EE) : const Color(0xFFFFF4D6),
+      padding: const EdgeInsets.fromLTRB(12, 7, 10, 7),
+      child: Row(children: [
+        Icon(
+          shared ? Icons.visibility_outlined : Icons.lock_outline,
+          size: 17,
+          color: color,
+        ),
+        const SizedBox(width: 7),
+        Expanded(
+          child: Text(
+            shared
+                ? 'Работа доступна назначенному заказчику'
+                : 'Внутренняя работа: заказчик ее не видит',
+            style: TextStyle(
+              color: color,
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        if (thread.canManageCustomerAccess)
+          FilledButton.tonalIcon(
+            key: const ValueKey('current-customer-access-toggle'),
+            onPressed: _customerAccessUpdating
+                ? null
+                : () => _requestCustomerAccessChange(
+                      jobId: thread.jobId!,
+                      jobLabel: thread.title,
+                      shared: !shared,
+                    ),
+            icon: Icon(
+              shared
+                  ? Icons.visibility_off_outlined
+                  : Icons.visibility_outlined,
+              size: 17,
+            ),
+            label: Text(
+              shared ? 'Закрыть доступ' : 'Открыть заказчику',
+              style: const TextStyle(fontSize: 11),
+            ),
+          ),
+      ]),
+    );
+  }
+
   Widget _chatHeader(_ChatItem chat) {
     final title = _chatTitle(chat);
+    return _chatHeaderContent(
+      title: title,
+      subtitle: chat.kind == _ChatKind.approval
+          ? 'заказчик · согласование версии · доступ ограничен'
+          : '3 участника · удаленный просмотр включен',
+      color: chat.color,
+    );
+  }
+
+  Widget _chatHeaderContent({
+    required String title,
+    required String subtitle,
+    required Color color,
+  }) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: const BoxDecoration(
@@ -499,7 +791,7 @@ class _ChatScreenState extends State<ChatScreen> {
         border: Border(bottom: BorderSide(color: AppTheme.border)),
       ),
       child: Row(children: [
-        _avatar(title, chat.color, size: 38),
+        _avatar(title, color, size: 38),
         const SizedBox(width: 10),
         Expanded(
           child:
@@ -510,25 +802,24 @@ class _ChatScreenState extends State<ChatScreen> {
               style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w900),
             ),
             Text(
-              chat.kind == _ChatKind.approval
-                  ? 'заказчик · согласование версии · доступ ограничен'
-                  : '3 участника · удаленный просмотр включен',
+              subtitle,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontSize: 10, color: Colors.black54),
             ),
           ]),
         ),
-        XpBtn(
-          label: 'Доступ',
-          onPressed: () => xpDlg(
-            context,
-            'Доступ',
-            chat.kind == _ChatKind.approval
-                ? 'Заказчик видит только свой заказ, макет, превью, комментарии и решение по согласованию.'
-                : 'Участники видят протокол, превью и карты. Оригиналы открываются отдельным разрешением.',
-          ),
-        ),
       ]),
+    );
+  }
+
+  _ChatMessage _serverMessageView(ChatMessage message) {
+    final nickname = message.senderNickname.trim();
+    return _ChatMessage(
+      author: message.senderLabel,
+      role: nickname.isEmpty ? 'участник' : '@$nickname',
+      time: _shortDateTime(message.createdAt),
+      text: message.text,
+      isMine: message.senderId == widget.currentUserId,
     );
   }
 
@@ -663,11 +954,7 @@ class _ChatScreenState extends State<ChatScreen> {
             XpBtn(
               label: 'Открыть',
               primary: true,
-              onPressed: () => xpDlg(
-                context,
-                card.id,
-                'Открываем протокол, карту Delta E и ЧБ-геометрию.',
-              ),
+              onPressed: _showProtocolDetails,
             ),
           ]),
         ),
@@ -754,7 +1041,8 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _composer() {
-    final isApproval = _chats[_activeChat].kind == _ChatKind.approval;
+    final isApproval =
+        !_usesServerChat && _chats[_activeChat].kind == _ChatKind.approval;
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: const BoxDecoration(
@@ -762,20 +1050,16 @@ class _ChatScreenState extends State<ChatScreen> {
         border: Border(top: BorderSide(color: AppTheme.border)),
       ),
       child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-        XpBtn(
-          label: '+',
-          width: 48,
-          onPressed: () => xpDlg(
-            context,
-            'Прикрепить',
-            isApproval
-                ? 'К согласованию можно прикрепить PDF/JPG макета, новую версию, протокол проверки или превью.'
-                : 'Можно будет прикрепить последнюю проверку, превью, карту отличий или оригинал по разрешению.',
-          ),
+        IconButton.filledTonal(
+          key: const ValueKey('chat-attach-button'),
+          tooltip: 'Прикрепить',
+          onPressed: _showAttachmentMenu,
+          icon: const Icon(Icons.add),
         ),
         const SizedBox(width: 8),
         Expanded(
           child: TextField(
+            key: const ValueKey('chat-message-input'),
             controller: _msgCtrl,
             minLines: 1,
             maxLines: 4,
@@ -805,78 +1089,364 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ),
         const SizedBox(width: 8),
-        XpBtn(label: 'Отправить', primary: true, onPressed: _send),
+        IconButton.filled(
+          key: const ValueKey('chat-send-button'),
+          tooltip: 'Отправить',
+          onPressed: _sendingMessage ? null : _send,
+          icon: _sendingMessage
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                )
+              : const Icon(Icons.send),
+        ),
       ]),
     );
   }
 
-  Widget _techPanel() {
-    if (_chats[_activeChat].kind == _ChatKind.approval) {
-      return _approvalPanel();
-    }
-    final cloudRecord = _selectedCloudProtocol;
-    final card = cloudRecord == null
-        ? _messages.firstWhere((m) => m.card != null).card!
-        : _cloudCheckCard(cloudRecord.protocol);
-    return Container(
-      decoration: const BoxDecoration(
-        color: Color(0xFFEAF6FC),
-        border: Border(left: BorderSide(color: AppTheme.border)),
+  Future<void> _showAttachmentMenu() {
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        final maxHeight = MediaQuery.sizeOf(sheetContext).height * 0.78;
+        return SafeArea(
+          child: Align(
+            alignment: Alignment.topCenter,
+            widthFactor: 1,
+            heightFactor: 1,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: 680, maxHeight: maxHeight),
+              child: ListView(
+                shrinkWrap: true,
+                padding: const EdgeInsets.fromLTRB(10, 0, 10, 14),
+                children: [
+                  if (_usesServerChat)
+                    _attachmentAction(
+                      context: sheetContext,
+                      icon: Icons.person_search_outlined,
+                      title: 'Открыть работу заказчику',
+                      subtitle: 'выбрать работу и управлять доступом заказчика',
+                      key: const ValueKey('customer-access-menu-action'),
+                      onTap: _showCustomerWorkDialog,
+                    ),
+                  _attachmentAction(
+                    context: sheetContext,
+                    icon: Icons.description_outlined,
+                    title: 'Протокол проверки',
+                    subtitle: 'результаты, этапы и параметры',
+                    onTap: _showProtocolDetails,
+                  ),
+                  _attachmentAction(
+                    context: sheetContext,
+                    icon: Icons.image_outlined,
+                    title: 'Превью',
+                    subtitle:
+                        'облегчённое изображение для удалённого просмотра',
+                    onTap: _openCloudPreview,
+                  ),
+                  _attachmentAction(
+                    context: sheetContext,
+                    icon: Icons.difference_outlined,
+                    title: 'Карта отличий',
+                    subtitle: 'цветовая карта выбранной проверки',
+                    onTap: _openCloudPreview,
+                  ),
+                  _attachmentAction(
+                    context: sheetContext,
+                    icon: Icons.fact_check_outlined,
+                    title: 'Макет на согласование',
+                    subtitle: 'версия макета и решение заказчика',
+                    onTap: () => xpDlg(
+                      context,
+                      'Согласование макета',
+                      'Выбор версии макета подключим следующим этапом чата.',
+                    ),
+                  ),
+                  _attachmentAction(
+                    context: sheetContext,
+                    icon: Icons.lock_clock_outlined,
+                    title: 'Запросить оригинал',
+                    subtitle: 'временный доступ у владельца проверки',
+                    onTap: () => xpDlg(
+                      context,
+                      'Доступ к оригиналу',
+                      'Оригинал остаётся на устройстве. Запрос доступа будет отправлен владельцу проверки.',
+                    ),
+                  ),
+                  _attachmentAction(
+                    context: sheetContext,
+                    icon: Icons.attach_file,
+                    title: 'Файл или изображение',
+                    subtitle: 'вложение к сообщению',
+                    onTap: () => xpDlg(
+                      context,
+                      'Файл или изображение',
+                      'Загрузку обычных вложений подключим вместе с сообщениями чата.',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _attachmentAction({
+    required BuildContext context,
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+    Key? key,
+  }) {
+    return ListTile(
+      key: key,
+      leading: Icon(icon, color: AppTheme.blue),
+      title: Text(
+        title,
+        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
       ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Container(
-          padding: const EdgeInsets.all(12),
-          color: AppTheme.blueDark,
-          child: const Text(
-            'Технические данные',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 13,
-              fontWeight: FontWeight.w900,
+      subtitle: Text(subtitle, style: const TextStyle(fontSize: 10)),
+      onTap: () {
+        Navigator.pop(context);
+        onTap();
+      },
+    );
+  }
+
+  Future<void> _showCustomerWorkDialog() async {
+    final repository = widget.chatRepository;
+    if (repository == null) return;
+
+    late final List<CustomerShareCandidate> candidates;
+    try {
+      candidates = await repository.listCustomerShareCandidates();
+    } catch (_) {
+      if (!mounted) return;
+      await xpDlg(
+        context,
+        'Доступ заказчика',
+        'Не удалось получить работы. Проверьте миграцию 017 и права пользователя.',
+      );
+      return;
+    }
+    if (!mounted) return;
+    if (candidates.isEmpty) {
+      await xpDlg(
+        context,
+        'Доступ заказчика',
+        'Нет активных работ с подтвержденным заказчиком, которыми вы можете управлять.',
+      );
+      return;
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text(
+          'Доступ заказчика к работе',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+        ),
+        content: SizedBox(
+          width: 560,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 420),
+            child: ListView.separated(
+              shrinkWrap: true,
+              itemCount: candidates.length,
+              separatorBuilder: (_, __) => const Divider(height: 1),
+              itemBuilder: (_, index) {
+                final candidate = candidates[index];
+                return ListTile(
+                  key: ValueKey('customer-job-${candidate.jobId}'),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                  leading: Icon(
+                    candidate.customerShared
+                        ? Icons.visibility_outlined
+                        : Icons.lock_outline,
+                    color: candidate.customerShared
+                        ? const Color(0xFF137A45)
+                        : const Color(0xFF8A4B00),
+                  ),
+                  title: Text(
+                    'Работа № ${candidate.jobNumber}',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  subtitle: Text(
+                    candidate.customerName.isEmpty
+                        ? 'Заказчик подтвержден'
+                        : candidate.customerName,
+                    style: const TextStyle(fontSize: 10),
+                  ),
+                  trailing: FilledButton.tonal(
+                    key: ValueKey(
+                      'customer-access-toggle-${candidate.jobId}',
+                    ),
+                    onPressed: () {
+                      Navigator.pop(dialogContext);
+                      _requestCustomerAccessChange(
+                        jobId: candidate.jobId,
+                        jobLabel: 'работу № ${candidate.jobNumber}',
+                        shared: !candidate.customerShared,
+                      );
+                    },
+                    child: Text(
+                      candidate.customerShared ? 'Закрыть' : 'Открыть',
+                    ),
+                  ),
+                );
+              },
             ),
           ),
         ),
-        Expanded(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _cloudProtocolSelector(),
-                  const SizedBox(height: 10),
-                  _previewBox(_selectedCloudPreview),
-                  const SizedBox(height: 10),
-                  _techRows(card),
-                  const SizedBox(height: 10),
-                  _commentsBox(),
-                  const SizedBox(height: 10),
-                  Row(children: [
-                    Expanded(
-                      child: XpBtn(
-                        label: 'Карта',
-                        primary: _selectedCloudPreview != null,
-                        onPressed: _selectedCloudPreview == null
-                            ? null
-                            : _showCloudPreview,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: XpBtn(
-                        label: 'Оригинал',
-                        onPressed: () => xpDlg(
-                          context,
-                          'Оригинал',
-                          'Запрос доступа к локальному оригиналу у владельца проверки.',
-                        ),
-                      ),
-                    ),
-                  ]),
-                ]),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Готово'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _requestCustomerAccessChange({
+    required String jobId,
+    required String jobLabel,
+    required bool shared,
+  }) async {
+    final repository = widget.chatRepository;
+    if (repository == null || _customerAccessUpdating) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(
+          shared ? 'Открыть заказчику?' : 'Закрыть доступ?',
+        ),
+        content: Text(
+          shared
+              ? 'Заказчик увидит $jobLabel, ее чат, протоколы и опубликованные материалы.'
+              : 'Заказчик больше не увидит $jobLabel и ее материалы. Команда сохранит доступ.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            key: const ValueKey('confirm-customer-access-change'),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(shared ? 'Открыть' : 'Закрыть'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _customerAccessUpdating = true);
+    try {
+      await repository.setCustomerAccess(jobId: jobId, shared: shared);
+      await _loadServerChats(preferredJobId: jobId);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            shared
+                ? 'Работа открыта назначенному заказчику'
+                : 'Доступ заказчика закрыт',
           ),
         ),
-      ]),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      await xpDlg(
+        context,
+        'Доступ заказчика',
+        'Не удалось изменить доступ. Проверьте миграцию 017 и свои права на работу.',
+      );
+    } finally {
+      if (mounted) setState(() => _customerAccessUpdating = false);
+    }
+  }
+
+  void _showProtocolDetails() {
+    final record = _selectedCloudProtocol;
+    if (record == null) {
+      xpDlg(
+        context,
+        'Протоколы',
+        'Доступных облачных протоколов пока нет.',
+      );
+      return;
+    }
+    final card = _cloudCheckCard(record.protocol);
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => Dialog(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 820, maxHeight: 780),
+          child: Column(children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 8, 8),
+              child: Row(children: [
+                Expanded(
+                  child: Text(
+                    _cloudProtocolLabel(record.protocol),
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Закрыть',
+                  onPressed: () => Navigator.pop(dialogContext),
+                  icon: const Icon(Icons.close),
+                ),
+              ]),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _cloudProtocolSelector(),
+                    const SizedBox(height: 10),
+                    _previewBox(_selectedCloudPreview),
+                    const SizedBox(height: 10),
+                    _techRows(card),
+                  ],
+                ),
+              ),
+            ),
+          ]),
+        ),
+      ),
     );
+  }
+
+  void _openCloudPreview() {
+    if (_selectedCloudPreview == null || _selectedCloudProtocol == null) {
+      xpDlg(
+        context,
+        'Превью',
+        'Для выбранной проверки облачное превью пока недоступно.',
+      );
+      return;
+    }
+    _showCloudPreview();
   }
 
   Widget _cloudProtocolSelector() {
@@ -1016,207 +1586,6 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Widget _approvalPanel() {
-    const card = _ApprovalCard(
-      orderId: 'ORD-154',
-      customer: 'ООО Ромашка',
-      layoutName: 'Упаковка 120x80',
-      version: 'v3',
-      fileName: 'romashka_pack_v3.pdf',
-      status: 'Ожидает согласования',
-      deadline: '05.07.2026 18:00',
-      protocol: 'Проверка OK · Delta E max 3.2 · OCR 99%',
-    );
-    return Container(
-      decoration: const BoxDecoration(
-        color: Color(0xFFEAF6FC),
-        border: Border(left: BorderSide(color: AppTheme.border)),
-      ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Container(
-          padding: const EdgeInsets.all(12),
-          color: AppTheme.blueDark,
-          child: const Text(
-            'Согласование макета',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 13,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-        ),
-        Expanded(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _cloudProtocolSelector(),
-                  const SizedBox(height: 10),
-                  if (_selectedCloudPreview != null)
-                    _previewBox(_selectedCloudPreview)
-                  else
-                    _layoutPreviewBox(),
-                  const SizedBox(height: 10),
-                  _approvalRows(card),
-                  const SizedBox(height: 10),
-                  _approvalActions(),
-                  const SizedBox(height: 10),
-                  _versionBox(),
-                  const SizedBox(height: 10),
-                  _customerAccessBox(),
-                ]),
-          ),
-        ),
-      ]),
-    );
-  }
-
-  Widget _layoutPreviewBox() {
-    return Container(
-      height: 172,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: const Color(0xFFC9E2F0)),
-        borderRadius: BorderRadius.circular(14),
-        boxShadow: AppTheme.shadowSubtle,
-      ),
-      child: Stack(children: [
-        Positioned.fill(
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFFFFFBEB), Color(0xFFDDF7FF)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-          ),
-        ),
-        const Center(
-          child: Icon(Icons.picture_as_pdf_outlined,
-              size: 50, color: AppTheme.blue),
-        ),
-        Positioned(
-          left: 18,
-          right: 18,
-          bottom: 18,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-            decoration: BoxDecoration(
-              color: const Color(0xDDFFFFFF),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: const Text(
-              'Макет v3 · заказчик видит только согласовательный файл',
-              style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700),
-              textAlign: TextAlign.center,
-            ),
-          ),
-        ),
-      ]),
-    );
-  }
-
-  Widget _approvalRows(_ApprovalCard card) {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: const Color(0xFFC9E2F0)),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Column(children: [
-        _techRow('Заказ', card.orderId),
-        _techRow('Заказчик', card.customer),
-        _techRow('Макет', '${card.layoutName} · ${card.version}'),
-        _techRow('Файл', card.fileName),
-        _techRow('Статус', _approvalStatus),
-        _techRow('Дедлайн', card.deadline),
-        _techRow('Проверка', card.protocol),
-      ]),
-    );
-  }
-
-  Widget _approvalActions() {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: const Color(0xFFC9E2F0)),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        const Text(
-          'Решение заказчика',
-          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900),
-        ),
-        const SizedBox(height: 8),
-        XpBtn(
-          label: 'Принять макет',
-          primary: true,
-          onPressed: () => _setApprovalStatus('Согласовано заказчиком'),
-        ),
-        const SizedBox(height: 7),
-        XpBtn(
-          label: 'Вернуть на доработку',
-          onPressed: () => _setApprovalStatus('Нужна доработка'),
-        ),
-        const SizedBox(height: 7),
-        XpBtn(
-          label: 'Запросить новую версию',
-          onPressed: () => _setApprovalStatus('Ожидается новая версия'),
-        ),
-      ]),
-    );
-  }
-
-  Widget _versionBox() {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: const Color(0xFFC9E2F0)),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: const Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('История версий',
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900)),
-          SizedBox(height: 7),
-          Text('v1 · первичный макет · замечания по тексту',
-              style: TextStyle(fontSize: 10, height: 1.35)),
-          SizedBox(height: 4),
-          Text('v2 · исправлены тексты · замечания по цвету',
-              style: TextStyle(fontSize: 10, height: 1.35)),
-          SizedBox(height: 4),
-          Text('v3 · текущая версия · ожидает решения',
-              style: TextStyle(fontSize: 10, height: 1.35)),
-        ],
-      ),
-    );
-  }
-
-  Widget _customerAccessBox() {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFFFAE6),
-        border: Border.all(color: const Color(0xFFE8C65C)),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: const Text(
-        'Доступ заказчика: только свой заказ, макет, комментарии, статус и согласовательный протокол. Производственные настройки, оригиналы и внутренние карты не показываются.',
-        style: TextStyle(fontSize: 10, height: 1.35),
-      ),
-    );
-  }
-
   Widget _previewBox(Uint8List? preview) {
     if (preview != null) {
       return Container(
@@ -1297,36 +1666,6 @@ class _ChatScreenState extends State<ChatScreen> {
         _techRow('Текст', card.text),
         _techRow('Хранение', card.storage),
       ]),
-    );
-  }
-
-  Widget _commentsBox() {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: const Color(0xFFC9E2F0)),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: const Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Комментарии',
-            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900),
-          ),
-          SizedBox(height: 7),
-          Text(
-            'Мария: белый слой ушел вниз на 2-3 px.',
-            style: TextStyle(fontSize: 10, height: 1.35),
-          ),
-          SizedBox(height: 5),
-          Text(
-            'Иван: цвет вторичен, смотрим контуры текста.',
-            style: TextStyle(fontSize: 10, height: 1.35),
-          ),
-        ],
-      ),
     );
   }
 
@@ -1431,9 +1770,40 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  void _send() {
+  Future<void> _send() async {
     final text = _msgCtrl.text.trim();
     if (text.isEmpty) return;
+    if (_usesServerChat) {
+      final repository = widget.chatRepository;
+      final thread = _activeServerThread;
+      if (repository == null || thread == null || _sendingMessage) return;
+      setState(() => _sendingMessage = true);
+      try {
+        final message = await repository.sendText(
+          threadId: thread.id,
+          text: text,
+        );
+        if (!mounted || _activeServerThread?.id != thread.id) return;
+        setState(() {
+          if (!_serverMessages.any((item) => item.id == message.id)) {
+            _serverMessages = [..._serverMessages, message];
+          }
+          _msgCtrl.clear();
+          _serverChatError = null;
+        });
+        _scrollMessagesToEnd();
+      } catch (_) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Не удалось отправить сообщение'),
+          ),
+        );
+      } finally {
+        if (mounted) setState(() => _sendingMessage = false);
+      }
+      return;
+    }
     final now = DateTime.now();
     final time = '${now.hour}:${now.minute.toString().padLeft(2, '0')}';
     setState(() {
@@ -1450,14 +1820,7 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       _msgCtrl.clear();
     });
-    Future.delayed(const Duration(milliseconds: 80), () {
-      if (!_scrollCtrl.hasClients) return;
-      _scrollCtrl.animateTo(
-        _scrollCtrl.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 180),
-        curve: Curves.easeOut,
-      );
-    });
+    _scrollMessagesToEnd();
   }
 }
 

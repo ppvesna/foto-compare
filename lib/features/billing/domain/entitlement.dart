@@ -20,6 +20,7 @@ enum UsageLimit { checksPerDay, savedReferences, organizationSeats }
 
 class EntitlementSnapshot {
   final PlanTier plan;
+  final PlanTier configuredPlan;
   final PlanTier personalPlan;
   final EntitlementScope scope;
   final String? organizationId;
@@ -27,9 +28,11 @@ class EntitlementSnapshot {
   final Map<UsageLimit, int?> limits;
   final bool legacyFallback;
   final DateTime? validUntil;
+  final String subscriptionStatus;
 
   const EntitlementSnapshot({
     required this.plan,
+    PlanTier? configuredPlan,
     PlanTier? personalPlan,
     this.scope = EntitlementScope.personal,
     this.organizationId,
@@ -37,7 +40,9 @@ class EntitlementSnapshot {
     required this.limits,
     this.legacyFallback = false,
     this.validUntil,
-  }) : personalPlan = personalPlan ?? plan;
+    this.subscriptionStatus = 'active',
+  })  : configuredPlan = configuredPlan ?? plan,
+        personalPlan = personalPlan ?? plan;
 
   factory EntitlementSnapshot.forPlan(PlanTier plan) {
     switch (plan) {
@@ -132,10 +137,16 @@ class EntitlementSnapshot {
 
   bool get usesOrganizationPlan => scope == EntitlementScope.organization;
 
+  bool get subscriptionExpired =>
+      validUntil != null && !validUntil!.isAfter(DateTime.now().toUtc());
+
+  bool get usesFallbackPlan => configuredPlan != plan;
+
   int? limit(UsageLimit limit) => limits[limit];
 
   EntitlementSnapshot copyWith({
     PlanTier? plan,
+    PlanTier? configuredPlan,
     PlanTier? personalPlan,
     EntitlementScope? scope,
     String? organizationId,
@@ -143,9 +154,11 @@ class EntitlementSnapshot {
     Map<UsageLimit, int?>? limits,
     bool? legacyFallback,
     DateTime? validUntil,
+    String? subscriptionStatus,
   }) {
     return EntitlementSnapshot(
       plan: plan ?? this.plan,
+      configuredPlan: configuredPlan ?? this.configuredPlan,
       personalPlan: personalPlan ?? this.personalPlan,
       scope: scope ?? this.scope,
       organizationId: organizationId ?? this.organizationId,
@@ -153,6 +166,7 @@ class EntitlementSnapshot {
       limits: limits ?? this.limits,
       legacyFallback: legacyFallback ?? this.legacyFallback,
       validUntil: validUntil ?? this.validUntil,
+      subscriptionStatus: subscriptionStatus ?? this.subscriptionStatus,
     );
   }
 }
