@@ -45,3 +45,5 @@ app.*.map.json
 /android/app/release
 supabase/.temp/
 
+# Local manual-test identities. Never commit real emails or credentials.
+docs/testing/*.local.md

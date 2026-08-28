@@ -63,6 +63,12 @@ WHERE schemaname = 'public'
   AND tablename IN ('organizations', 'organization_members')
 ORDER BY tablename, policyname;
 
+-- Expected before 006:
+-- 1. all three tables exist;
+-- 2. role values belong to the old or new known role set;
+-- 3. the duplicate-owner query returns no rows;
+-- 4. the missing-profile query returns no rows for users used in the test;
+-- 5. prototype auth_* policies may be present and will be replaced by 006.
 -- Required before 006: user_profiles exists.
 -- Valid first-install state: organizations and organization_members are NULL.
 -- If organization tables already exist, resolve duplicate-owner and missing-profile
