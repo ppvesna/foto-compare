@@ -199,6 +199,7 @@ flutter build web --debug
 
 ## Документация
 
+- [Текущее состояние и следующий шаг](docs/CURRENT_STATE.md)
 - [Текущий алгоритм](algorithm.md)
 - [Architecture v2](docs/architecture/Architecture_v2.md)
 - [Карта модулей](docs/architecture/Module_Guide.md)
