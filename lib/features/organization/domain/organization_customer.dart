@@ -1,3 +1,25 @@
+class OrganizationCustomerRepresentative {
+  final String? userId;
+  final String? invitationId;
+  final String email;
+  final String nickname;
+  final String displayName;
+  final bool pending;
+  final bool emailSent;
+
+  const OrganizationCustomerRepresentative({
+    this.userId,
+    this.invitationId,
+    this.email = '',
+    this.nickname = '',
+    this.displayName = '',
+    required this.pending,
+    this.emailSent = true,
+  });
+
+  String get id => invitationId ?? userId ?? '$email:$nickname';
+}
+
 class OrganizationCustomer {
   final String id;
   final String organizationId;
@@ -16,6 +38,7 @@ class OrganizationCustomer {
   final String pendingInvitationEmail;
   final String pendingInvitationNickname;
   final String pendingInvitationDisplayName;
+  final List<OrganizationCustomerRepresentative> representatives;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -37,6 +60,7 @@ class OrganizationCustomer {
     this.pendingInvitationEmail = '',
     this.pendingInvitationNickname = '',
     this.pendingInvitationDisplayName = '',
+    this.representatives = const [],
     required this.createdAt,
     required this.updatedAt,
   });
@@ -44,6 +68,32 @@ class OrganizationCustomer {
   String get displayLabel => code.isEmpty ? name : '$code · $name';
 
   bool get hasPendingInvitation => pendingInvitationId != null;
+
+  List<OrganizationCustomerRepresentative> get allRepresentatives {
+    if (representatives.isNotEmpty) return representatives;
+    final result = <OrganizationCustomerRepresentative>[];
+    if (customerUserId != null) {
+      result.add(
+        OrganizationCustomerRepresentative(
+          userId: customerUserId,
+          nickname: customerUserNickname,
+          pending: false,
+        ),
+      );
+    }
+    if (pendingInvitationId != null) {
+      result.add(
+        OrganizationCustomerRepresentative(
+          invitationId: pendingInvitationId,
+          email: pendingInvitationEmail,
+          nickname: pendingInvitationNickname,
+          displayName: pendingInvitationDisplayName,
+          pending: true,
+        ),
+      );
+    }
+    return result;
+  }
 }
 
 class OrganizationCustomerJob {

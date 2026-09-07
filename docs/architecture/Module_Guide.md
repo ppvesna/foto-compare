@@ -180,8 +180,8 @@ They are assignments inside a production job.
 Current administration foundation: the owner/admin policy, public service contract,
 Supabase RPC adapter, mock, and settings UI exist. Migration `006` provides organization
 creation, exact nickname lookup, member listing, assignment, and current membership
-snapshot. Migrations `006–008` are installed in the current test environment; migration
-`009` adds organization-plan inheritance while preserving the member's personal plan.
+snapshot. Migration `009` adds organization-plan inheritance while preserving the
+member's personal plan.
 Migration `010` adds invitations, seat limits, member function defaults, and a unified
 active/pending participant list. The Edge Function adapter sends the email without
 exposing service credentials to Flutter. Owner bootstrap, employee assignment, and plan
@@ -193,11 +193,21 @@ The participant UI also changes an active member's role through the same protect
 Owner may appoint admin, employee, or customer. Admin may change only employee and
 customer accounts; owner and peer-admin records are excluded from the admin editor.
 
-Migration `012` and the customer-directory contract add approved customers, primary
-manager and customer-account links, and an owner/admin administration UI. Employees can
+Migration `012` and the customer-directory contract add approved customers, responsible
+employee and customer-account links, and an owner/admin administration UI. Employees can
 read active customers and submit an unconfirmed name from the technical specification;
-they cannot create directory entries directly. Server installation and RLS verification
-remain the next release gate.
+they cannot create directory entries directly. The test environment supports this
+workflow. Customer publication and revocation through migration `017` have passed the
+dedicated multi-account manual test; the organization team chat remained hidden.
+Migration `020` assigns sequential customer codes atomically per organization. The UI
+uses the simpler terms “responsible employee” and allows any active non-customer member
+to be selected without turning “manager” into an organization role.
+Migration `021` exposes every active or pending representative of a customer. The
+directory renders one row per representative while keeping the customer as a single
+entity; customer-detail updates no longer replace existing representative links.
+Migration `022` synchronizes those links into active confirmed production jobs. Job
+assignment and customer publication remain separate: a customer participant can read
+the job only while its explicit customer-access state is `shared`.
 
 ### inspection
 

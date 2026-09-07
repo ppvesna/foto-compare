@@ -43,6 +43,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('owner@example.com'), findsOneWidget);
     expect(find.text('Сбросить'), findsNothing);
+    expect(find.text('Пароль'), findsNothing);
+    expect(find.text('Синхронизация'), findsNothing);
 
     await tester.enterText(
       find.widgetWithText(TextField, 'Ник'),
@@ -106,6 +108,8 @@ void main() {
     expect(find.text('Специалист проверки'), findsOneWidget);
     expect(find.text('Тестирование доступа'), findsNothing);
     expect(find.text('Обновить права с сервера'), findsNothing);
+    expect(find.text('Сбросить'), findsNothing);
+    expect(find.text('Сохранить'), findsNothing);
   });
 
   testWidgets('shows why an expired Pro workspace uses Free capabilities',
@@ -302,18 +306,86 @@ void main() {
 
     await tester.tap(find.byTooltip('Действия с заказчиком'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Пригласить представителя'));
+    await tester.tap(find.text('Добавить представителя'));
     await tester.pumpAndSettle();
-    final invitationFields = find.byType(TextField);
-    await tester.enterText(invitationFields.at(2), 'client@example.com');
-    await tester.enterText(invitationFields.at(3), 'client_user');
-    await tester.enterText(invitationFields.at(4), 'Представитель');
-    await tester.tap(find.text('Пригласить').last);
+    final invitationFields = find.descendant(
+      of: find.byKey(const ValueKey('customer-draft-row')),
+      matching: find.byType(TextField),
+    );
+    await tester.enterText(invitationFields.at(1), 'client@example.com');
+    await tester.enterText(invitationFields.at(2), 'client_user');
+    await tester.enterText(invitationFields.at(3), 'Представитель');
+    await tester.tap(find.byKey(const ValueKey('customer-draft-actions')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Пригласить представителя'));
     await tester.pumpAndSettle();
 
     expect(service.lastInvitation?.role, OrganizationRole.customer);
     expect(service.lastInvitation?.nickname, 'client_user');
     expect(service.lastInvitation?.customerId, 'customer-1');
+  });
+
+  testWidgets('shows one customer row for each representative', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1440, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final customerService = MockCustomerDirectoryService(
+      customers: [
+        OrganizationCustomer(
+          id: 'customer-1',
+          organizationId: 'organization-1',
+          code: 'C-0001',
+          name: 'Типография Весна',
+          active: true,
+          representatives: const [
+            OrganizationCustomerRepresentative(
+              userId: 'representative-1',
+              email: 'one@example.com',
+              nickname: 'client_one',
+              displayName: 'Первый представитель',
+              pending: false,
+            ),
+            OrganizationCustomerRepresentative(
+              invitationId: 'invitation-2',
+              email: 'two@example.com',
+              nickname: 'client_two',
+              displayName: 'Второй представитель',
+              pending: true,
+            ),
+          ],
+          createdAt: DateTime.utc(2026),
+          updatedAt: DateTime.utc(2026),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SettingsScreen(
+            entitlements: EntitlementSnapshot.forPlan(PlanTier.pro),
+            organizationAccess: OrganizationAccess.forRole(
+              organizationId: 'organization-1',
+              role: OrganizationRole.owner,
+            ),
+            organizationAdministrationService:
+                MockOrganizationAdministrationService(),
+            customerDirectoryService: customerService,
+            onAccessChanged: () async {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Организация').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Заказчики'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Типография Весна'), findsNWidgets(2));
+    expect(find.text('Первый представитель'), findsOneWidget);
+    expect(find.text('Второй представитель'), findsOneWidget);
+    expect(find.text('активен'), findsWidgets);
+    expect(find.text('ожидает регистрации'), findsOneWidget);
   });
 
   testWidgets('owner links an existing customer account from the row menu',
@@ -424,10 +496,10 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Заказчики'));
     await tester.pumpAndSettle();
-    expect(find.text('Архивный заказчик'), findsNothing);
-    await tester.tap(find.byType(Switch));
+    expect(find.textContaining('Архивный заказчик'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('show-archived-customers')));
     await tester.pumpAndSettle();
-    expect(find.text('Архивный заказчик'), findsOneWidget);
+    expect(find.textContaining('Архивный заказчик'), findsOneWidget);
     await tester.tap(find.byTooltip('Действия с заказчиком'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Восстановить из архива'));
@@ -563,12 +635,29 @@ void main() {
     expect(employeeButton.enabled, true);
   });
 
-  testWidgets('administrator adds a customer to the organization directory',
+  testWidgets('administrator adds a customer with an automatic code',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(1440, 1200));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    final organizationService = MockOrganizationAdministrationService();
-    final customerService = MockCustomerDirectoryService();
+    final organizationService = MockOrganizationAdministrationService(
+      participants: [
+        OrganizationParticipant(
+          id: 'employee-1',
+          userId: 'employee-1',
+          email: 'employee@example.com',
+          nickname: 'employee_one',
+          displayName: 'Сотрудник',
+          role: OrganizationRole.employee,
+          functions: const {},
+          status: OrganizationParticipantStatus.active,
+          emailSent: true,
+          createdAt: DateTime.utc(2026),
+        ),
+      ],
+    );
+    final customerService = MockCustomerDirectoryService(
+      requireExplicitCode: true,
+    );
 
     await tester.pumpWidget(
       MaterialApp(
@@ -598,19 +687,229 @@ void main() {
       of: find.byKey(const ValueKey('customer-draft-row')),
       matching: find.byType(TextField),
     );
-    await tester.enterText(customerFields.at(0), 'VESNA');
-    await tester.enterText(customerFields.at(1), 'Типография Весна');
+    expect(customerFields, findsNWidgets(4));
+    await tester.enterText(customerFields.at(0), 'Типография Весна');
+    await tester.enterText(customerFields.at(1), 'client@example.com');
+    await tester.enterText(customerFields.at(2), 'client_one');
+    await tester.enterText(customerFields.at(3), 'Представитель');
+    await tester.tap(
+      find.byKey(const ValueKey('customer-responsible-select')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('employee_one').last);
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('customer-draft-actions')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Создать заказчика'));
+    await tester.tap(find.text('Пригласить представителя'));
     await tester.pumpAndSettle();
 
-    expect(customerService.savedCustomer?.code, 'VESNA');
+    expect(customerService.savedCustomer?.code, 'C-0001');
     expect(customerService.savedCustomer?.name, 'Типография Весна');
+    expect(customerService.savedCustomer?.managerUserId, 'employee-1');
+    expect(organizationService.lastInvitation?.email, 'client@example.com');
+    expect(organizationService.lastInvitation?.nickname, 'client_one');
+    expect(organizationService.lastInvitation?.role, OrganizationRole.customer);
+    expect(
+      organizationService.lastInvitation?.customerId,
+      'mock-customer-1',
+    );
     expect(
       customerService.savedCustomer?.organizationId,
       'organization-1',
     );
+  });
+
+  testWidgets('administrator saves a customer without a representative',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1440, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final organizationService = MockOrganizationAdministrationService();
+    final customerService = MockCustomerDirectoryService();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SettingsScreen(
+            entitlements: EntitlementSnapshot.forPlan(PlanTier.pro),
+            organizationAccess: OrganizationAccess.forRole(
+              organizationId: 'organization-1',
+              role: OrganizationRole.admin,
+            ),
+            organizationAdministrationService: organizationService,
+            customerDirectoryService: customerService,
+            onAccessChanged: () async {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Организация').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Заказчики'));
+    await tester.pumpAndSettle();
+
+    final customerFields = find.descendant(
+      of: find.byKey(const ValueKey('customer-draft-row')),
+      matching: find.byType(TextField),
+    );
+    await tester.enterText(customerFields.at(0), 'Заказчик без кабинета');
+    await tester.tap(find.byKey(const ValueKey('customer-draft-actions')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Сохранить без представителя'));
+    await tester.pumpAndSettle();
+
+    expect(customerService.savedCustomer?.name, 'Заказчик без кабинета');
+    expect(organizationService.lastInvitation, isNull);
+  });
+
+  testWidgets('customer request links an exact existing customer in one tap',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1440, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final customerService = MockCustomerDirectoryService(
+      customers: [
+        OrganizationCustomer(
+          id: 'customer-1',
+          organizationId: 'organization-1',
+          code: 'C-0001',
+          name: 'VESNA-CLIENT-TEST',
+          active: true,
+          createdAt: DateTime.utc(2026),
+          updatedAt: DateTime.utc(2026),
+        ),
+      ],
+      requests: [
+        OrganizationCustomerRequest(
+          id: 'request-1',
+          organizationId: 'organization-1',
+          requestedName: 'VESNA-CLIENT-TEST',
+          workNumber: 'VESNA-CHAT-TEST-001',
+          createdAt: DateTime.utc(2026),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SettingsScreen(
+            entitlements: EntitlementSnapshot.forPlan(PlanTier.pro),
+            organizationAccess: OrganizationAccess.forRole(
+              organizationId: 'organization-1',
+              role: OrganizationRole.admin,
+            ),
+            organizationAdministrationService:
+                MockOrganizationAdministrationService(),
+            customerDirectoryService: customerService,
+            onAccessChanged: () async {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Организация').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Заказчики'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Связать с созданным'), findsOneWidget);
+    await tester.tap(
+      find.byKey(const ValueKey('resolve-customer-request-request-1')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(customerService.resolvedRequest?.requestId, 'request-1');
+    expect(customerService.resolvedRequest?.customerId, 'customer-1');
+    expect(find.text('Связать с созданным'), findsNothing);
+  });
+
+  testWidgets('customer request prefills combined creation and invitation',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1440, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final organizationService = MockOrganizationAdministrationService(
+      participants: [
+        OrganizationParticipant(
+          id: 'employee-1',
+          userId: 'employee-1',
+          email: 'employee@example.com',
+          nickname: 'employee_one',
+          displayName: 'Сотрудник',
+          role: OrganizationRole.employee,
+          functions: const {},
+          status: OrganizationParticipantStatus.active,
+          emailSent: true,
+          createdAt: DateTime.utc(2026),
+        ),
+      ],
+    );
+    final customerService = MockCustomerDirectoryService(
+      requireExplicitCode: true,
+      requests: [
+        OrganizationCustomerRequest(
+          id: 'request-1',
+          organizationId: 'organization-1',
+          requestedName: 'Новый заказчик',
+          workNumber: 'WORK-1',
+          requestedByUserId: 'employee-1',
+          createdAt: DateTime.utc(2026),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SettingsScreen(
+            entitlements: EntitlementSnapshot.forPlan(PlanTier.pro),
+            organizationAccess: OrganizationAccess.forRole(
+              organizationId: 'organization-1',
+              role: OrganizationRole.admin,
+            ),
+            organizationAdministrationService: organizationService,
+            customerDirectoryService: customerService,
+            onAccessChanged: () async {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Организация').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Заказчики'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Заполнить данные'), findsOneWidget);
+    await tester.tap(
+      find.byKey(const ValueKey('resolve-customer-request-request-1')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Данные заявки заполнены'), findsOneWidget);
+    await tester.tap(find.text('ОК'));
+    await tester.pumpAndSettle();
+    final customerFields = find.descendant(
+      of: find.byKey(const ValueKey('customer-draft-row')),
+      matching: find.byType(TextField),
+    );
+    expect(
+      tester.widget<TextField>(customerFields.at(0)).controller?.text,
+      'Новый заказчик',
+    );
+    await tester.enterText(customerFields.at(1), 'new@example.com');
+    await tester.enterText(customerFields.at(2), 'new_customer');
+    await tester.enterText(customerFields.at(3), 'Новый представитель');
+    await tester.tap(find.byKey(const ValueKey('customer-draft-actions')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Пригласить представителя'));
+    await tester.pumpAndSettle();
+
+    expect(customerService.savedCustomer?.code, 'C-0001');
+    expect(customerService.savedCustomer?.name, 'Новый заказчик');
+    expect(customerService.savedCustomer?.managerUserId, 'employee-1');
+    expect(customerService.resolvedRequest?.requestId, 'request-1');
+    expect(organizationService.lastInvitation?.email, 'new@example.com');
+    expect(organizationService.lastInvitation?.customerId, 'mock-customer-1');
   });
 
   testWidgets('customer edit tolerates an unavailable linked participant',
@@ -675,7 +974,7 @@ void main() {
     await tester.ensureVisible(find.byTooltip('Действия с заказчиком'));
     await tester.tap(find.byTooltip('Действия с заказчиком'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Изменить'));
+    await tester.tap(find.text('Изменить заказчика'));
     await tester.pumpAndSettle();
 
     expect(tester.takeException(), isNull);
@@ -684,7 +983,9 @@ void main() {
       matching: find.byType(TextField),
     );
     expect(
-        tester.widget<TextField>(draftFields.at(0)).controller?.text, 'TEST');
+      tester.widget<TextField>(draftFields.at(0)).controller?.text,
+      'Тестовый заказчик',
+    );
     await tester.tap(find.byKey(const ValueKey('customer-draft-actions')));
     await tester.pumpAndSettle();
     expect(find.text('Сохранить изменения'), findsOneWidget);
@@ -811,7 +1112,10 @@ void main() {
 
     expect(find.text('Тариф организации'), findsNothing);
     expect(find.textContaining('управляет только владелец'), findsOneWidget);
-    expect(paymentService.lastScope, BillingScope.personal);
+    expect(find.text('Активировать тестовую подписку'), findsNothing);
+    expect(find.text('Сохранить реквизиты'), findsNothing);
+    expect(find.text('Выбор подписки'), findsNothing);
+    expect(paymentService.lastScope, isNull);
     expect(paymentService.lastOrganizationId, isNull);
   });
 }

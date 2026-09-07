@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import '../config/app_theme.dart';
-import '../widgets/xp_widgets.dart';
+import '../widgets/auth_text_field.dart';
 
 class InvitationSetupScreen extends StatefulWidget {
   final VoidCallback onCompleted;
@@ -129,107 +128,212 @@ class _InvitationSetupScreenState extends State<InvitationSetupScreen> {
   Widget build(BuildContext context) {
     final email = Supabase.instance.client.auth.currentUser?.email ?? '';
     return Scaffold(
-      backgroundColor: const Color(0xFFEAF6FC),
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(20),
-            child: Container(
-              width: 480,
-              padding: const EdgeInsets.all(22),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                border: Border.all(color: const Color(0xFFC9E2F0)),
-                borderRadius: BorderRadius.circular(8),
-                boxShadow: AppTheme.shadowSubtle,
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const Text(
-                    'Завершение регистрации',
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  const Text(
-                    'Для вас подготовлена роль в рабочем пространстве.',
-                    style: TextStyle(fontSize: 12, color: Colors.black54),
-                  ),
-                  const SizedBox(height: 18),
-                  _valueRow('Email', email),
-                  const SizedBox(height: 12),
-                  XpInput(
-                    placeholder: 'Ник пользователя',
-                    controller: _nicknameController,
-                  ),
-                  const SizedBox(height: 10),
-                  XpInput(
-                    placeholder: 'Имя пользователя',
-                    controller: _displayNameController,
-                  ),
-                  const SizedBox(height: 10),
-                  XpInput(
-                    placeholder: 'Новый пароль',
-                    controller: _passwordController,
-                    obscure: true,
-                  ),
-                  const SizedBox(height: 10),
-                  XpInput(
-                    placeholder: 'Повторите пароль',
-                    controller: _passwordConfirmationController,
-                    obscure: true,
-                  ),
-                  if (_error != null) ...[
-                    const SizedBox(height: 10),
-                    Text(
-                      _error!,
-                      style: const TextStyle(
-                        color: Color(0xFFB42318),
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                      ),
+      body: DecoratedBox(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFFEFF6FF), Color(0xFFF8FAFC), Color(0xFFE0F2FE)],
+          ),
+        ),
+        child: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(20),
+              child: Container(
+                width: 500,
+                padding: const EdgeInsets.all(28),
+                decoration: BoxDecoration(
+                  color: const Color(0xFAFFFFFF),
+                  border: Border.all(color: const Color(0xFFFFFFFF)),
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x1F0F172A),
+                      blurRadius: 36,
+                      offset: Offset(0, 18),
                     ),
                   ],
-                  const SizedBox(height: 16),
-                  XpBtn(
-                    label: _busy ? 'Сохраняем...' : 'Войти в организацию',
-                    primary: true,
-                    onPressed: _busy ? null : _completeInvitation,
-                  ),
-                  const SizedBox(height: 8),
-                  XpBtn(
-                    label: 'Выйти',
-                    onPressed: _busy
-                        ? null
-                        : () => Supabase.instance.client.auth.signOut(),
-                  ),
-                ],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 48,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF2563EB),
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: const Icon(
+                            Icons.mark_email_read_outlined,
+                            color: Colors.white,
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        const Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Завершение регистрации',
+                                style: TextStyle(
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.w900,
+                                  color: Color(0xFF0F172A),
+                                ),
+                              ),
+                              SizedBox(height: 4),
+                              Text(
+                                'Для вас подготовлен доступ к рабочему пространству',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Color(0xFF64748B),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 22),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 12,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFEFF6FF),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFBFDBFE)),
+                      ),
+                      child: Row(children: [
+                        const Icon(
+                          Icons.mail_outline,
+                          size: 19,
+                          color: Color(0xFF2563EB),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            email,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF1E3A8A),
+                            ),
+                          ),
+                        ),
+                      ]),
+                    ),
+                    const SizedBox(height: 14),
+                    AuthTextField(
+                      label: 'Ник пользователя',
+                      hint: 'printer_oleg',
+                      controller: _nicknameController,
+                      icon: Icons.alternate_email,
+                      textInputAction: TextInputAction.next,
+                    ),
+                    const SizedBox(height: 12),
+                    AuthTextField(
+                      label: 'Имя пользователя',
+                      hint: 'Иван Иванов',
+                      controller: _displayNameController,
+                      icon: Icons.badge_outlined,
+                      textInputAction: TextInputAction.next,
+                    ),
+                    const SizedBox(height: 12),
+                    AuthTextField(
+                      key: const ValueKey('invitation-password'),
+                      label: 'Новый пароль',
+                      hint: 'Минимум 8 символов',
+                      controller: _passwordController,
+                      icon: Icons.lock_outline,
+                      password: true,
+                      textInputAction: TextInputAction.next,
+                    ),
+                    const SizedBox(height: 12),
+                    AuthTextField(
+                      key: const ValueKey('invitation-password-confirmation'),
+                      label: 'Подтвердите пароль',
+                      hint: 'Повторите пароль',
+                      controller: _passwordConfirmationController,
+                      icon: Icons.lock_reset_outlined,
+                      password: true,
+                      textInputAction: TextInputAction.done,
+                      onSubmitted: (_) {
+                        if (!_busy) _completeInvitation();
+                      },
+                    ),
+                    if (_error != null) ...[
+                      const SizedBox(height: 12),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFEF2F2),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: const Color(0xFFFECACA)),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Icon(
+                              Icons.error_outline,
+                              size: 18,
+                              color: Color(0xFFB42318),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _error!,
+                                style: const TextStyle(
+                                  color: Color(0xFFB42318),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 18),
+                    SizedBox(
+                      height: 48,
+                      child: FilledButton.icon(
+                        key: const ValueKey('invitation-submit'),
+                        onPressed: _busy ? null : _completeInvitation,
+                        icon: _busy
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Icon(Icons.arrow_forward, size: 19),
+                        label: Text(
+                          _busy ? 'Сохраняем...' : 'Войти в организацию',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextButton(
+                      onPressed: _busy
+                          ? null
+                          : () => Supabase.instance.client.auth.signOut(),
+                      child: const Text('Выйти из этого аккаунта'),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
         ),
       ),
     );
-  }
-
-  Widget _valueRow(String label, String value) {
-    return Row(children: [
-      SizedBox(
-        width: 86,
-        child: Text(
-          label,
-          style: const TextStyle(fontSize: 11, color: Colors.black54),
-        ),
-      ),
-      Expanded(
-        child: Text(
-          value,
-          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
-        ),
-      ),
-    ]);
   }
 }

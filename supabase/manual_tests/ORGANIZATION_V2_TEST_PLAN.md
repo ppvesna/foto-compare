@@ -94,19 +94,26 @@ change an existing administrator or owner.
 
 ## Verified checkpoint
 
-- Migrations `006–009` installed successfully in the configured test environment.
-- Employee plan inheritance verified: personal Free, organization `vesna`, working Pro.
-- Migrations `010–011` and the invitation Edge Functions are deployed. The participant
-  RPC and transactional recovery check pass; the repeated Magic Link callback still
-  needs manual verification.
-- Active Pro entitlement loaded from server-managed metadata.
-- Organization creation, owner membership, member assignment, member count, and
-  organization name verified.
-- Employee, customer, and administrator account tests remain pending.
+- The organization and invitation server flow is deployed in the configured test
+  environment; the exact migration ledger still needs a production preflight audit.
+- `vesna-test` was created by a personal Pro owner and has working Pro.
+- `vesna_admin_test` completed invitation onboarding: personal Free, working Pro,
+  administrator role, and visible `vesna-test` membership.
+- `vesna_employee_test` has a confirmed account, saved profile, and active employee
+  membership with manager, designer, and inspection-specialist functions. Personal
+  Free, working Pro, organization limits, team-chat visibility, bidirectional text
+  messaging, and Realtime delivery have been confirmed manually.
+- The administrator billing boundary has been confirmed manually: organization
+  billing actions are hidden and the UI identifies the owner as the plan manager.
+- The employee organization boundary has been confirmed manually: the participant
+  management table is absent. The employee created `VESNA-CHAT-TEST-001` with a
+  pending `VESNA-CLIENT-TEST` customer request. Resolving that request as an
+  administrator and assigning a customer representative is the next exact step.
+- Customer publication, revocation, and isolation remain pending.
 
 ## Test 7: next chat tests
 
-After remote production jobs and chat are connected:
+With remote production jobs and chat connected:
 
 1. create one test job;
 2. assign employee and customer participants;

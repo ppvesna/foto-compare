@@ -17,16 +17,23 @@ Rule: every step must preserve the working application and be independently reve
   designer, and inspection specialist are separate per-job functions.
 - Free, Pro, and Enterprise presets, mocks, client gates, and a Supabase snapshot adapter
   are implemented with a legacy-compatible fallback.
-- Migrations `006–008` are installed in the current test environment. Server-side Pro,
-  organization creation, owner membership, access refresh, and organization naming are
-  verified.
+- Organization creation, owner/admin membership, invitations, personal/working plan
+  separation, and server-side entitlement refresh are verified in the test environment.
 - `005_access_control.sql` is an unapplied prototype based on the previous role set. It
-  must be revised for job-scoped access, backed up, and validated on staging.
+  must not be applied.
 - The `production` foundation now contains jobs, participants, functions, access policy,
-  a server adapter, and a narrow comparison-flow UI. Migration `012` is prepared for
-  staged installation and RLS verification.
+  a server adapter, customer directory, and a narrow comparison-flow UI. Job-scoped
+  server data is present; customer publication, revocation, preserved history, and two
+  representatives on one work have passed an end-to-end manual test.
 - The first `CloudStorage` port, mock, device-only settings adapter, and provider status
-  UI are present. Supabase Storage and Google Drive remain disconnected.
+  UI are present. Supabase Storage, bounded protocol previews, and job-scoped access are
+  connected; originals remain device-only and Google Drive remains disconnected.
+- Secure organization/job chat and Supabase Realtime are connected. Owner/employee
+  text messaging has passed a two-account test.
+- Migration `019` provides server-owned test prices and assignment-backed entitlement
+  snapshots. Real payment processing remains out of scope.
+- The `vesna-test` employee and customer job sharing/revocation gate has passed. The
+  next release task is to audit remote deployment state and stabilize the branch.
 
 ## Migration policy
 
@@ -114,9 +121,9 @@ migration and verify job-scoped RLS first.
 Progress: client administration contracts and owner/admin settings UI are connected.
 `006` reads roles from membership; `007–008` use authoritative personal plan data.
 `009` adds separate personal and effective organization plans. The current test
-environment has passed owner bootstrap, employee assignment, organization-plan
-inheritance, and invitation completion. Migration `012` customer access and job-scoped
-RLS still require staged validation.
+environment has passed owner bootstrap, administrator invitation, organization-plan
+inheritance, and invitation completion. The next exact check assigns
+`vesna_employee_test` through `vesna_admin_test`, then validates customer job access.
 
 Invitation progress: the owner can prepare email, nickname, role, and initial employee
 functions. A new invitee completes their own password and profile; an existing account
@@ -175,8 +182,10 @@ Add new tables and fields through additive, versioned migrations. Read old and n
 records; write new format only after migration verification.
 
 Progress: additive migration `012` defines customers, customer links, requests, jobs,
-participants, RPCs, and RLS. It must be installed and pass
-`CUSTOMER_WORKFLOW_V1_TEST_PLAN.md` before production use.
+participants, RPCs, and RLS and is available in the test environment. Customer release
+and revocation have passed the multi-account manual test. Remaining production checks
+include foreign-work isolation with a second fixture and the complete
+`CUSTOMER_WORKFLOW_V1_TEST_PLAN.md`.
 
 ## Phase 4: Inspection boundary
 

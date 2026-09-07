@@ -5,6 +5,7 @@ class MockCustomerDirectoryService implements CustomerDirectoryService {
   final List<OrganizationCustomer> customers;
   final List<OrganizationCustomerRequest> requests;
   final List<OrganizationCustomerJob> jobs;
+  final bool requireExplicitCode;
   String? archivedCustomerId;
   String? restoredCustomerId;
   ({String requestId, String customerId})? resolvedRequest;
@@ -21,6 +22,7 @@ class MockCustomerDirectoryService implements CustomerDirectoryService {
     List<OrganizationCustomer>? customers,
     List<OrganizationCustomerRequest>? requests,
     List<OrganizationCustomerJob>? jobs,
+    this.requireExplicitCode = false,
   })  : customers = customers ?? [],
         requests = requests ?? [],
         jobs = jobs ?? [];
@@ -57,6 +59,9 @@ class MockCustomerDirectoryService implements CustomerDirectoryService {
     String? customerUserId,
     String? customerId,
   }) async {
+    if (requireExplicitCode && code.isEmpty) {
+      throw StateError('Customer code must contain 1-32 characters');
+    }
     savedCustomer = (
       organizationId: organizationId,
       code: code,
@@ -90,5 +95,6 @@ class MockCustomerDirectoryService implements CustomerDirectoryService {
     required String customerId,
   }) async {
     resolvedRequest = (requestId: requestId, customerId: customerId);
+    requests.removeWhere((request) => request.id == requestId);
   }
 }

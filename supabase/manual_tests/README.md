@@ -5,9 +5,9 @@
 steps in `ORGANIZATION_V2_TEST_PLAN.md`. Never apply `005_access_control.sql`; it
 contains the obsolete role model.
 
-Migration `012` is validated separately through
-`CUSTOMER_WORKFLOW_V1_TEST_PLAN.md`. Do not treat customer or job isolation as
-production-ready until that plan passes.
+Migration `012` and the later customer-sharing boundary are validated separately
+through `CUSTOMER_WORKFLOW_V1_TEST_PLAN.md`. Do not treat customer or job isolation as
+production-ready until that plan and publication/revocation checks pass.
 
 ## Preparation
 
@@ -63,11 +63,12 @@ tests pass.
 
 ## Current verified checkpoint
 
-The configured test environment has migrations `006–009` installed. A dedicated
-account was verified as an active Pro owner, and `printer_ivan` inherited the working
-Pro plan as an employee. Migrations `010–011` and both Edge Functions are deployed.
-The participant RPC, transactional recovery, and invitation browser callback pass.
-Migration `012` is the next server checkpoint.
+The configured test environment supports the current organization, invitation,
+customer/job, Storage, cloud-protocol, secure-chat, and test-billing flows. Owner,
+administrator, employee, and two customer-representative accounts have passed the
+current role flow. Customer publication, revocation, preserved work-chat history, and
+Realtime messaging have passed for one work. Foreign-work isolation still needs a
+second work fixture. Before production, verify the actual remote migration ledger.
 
 ## Cleanup
 

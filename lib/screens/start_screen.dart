@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'dart:math';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../config/app_theme.dart';
+import '../widgets/auth_text_field.dart';
 import '../widgets/xp_widgets.dart';
 
 class StartScreen extends StatefulWidget {
@@ -52,46 +52,13 @@ class _StartScreenState extends State<StartScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF111827),
-      body: Column(children: [
-        XpMenuBar(
-          icon: 'PR',
-          menus: [
-            XpMenu(label: 'Файл', items: [
-              XpMenuItem(
-                  label: 'Войти',
-                  icon: 'IN',
-                  onTap: () => setState(() => _isLogin = true)),
-              XpMenuItem(
-                  label: 'Зарегистрироваться',
-                  icon: '+',
-                  onTap: () => setState(() => _isLogin = false)),
-              XpMenuItem.sep,
-              XpMenuItem(
-                  label: 'Забыли пароль?',
-                  icon: '?',
-                  onTap: () => xpDlg(context, 'Восстановление пароля',
-                      'Введите email для сброса пароля')),
-            ]),
-            XpMenu(label: 'Справка', items: [
-              XpMenuItem(
-                  label: 'О программе',
-                  icon: 'i',
-                  onTap: () => xpDlg(context, 'О программе',
-                      'Photo Compare v1.0\nИнструмент сравнения изображений.\n© 2026 Photo Compare')),
-              XpMenuItem(
-                  label: 'Поддержка',
-                  icon: '@',
-                  onTap: () =>
-                      xpDlg(context, 'Поддержка', 'support@photocompare.app')),
-            ]),
-          ],
-        ),
-        Expanded(
-          child: FadeTransition(
-            opacity: _fade,
-            child: Stack(children: [
-              const Positioned.fill(child: _HeroPhotoBackground()),
-              LayoutBuilder(builder: (context, constraints) {
+      body: Stack(
+        children: [
+          const Positioned.fill(child: _HeroPhotoBackground()),
+          SafeArea(
+            child: FadeTransition(
+              opacity: _fade,
+              child: LayoutBuilder(builder: (context, constraints) {
                 final wide = constraints.maxWidth >= 860;
                 return SingleChildScrollView(
                   padding: EdgeInsets.symmetric(
@@ -107,8 +74,8 @@ class _StartScreenState extends State<StartScreen>
                           ? Row(
                               crossAxisAlignment: CrossAxisAlignment.center,
                               children: [
-                                _authPanel(width: 372),
-                                const SizedBox(width: 42),
+                                _authPanel(width: 420),
+                                const SizedBox(width: 52),
                                 Expanded(child: _brandHero(wide: true)),
                               ],
                             )
@@ -123,10 +90,10 @@ class _StartScreenState extends State<StartScreen>
                   ),
                 );
               }),
-            ]),
+            ),
           ),
-        ),
-      ]),
+        ],
+      ),
     );
   }
 
@@ -210,41 +177,43 @@ class _StartScreenState extends State<StartScreen>
       width: width,
       margin: const EdgeInsets.symmetric(horizontal: 4),
       decoration: BoxDecoration(
-        color: const Color(0xEEF8FAFC),
-        borderRadius: BorderRadius.circular(18),
+        color: const Color(0xF7FFFFFF),
+        borderRadius: BorderRadius.circular(24),
         border: Border.all(color: const Color(0x55FFFFFF)),
         boxShadow: const [
           BoxShadow(
-            color: Color(0x40000000),
-            blurRadius: 26,
-            offset: Offset(0, 18),
+            color: Color(0x52000000),
+            blurRadius: 38,
+            offset: Offset(0, 22),
           ),
         ],
       ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(24),
         child: Column(children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(18, 18, 18, 12),
+            padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
             child: Row(children: [
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  children: const [
+                  children: [
                     Text(
-                      'Photo Compare',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
+                      _isLogin ? 'С возвращением' : 'Создайте аккаунт',
+                      style: const TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w900,
                         color: Color(0xFF111827),
                         letterSpacing: 0,
                       ),
                     ),
-                    SizedBox(height: 3),
+                    const SizedBox(height: 5),
                     Text(
-                      'Color analysis workspace',
-                      style: TextStyle(
-                        fontSize: 11,
+                      _isLogin
+                          ? 'Войдите в рабочее пространство'
+                          : 'Заполните данные для нового профиля',
+                      style: const TextStyle(
+                        fontSize: 13,
                         color: Color(0xFF64748B),
                         letterSpacing: 0,
                       ),
@@ -256,16 +225,16 @@ class _StartScreenState extends State<StartScreen>
             ]),
           ),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14),
+            padding: const EdgeInsets.symmetric(horizontal: 24),
             child: Row(children: [
               _tab('Вход', _isLogin, () => setState(() => _isLogin = true)),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
               _tab('Регистрация', !_isLogin,
                   () => setState(() => _isLogin = false)),
             ]),
           ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
+            padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
             child: _isLogin ? _loginForm() : _registerForm(),
           ),
         ]),
@@ -274,34 +243,33 @@ class _StartScreenState extends State<StartScreen>
   }
 
   Widget _tab(String label, bool active, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 160),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
-        decoration: BoxDecoration(
-          color: active ? const Color(0xFF2563EB) : const Color(0xFFE2E8F0),
-          border: Border.all(
-            color: active ? const Color(0xFF1D4ED8) : const Color(0xFFCBD5E1),
-          ),
+    return Expanded(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
           borderRadius: BorderRadius.circular(12),
-          boxShadow: active
-              ? const [
-                  BoxShadow(
-                    color: Color(0x332563EB),
-                    blurRadius: 12,
-                    offset: Offset(0, 4),
-                  )
-                ]
-              : null,
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
-            color: active ? Colors.white : const Color(0xFF334155),
-            letterSpacing: 0,
+          onTap: onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 160),
+            alignment: Alignment.center,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+            decoration: BoxDecoration(
+              color: active ? const Color(0xFF2563EB) : const Color(0xFFF1F5F9),
+              border: Border.all(
+                color:
+                    active ? const Color(0xFF1D4ED8) : const Color(0xFFE2E8F0),
+              ),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+                color: active ? Colors.white : const Color(0xFF475569),
+                letterSpacing: 0,
+              ),
+            ),
           ),
         ),
       ),
@@ -310,119 +278,177 @@ class _StartScreenState extends State<StartScreen>
 
   Widget _loginForm() {
     return AutofillGroup(
-        child: Column(children: [
-      const Align(
-          alignment: Alignment.centerLeft,
-          child: Text('Email или ник:', style: TextStyle(fontSize: 11))),
-      const SizedBox(height: 3),
-      XpInput(
-          placeholder: 'user@example.com или printer_oleg',
+      child: Column(children: [
+        AuthTextField(
+          key: const ValueKey('login-identity'),
+          label: 'Email или ник',
+          hint: 'user@example.com или printer_oleg',
           controller: _emailCtrl,
+          icon: Icons.person_outline,
           keyboardType: TextInputType.emailAddress,
-          autofillHints: const [AutofillHints.username, AutofillHints.email]),
-      const SizedBox(height: 8),
-      const Align(
-          alignment: Alignment.centerLeft,
-          child: Text('Пароль:', style: TextStyle(fontSize: 11))),
-      const SizedBox(height: 3),
-      XpInput(
-          placeholder: '••••••••',
-          obscure: true,
+          textInputAction: TextInputAction.next,
+          autofillHints: const [
+            AutofillHints.username,
+            AutofillHints.email,
+          ],
+        ),
+        const SizedBox(height: 12),
+        AuthTextField(
+          key: const ValueKey('login-password'),
+          label: 'Пароль',
+          hint: 'Введите пароль',
           controller: _passCtrl,
-          autofillHints: const [AutofillHints.password]),
-      const SizedBox(height: 8),
-      Row(children: [
-        Checkbox(
-            value: _remember,
-            onChanged: (v) => setState(() => _remember = v ?? false),
-            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap),
-        const Text('Запомнить меня', style: TextStyle(fontSize: 11)),
-      ]),
-      const Divider(),
-      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        GestureDetector(
-          onTap: () => xpDlg(context, 'Восстановление пароля',
-              'Введите email для сброса пароля'),
-          child: const Text('Забыли пароль?',
-              style: TextStyle(fontSize: 10, color: AppTheme.blue)),
+          icon: Icons.lock_outline,
+          password: true,
+          textInputAction: TextInputAction.done,
+          autofillHints: const [AutofillHints.password],
+          onSubmitted: (_) {
+            if (!_authBusy) _doLogin();
+          },
         ),
-        XpBtn(
-          label: _authBusy ? 'Входим...' : 'Войти →',
-          primary: true,
-          onPressed: _authBusy ? null : _doLogin,
+        const SizedBox(height: 8),
+        Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 8,
+          runSpacing: 0,
+          children: [
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              Checkbox(
+                value: _remember,
+                onChanged: (v) => setState(() => _remember = v ?? false),
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              const Text('Запомнить меня', style: TextStyle(fontSize: 12)),
+            ]),
+            TextButton(
+              onPressed: () => xpDlg(
+                context,
+                'Восстановление пароля',
+                'Введите email для сброса пароля',
+              ),
+              child: const Text('Забыли пароль?'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          height: 48,
+          child: FilledButton.icon(
+            key: const ValueKey('login-submit'),
+            onPressed: _authBusy ? null : _doLogin,
+            icon: _authBusy
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.login, size: 19),
+            label: Text(_authBusy ? 'Входим...' : 'Войти'),
+          ),
         ),
       ]),
-    ]));
+    );
   }
 
   Widget _registerForm() {
     return AutofillGroup(
-        child: Column(children: [
-      const Align(
-          alignment: Alignment.centerLeft,
-          child: Text('Имя:', style: TextStyle(fontSize: 11))),
-      const SizedBox(height: 3),
-      XpInput(
-          placeholder: 'Иван Иванов',
+      child: Column(children: [
+        AuthTextField(
+          label: 'Имя',
+          hint: 'Иван Иванов',
           controller: _nameCtrl,
-          autofillHints: const [AutofillHints.name]),
-      const SizedBox(height: 8),
-      const Align(
-          alignment: Alignment.centerLeft,
-          child: Text('Ник пользователя:', style: TextStyle(fontSize: 11))),
-      const SizedBox(height: 3),
-      XpInput(
-          placeholder: 'printer_oleg',
+          icon: Icons.badge_outlined,
+          textInputAction: TextInputAction.next,
+          autofillHints: const [AutofillHints.name],
+        ),
+        const SizedBox(height: 12),
+        AuthTextField(
+          label: 'Ник пользователя',
+          hint: 'printer_oleg',
           controller: _nickCtrl,
-          autofillHints: const [AutofillHints.username]),
-      const SizedBox(height: 8),
-      const Align(
-          alignment: Alignment.centerLeft,
-          child: Text('Организация:', style: TextStyle(fontSize: 11))),
-      const SizedBox(height: 3),
-      XpInput(
-          placeholder: 'Триматрикс / Типография / Цех',
+          icon: Icons.alternate_email,
+          textInputAction: TextInputAction.next,
+          autofillHints: const [AutofillHints.username],
+        ),
+        const SizedBox(height: 12),
+        AuthTextField(
+          label: 'Организация (необязательно)',
+          hint: 'Типография или отдел',
           controller: _orgCtrl,
-          autofillHints: const [AutofillHints.organizationName]),
-      const SizedBox(height: 8),
-      const Align(
-          alignment: Alignment.centerLeft,
-          child: Text('Email:', style: TextStyle(fontSize: 11))),
-      const SizedBox(height: 3),
-      XpInput(
-          placeholder: 'user@example.com',
+          icon: Icons.business_outlined,
+          textInputAction: TextInputAction.next,
+          autofillHints: const [AutofillHints.organizationName],
+        ),
+        const SizedBox(height: 12),
+        AuthTextField(
+          label: 'Email',
+          hint: 'user@example.com',
           controller: _emailCtrl,
+          icon: Icons.mail_outline,
           keyboardType: TextInputType.emailAddress,
-          autofillHints: const [AutofillHints.email]),
-      const SizedBox(height: 8),
-      const Align(
-          alignment: Alignment.centerLeft,
-          child: Text('Пароль:', style: TextStyle(fontSize: 11))),
-      const SizedBox(height: 3),
-      XpInput(
-          placeholder: 'Минимум 8 символов',
-          obscure: true,
+          textInputAction: TextInputAction.next,
+          autofillHints: const [AutofillHints.email],
+        ),
+        const SizedBox(height: 12),
+        AuthTextField(
+          key: const ValueKey('register-password'),
+          label: 'Пароль',
+          hint: 'Минимум 8 символов',
           controller: _passCtrl,
-          autofillHints: const [AutofillHints.newPassword]),
-      const SizedBox(height: 8),
-      const Align(
-          alignment: Alignment.centerLeft,
-          child: Text('Подтвердите пароль:', style: TextStyle(fontSize: 11))),
-      const SizedBox(height: 3),
-      XpInput(
-          placeholder: 'Повторите пароль',
-          obscure: true,
+          icon: Icons.lock_outline,
+          password: true,
+          textInputAction: TextInputAction.next,
+          autofillHints: const [AutofillHints.newPassword],
+        ),
+        const SizedBox(height: 12),
+        AuthTextField(
+          key: const ValueKey('register-password-confirmation'),
+          label: 'Подтвердите пароль',
+          hint: 'Повторите пароль',
           controller: _pass2Ctrl,
-          autofillHints: const [AutofillHints.newPassword]),
-      const Divider(),
-      Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-        XpBtn(
-          label: _authBusy ? 'Создаём...' : 'Создать аккаунт →',
-          primary: true,
-          onPressed: _authBusy ? null : _doRegister,
+          icon: Icons.lock_reset_outlined,
+          password: true,
+          textInputAction: TextInputAction.done,
+          autofillHints: const [AutofillHints.newPassword],
+          onSubmitted: (_) {
+            if (!_authBusy) _doRegister();
+          },
+        ),
+        const SizedBox(height: 8),
+        const Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            'Пароль должен содержать не менее 8 символов.',
+            style: TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+          ),
+        ),
+        const SizedBox(height: 16),
+        SizedBox(
+          width: double.infinity,
+          height: 48,
+          child: FilledButton.icon(
+            key: const ValueKey('register-submit'),
+            onPressed: _authBusy ? null : _doRegister,
+            icon: _authBusy
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.person_add_alt_1, size: 19),
+            label: Text(_authBusy ? 'Создаём...' : 'Создать аккаунт'),
+          ),
         ),
       ]),
-    ]));
+    );
   }
 
   String _normalizeNick(String value) {
@@ -549,16 +575,22 @@ class _StartScreenState extends State<StartScreen>
 
   void _doRegister() async {
     if (_authBusy) return;
+    final email = _emailCtrl.text.trim().toLowerCase();
+    if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email)) {
+      xpDlg(context, 'Ошибка', 'Введите корректный email.');
+      return;
+    }
+    if (_passCtrl.text.length < 8) {
+      xpDlg(context, 'Ошибка', 'Пароль должен содержать минимум 8 символов.');
+      return;
+    }
     if (_passCtrl.text != _pass2Ctrl.text) {
       xpDlg(context, 'Ошибка', 'Пароли не совпадают');
       return;
     }
     final nick = _normalizeNick(_nickCtrl.text);
-    if (_emailCtrl.text.isEmpty ||
-        _passCtrl.text.isEmpty ||
-        _nameCtrl.text.trim().isEmpty ||
-        nick.isEmpty) {
-      xpDlg(context, 'Ошибка', 'Заполните все поля');
+    if (_nameCtrl.text.trim().isEmpty || nick.isEmpty) {
+      xpDlg(context, 'Ошибка', 'Заполните имя и ник пользователя.');
       return;
     }
     if (!RegExp(r'^[a-z0-9_]{3,24}$').hasMatch(nick)) {
@@ -574,7 +606,6 @@ class _StartScreenState extends State<StartScreen>
       return;
     }
     try {
-      final email = _emailCtrl.text.trim();
       final name = _nameCtrl.text.trim();
       final organization = _orgCtrl.text.trim();
       final response = await Supabase.instance.client.auth.signUp(
@@ -646,34 +677,34 @@ class _HeroPhotoBackground extends StatelessWidget {
           alignment: Alignment.center,
         ),
       ),
-      Positioned.fill(
+      const Positioned.fill(
         child: DecoratedBox(
           decoration: BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.centerLeft,
               end: Alignment.centerRight,
-              colors: const [
+              colors: [
                 Color(0xE60B111D),
                 Color(0x9D111827),
                 Color(0x33111827),
               ],
-              stops: const [0.0, 0.48, 1.0],
+              stops: [0.0, 0.48, 1.0],
             ),
           ),
         ),
       ),
-      Positioned.fill(
+      const Positioned.fill(
         child: DecoratedBox(
           decoration: BoxDecoration(
             gradient: RadialGradient(
-              center: const Alignment(0.32, 0.10),
+              center: Alignment(0.32, 0.10),
               radius: 1.15,
-              colors: const [
+              colors: [
                 Color(0x00111827),
                 Color(0x77111827),
                 Color(0xC90B111D),
               ],
-              stops: const [0.0, 0.58, 1.0],
+              stops: [0.0, 0.58, 1.0],
             ),
           ),
         ),
@@ -777,7 +808,7 @@ class _MiniPrismMark extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
+    return const SizedBox(
       width: 46,
       height: 34,
       child: CustomPaint(painter: _PrismPainter(mini: true)),

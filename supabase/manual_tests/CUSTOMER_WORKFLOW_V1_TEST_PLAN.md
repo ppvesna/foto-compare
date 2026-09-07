@@ -14,12 +14,21 @@ is trusted as a server access boundary.
 
 1. Sign in as owner or admin.
 2. Open `Settings -> Organization -> Customer directory`.
-3. Create a customer with a unique code and name.
-4. Select one employee as primary manager and one member with the customer role.
-5. Confirm that creator and updater nicknames are displayed.
-6. Sign in as employee and open Comparison.
-7. Enter the work number from the technical specification and select this customer.
-8. Complete a small comparison and open the local protocol.
+3. Create a customer with a name; migration `020` assigns the next unique code,
+   such as `C-0001`, automatically.
+4. In the first table row, select the responsible employee. Either leave the
+   representative fields empty and choose `Save without representative`, or enter
+   email, nickname, and name and choose `Invite representative` from the `⋮` menu.
+5. Add a second row with the same customer and another representative. Confirm that
+   both rows use the same customer ID and code after migration `021`.
+6. Confirm that creator and updater nicknames are displayed.
+7. Sign in as employee and open Comparison.
+8. Enter the work number from the technical specification and select this customer.
+9. Complete a small comparison and open the local protocol.
+10. Add a representative after the job already exists. Confirm migration `022`
+    adds the representative as a customer participant while the job remains internal.
+11. Explicitly open the job to the customer and confirm that the representative can
+    see it; close access and confirm that it disappears again.
 
 Expected:
 
@@ -48,14 +57,14 @@ Expected:
 
 ## Scenario C: updates and isolation
 
-1. Change the linked customer account in the directory.
+1. Add another representative to the same customer in the directory.
 2. Reopen the same work number with another approved customer.
 3. Archive one customer.
 4. Sign in as employee and refresh the customer list.
 
 Expected:
 
-- only the newly selected customer account remains linked to the directory entry;
+- both customer representatives remain linked to the same directory entry;
 - old manager/customer participants are removed from the reopened work;
 - the operator participant remains;
 - archived customers are hidden from employees and remain visible to owner/admin when
@@ -66,3 +75,12 @@ Expected:
 
 The migration is accepted only when all scenarios pass with local access testing
 disabled. Protocol and image synchronization must not rely on job RLS before this gate.
+
+## Verified checkpoint — 2026-09-07
+
+- two representatives are linked to one customer and see the same explicitly shared
+  work;
+- the organization team chat remains hidden from both representatives;
+- representative-to-admin and admin-to-representative Realtime messages pass;
+- revocation hides the work and reopening restores it with message history;
+- a second foreign work and attachment isolation remain unverified manual fixtures.

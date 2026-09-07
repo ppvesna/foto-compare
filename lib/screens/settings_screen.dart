@@ -17,12 +17,17 @@ enum _TeamDraftAction { invite, clear }
 
 enum _TeamAction { edit, resendInvitation, cancelInvitation, remove }
 
-enum _CustomerDraftAction { save, clear }
+enum _CustomerDraftAction {
+  save,
+  invite,
+  saveWithoutRepresentative,
+  clear,
+}
 
 enum _CustomerAction {
   edit,
+  addRepresentative,
   linkExistingRepresentative,
-  inviteRepresentative,
   resendInvitation,
   cancelInvitation,
   openJobs,
@@ -92,6 +97,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _memberDisplayNameCtrl = TextEditingController();
   final _customerCodeCtrl = TextEditingController();
   final _customerNameCtrl = TextEditingController();
+  final _customerRepresentativeEmailCtrl = TextEditingController();
+  final _customerRepresentativeNicknameCtrl = TextEditingController();
+  final _customerRepresentativeDisplayNameCtrl = TextEditingController();
   final _billingEmailCtrl = TextEditingController();
   final _billingLegalNameCtrl = TextEditingController();
   final _billingCountryCtrl = TextEditingController();
@@ -100,7 +108,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   List<OrganizationParticipant> _organizationParticipants = const [];
   List<OrganizationCustomer> _organizationCustomers = const [];
   List<OrganizationCustomerRequest> _customerRequests = const [];
-  final Map<String, String?> _requestCustomerSelections = {};
   OrganizationRole _selectedMemberRole = OrganizationRole.employee;
   Set<OrganizationMemberFunction> _selectedMemberFunctions = {
     OrganizationMemberFunction.inspectionSpecialist,
@@ -115,6 +122,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String? _customerDirectoryError;
   String? _customerRequestsError;
   String? _editingCustomerId;
+  bool _customerDraftForRepresentative = false;
   String? _customerRequestBeingCreatedId;
   String? _selectedCustomerManagerId;
   String? _selectedCustomerUserId;
@@ -130,7 +138,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String? _billingError;
 
   static const _sections = [
-    _SettingsSection('Аккаунт', 'профиль и синхронизация'),
+    _SettingsSection('Аккаунт', 'профиль пользователя'),
     _SettingsSection('Доступ', 'план, роль и лимиты'),
     _SettingsSection('Тариф и оплата', 'срок, сумма и реквизиты'),
     _SettingsSection('Организация', 'команда и заказчики'),
@@ -170,6 +178,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _memberDisplayNameCtrl.dispose();
     _customerCodeCtrl.dispose();
     _customerNameCtrl.dispose();
+    _customerRepresentativeEmailCtrl.dispose();
+    _customerRepresentativeNicknameCtrl.dispose();
+    _customerRepresentativeDisplayNameCtrl.dispose();
     _billingEmailCtrl.dispose();
     _billingLegalNameCtrl.dispose();
     _billingCountryCtrl.dispose();
@@ -542,7 +553,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
         ),
-        if (_section != 0 && _section != 2 && _section != 3)
+        if (_section > 3)
           Container(
             width: double.infinity,
             padding: const EdgeInsets.fromLTRB(12, 9, 12, 10),
@@ -624,30 +635,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         if (widget.organizationAccess.organizationId != null)
           _infoRow('ID организации', widget.organizationAccess.organizationId!),
-        const SizedBox(height: 8),
-        Row(children: [
-          Expanded(
-            child: XpBtn(
-              label: 'Пароль',
-              onPressed: () => xpDlg(
-                context,
-                'Пароль',
-                'Позже добавим смену пароля через Supabase Auth.',
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: XpBtn(
-              label: 'Синхронизация',
-              onPressed: () => xpDlg(
-                context,
-                'Синхронизация',
-                'Настройки будут синхронизироваться после подключения облачной схемы.',
-              ),
-            ),
-          ),
-        ]),
       ]),
     );
   }
@@ -706,14 +693,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
             'Мест в группе',
             seatsLimit == null ? 'без ограничения' : '$seatsLimit',
           ),
-          XpBtn(
-            label: 'Открыть тариф и оплату',
-            primary: true,
-            onPressed: () {
-              setState(() => _section = 2);
-              _loadBillingData();
-            },
-          ),
+          if (_canManageBilling)
+            XpBtn(
+              label: 'Открыть тариф и оплату',
+              primary: true,
+              onPressed: () {
+                setState(() => _section = 2);
+                _loadBillingData();
+              },
+            )
+          else
+            _notePanel(
+              'Оплатой рабочего тарифа управляет владелец организации.',
+            ),
         ]),
       ),
       const SizedBox(height: 10),
@@ -782,13 +774,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
         widget.organizationAccess.organizationId != null;
   }
 
+  bool get _canManageBilling =>
+      widget.organizationAccess.allows(OrganizationPermission.manageBilling);
+
   String? get _billingOrganizationId =>
       _billingScope == BillingScope.organization
           ? widget.organizationAccess.organizationId
           : null;
 
   Future<void> _loadBillingData() async {
-    if (_billingLoading) return;
+    if (_billingLoading || !_canManageBilling) return;
     if (!_canUseOrganizationBilling(_billingScope)) {
       _billingScope = BillingScope.personal;
     }
@@ -948,6 +943,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _billingSection() {
+    if (!_canManageBilling) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _settingsPanel(
+            title: 'Текущий тариф',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _infoRow('Рабочий тариф', widget.entitlements.plan.label),
+                _infoRow('Статус', _accessStatusLabel()),
+                if (widget.entitlements.usesOrganizationPlan)
+                  _infoRow(
+                    'Личный тариф',
+                    widget.entitlements.personalPlan.label,
+                  ),
+                const SizedBox(height: 8),
+                _notePanel(
+                  'Тарифом и оплатой организации управляет только владелец. '
+                  'Для вашей роли этот раздел доступен только для просмотра.',
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
     final organizationBillingAvailable =
         _canUseOrganizationBilling(BillingScope.organization);
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -1680,12 +1702,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           (participant) =>
               !participant.isPending &&
               participant.userId != null &&
-              (participant.userId == _selectedCustomerManagerId ||
-                  participant.role == OrganizationRole.owner ||
-                  participant.role == OrganizationRole.admin ||
-                  participant.functions.contains(
-                    OrganizationMemberFunction.manager,
-                  )),
+              participant.role != OrganizationRole.customer,
         )
         .toList();
     return _settingsPanel(
@@ -1708,7 +1725,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ],
             _notePanel(
               'Заполните первую строку и выберите действие в меню ⋮. '
-              'Представитель приглашается из меню сохранённого заказчика.',
+              'Код присвоится автоматически. Для нескольких представителей '
+              'добавьте несколько строк с тем же заказчиком.',
             ),
             Align(
               alignment: Alignment.centerRight,
@@ -1718,6 +1736,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   const Text('Показать архив'),
                   const SizedBox(width: 6),
                   Switch.adaptive(
+                    key: const ValueKey('show-archived-customers'),
                     value: _showArchivedCustomers,
                     onChanged: _customerBusy
                         ? null
@@ -1763,7 +1782,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         value != null && participantsByUserId.containsKey(value) ? value : '';
 
     return DropdownButtonFormField<String>(
-      key: ValueKey('$label-$selectedValue'),
+      key: label == 'Ответственный'
+          ? const ValueKey('customer-responsible-select')
+          : ValueKey('$label-$selectedValue'),
       initialValue: selectedValue,
       isExpanded: true,
       style: const TextStyle(fontSize: 11, height: 1.2, color: Colors.black),
@@ -1799,7 +1820,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final tableWidth =
-            constraints.maxWidth < 900 ? 900.0 : constraints.maxWidth;
+            constraints.maxWidth < 1160 ? 1160.0 : constraints.maxWidth;
+        final rows = <({
+          OrganizationCustomer customer,
+          OrganizationCustomerRepresentative? representative,
+        })>[];
+        for (final customer in _organizationCustomers) {
+          final representatives = customer.allRepresentatives;
+          if (representatives.isEmpty) {
+            rows.add((customer: customer, representative: null));
+          } else {
+            for (final representative in representatives) {
+              rows.add((customer: customer, representative: representative));
+            }
+          }
+        }
         return SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: SizedBox(
@@ -1820,233 +1855,242 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                   ),
                   child: Row(children: [
-                    _customerTableCell('Код', flex: 1, header: true),
                     _customerTableCell('Заказчик', flex: 2, header: true),
-                    _customerTableCell('Менеджер', flex: 1, header: true),
-                    _customerTableCell('Представитель', flex: 2, header: true),
+                    _customerTableCell(
+                      'Ответственный сотрудник',
+                      flex: 2,
+                      header: true,
+                    ),
+                    _customerTableCell('Почта', flex: 2, header: true),
+                    _customerTableCell('Ник', flex: 1, header: true),
+                    _customerTableCell('Имя', flex: 2, header: true),
                     _customerTableCell('Статус', flex: 1, header: true),
                     const SizedBox(width: 48),
                   ]),
                 ),
-                Container(
-                  key: const ValueKey('customer-draft-row'),
-                  decoration: const BoxDecoration(
-                    color: Color(0xFFF2FAFE),
-                    border: Border(
-                      bottom: BorderSide(color: Color(0xFFC9E2F0)),
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      _organizationTableInput(
-                        controller: _customerCodeCtrl,
-                        hint: 'код',
-                        flex: 1,
-                        enabled: !_customerBusy,
-                      ),
-                      _organizationTableInput(
-                        controller: _customerNameCtrl,
-                        hint: 'название',
-                        flex: 2,
-                        enabled: !_customerBusy,
-                      ),
-                      Expanded(
-                        child: Container(
-                          height: 56,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 7,
-                          ),
-                          decoration: const BoxDecoration(
-                            border: Border(
-                              right: BorderSide(color: Color(0xFFC9E2F0)),
-                            ),
-                          ),
-                          child: _participantDropdown(
-                            label: 'менеджер',
-                            value: _selectedCustomerManagerId,
-                            participants: managerCandidates,
-                            onChanged: (value) => setState(
-                              () => _selectedCustomerManagerId = value,
-                            ),
-                          ),
-                        ),
-                      ),
-                      _customerTableCell(
-                        _editingCustomerId == null
-                            ? 'после сохранения через ⋮'
-                            : 'связь сохранится',
-                        flex: 2,
-                        draft: true,
-                      ),
-                      _customerTableCell(
-                        _editingCustomerId == null ? 'новый' : 'изменение',
-                        flex: 1,
-                        draft: true,
-                      ),
-                      SizedBox(
-                        width: 48,
-                        height: 56,
-                        child: PopupMenuButton<_CustomerDraftAction>(
-                          key: const ValueKey('customer-draft-actions'),
-                          tooltip: 'Действия с новым заказчиком',
-                          enabled: !_customerBusy,
-                          icon: const Icon(Icons.more_vert),
-                          onSelected: (action) {
-                            switch (action) {
-                              case _CustomerDraftAction.save:
-                                _saveCustomer();
-                              case _CustomerDraftAction.clear:
-                                _clearCustomerForm();
-                            }
-                          },
-                          itemBuilder: (_) => [
-                            PopupMenuItem(
-                              value: _CustomerDraftAction.save,
-                              child: Text(
-                                _editingCustomerId == null
-                                    ? 'Создать заказчика'
-                                    : 'Сохранить изменения',
-                              ),
-                            ),
-                            const PopupMenuItem(
-                              value: _CustomerDraftAction.clear,
-                              child: Text('Очистить строку'),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                ..._organizationCustomers.asMap().entries.map((entry) {
-                  final customer = entry.value;
-                  final representative =
-                      customer.customerUserNickname.isNotEmpty
-                          ? customer.customerUserNickname
-                          : customer.pendingInvitationNickname.isNotEmpty
-                              ? customer.pendingInvitationNickname
-                              : customer.pendingInvitationEmail.isNotEmpty
-                                  ? customer.pendingInvitationEmail
-                                  : 'не назначен';
-                  final status = !customer.active
-                      ? 'в архиве'
-                      : customer.customerUserId != null
-                          ? 'активен'
-                          : customer.hasPendingInvitation
-                              ? 'приглашён'
-                              : 'без доступа';
-                  final hasExistingCustomerUser = _organizationParticipants.any(
-                    (participant) =>
-                        !participant.isPending &&
-                        participant.userId != null &&
-                        participant.role == OrganizationRole.customer,
-                  );
-                  return Container(
-                    decoration: BoxDecoration(
-                      color: entry.key.isEven
-                          ? Colors.white
-                          : const Color(0xFFF8FCFF),
-                      border: const Border(
-                        bottom: BorderSide(color: Color(0xFFE2EEF4)),
+                _customerDraftRow(managerCandidates),
+                ...rows.asMap().entries.map(
+                      (entry) => _customerDirectoryRow(
+                        entry.value.customer,
+                        entry.value.representative,
+                        entry.key,
                       ),
                     ),
-                    child: Row(children: [
-                      _customerTableCell(customer.code, flex: 1, bold: true),
-                      _customerTableCell(customer.name, flex: 2, bold: true),
-                      _customerTableCell(
-                        customer.primaryManagerNickname.isEmpty
-                            ? 'не назначен'
-                            : customer.primaryManagerNickname,
-                        flex: 1,
-                      ),
-                      _customerTableCell(
-                        representative,
-                        flex: 2,
-                      ),
-                      _customerTableCell(status, flex: 1),
-                      SizedBox(
-                        width: 48,
-                        child: PopupMenuButton<_CustomerAction>(
-                          tooltip: 'Действия с заказчиком',
-                          enabled: !_customerBusy,
-                          icon: const Icon(Icons.more_vert),
-                          onSelected: (action) {
-                            _handleCustomerAction(action, customer);
-                          },
-                          itemBuilder: (_) => [
-                            if (customer.active) ...[
-                              const PopupMenuItem(
-                                value: _CustomerAction.edit,
-                                child: Row(children: [
-                                  Icon(Icons.edit_outlined, size: 18),
-                                  SizedBox(width: 9),
-                                  Text('Изменить'),
-                                ]),
-                              ),
-                              if (hasExistingCustomerUser &&
-                                  !customer.hasPendingInvitation)
-                                PopupMenuItem(
-                                  value: _CustomerAction
-                                      .linkExistingRepresentative,
-                                  child: Text(
-                                    customer.customerUserId == null
-                                        ? 'Выбрать зарегистрированного'
-                                        : 'Сменить представителя',
-                                  ),
-                                ),
-                              PopupMenuItem(
-                                value: customer.hasPendingInvitation
-                                    ? _CustomerAction.resendInvitation
-                                    : _CustomerAction.inviteRepresentative,
-                                child: Text(
-                                  customer.hasPendingInvitation
-                                      ? 'Повторить приглашение'
-                                      : 'Пригласить представителя',
-                                ),
-                              ),
-                              if (customer.hasPendingInvitation)
-                                const PopupMenuItem(
-                                  value: _CustomerAction.cancelInvitation,
-                                  child: Text('Отменить приглашение'),
-                                ),
-                            ],
-                            const PopupMenuItem(
-                              value: _CustomerAction.openJobs,
-                              child: Text('Открыть работы'),
-                            ),
-                            if (customer.active)
-                              const PopupMenuItem(
-                                value: _CustomerAction.archive,
-                                child: Row(children: [
-                                  Icon(
-                                    Icons.archive_outlined,
-                                    size: 18,
-                                    color: Color(0xFFB42318),
-                                  ),
-                                  SizedBox(width: 9),
-                                  Text(
-                                    'В архив',
-                                    style: TextStyle(color: Color(0xFFB42318)),
-                                  ),
-                                ]),
-                              )
-                            else
-                              const PopupMenuItem(
-                                value: _CustomerAction.restore,
-                                child: Text('Восстановить из архива'),
-                              ),
-                          ],
-                        ),
-                      ),
-                    ]),
-                  );
-                }),
               ]),
             ),
           ),
         );
       },
+    );
+  }
+
+  Widget _customerDraftRow(
+    List<OrganizationParticipant> managerCandidates,
+  ) {
+    return Container(
+      key: const ValueKey('customer-draft-row'),
+      decoration: const BoxDecoration(
+        color: Color(0xFFF2FAFE),
+        border: Border(bottom: BorderSide(color: Color(0xFFC9E2F0))),
+      ),
+      child: Row(
+        children: [
+          _organizationTableInput(
+            controller: _customerNameCtrl,
+            hint: 'заказчик',
+            flex: 2,
+            enabled: !_customerBusy,
+          ),
+          Expanded(
+            flex: 2,
+            child: Container(
+              height: 56,
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 7),
+              decoration: const BoxDecoration(
+                border: Border(right: BorderSide(color: Color(0xFFC9E2F0))),
+              ),
+              child: _participantDropdown(
+                label: 'Ответственный',
+                value: _selectedCustomerManagerId,
+                participants: managerCandidates,
+                onChanged: (value) =>
+                    setState(() => _selectedCustomerManagerId = value),
+              ),
+            ),
+          ),
+          _organizationTableInput(
+            controller: _customerRepresentativeEmailCtrl,
+            hint: 'почта',
+            flex: 2,
+            enabled: !_customerBusy,
+          ),
+          _organizationTableInput(
+            controller: _customerRepresentativeNicknameCtrl,
+            hint: 'ник',
+            flex: 1,
+            enabled: !_customerBusy,
+          ),
+          _organizationTableInput(
+            controller: _customerRepresentativeDisplayNameCtrl,
+            hint: 'имя',
+            flex: 2,
+            enabled: !_customerBusy,
+          ),
+          _customerTableCell(
+            _editingCustomerId == null ? 'новый' : 'изменение',
+            flex: 1,
+            draft: true,
+          ),
+          SizedBox(
+            width: 48,
+            height: 56,
+            child: PopupMenuButton<_CustomerDraftAction>(
+              key: const ValueKey('customer-draft-actions'),
+              tooltip: 'Действия с новой строкой заказчика',
+              enabled: !_customerBusy,
+              icon: const Icon(Icons.more_vert),
+              onSelected: (action) {
+                switch (action) {
+                  case _CustomerDraftAction.save:
+                  case _CustomerDraftAction.saveWithoutRepresentative:
+                    _saveCustomer(inviteRepresentative: false);
+                  case _CustomerDraftAction.invite:
+                    _saveCustomer(inviteRepresentative: true);
+                  case _CustomerDraftAction.clear:
+                    _clearCustomerForm();
+                }
+              },
+              itemBuilder: (_) => [
+                if (_editingCustomerId != null &&
+                    !_customerDraftForRepresentative)
+                  const PopupMenuItem(
+                    value: _CustomerDraftAction.save,
+                    child: Text('Сохранить изменения'),
+                  )
+                else ...[
+                  const PopupMenuItem(
+                    value: _CustomerDraftAction.invite,
+                    child: Text('Пригласить представителя'),
+                  ),
+                  if (_editingCustomerId == null)
+                    const PopupMenuItem(
+                      value: _CustomerDraftAction.saveWithoutRepresentative,
+                      child: Text('Сохранить без представителя'),
+                    ),
+                ],
+                const PopupMenuItem(
+                  value: _CustomerDraftAction.clear,
+                  child: Text('Очистить строку'),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _customerDirectoryRow(
+    OrganizationCustomer customer,
+    OrganizationCustomerRepresentative? representative,
+    int index,
+  ) {
+    final status = !customer.active
+        ? 'в архиве'
+        : representative == null
+            ? 'без представителя'
+            : representative.pending
+                ? representative.emailSent
+                    ? 'ожидает регистрации'
+                    : 'ошибка email'
+                : 'активен';
+    final hasExistingCustomerUser = _organizationParticipants.any(
+      (participant) =>
+          !participant.isPending &&
+          participant.userId != null &&
+          participant.role == OrganizationRole.customer,
+    );
+    return Container(
+      key: ValueKey(
+        'customer-row-${customer.id}-${representative?.id ?? 'empty'}',
+      ),
+      decoration: BoxDecoration(
+        color: index.isEven ? Colors.white : const Color(0xFFF8FCFF),
+        border: const Border(
+          bottom: BorderSide(color: Color(0xFFE2EEF4)),
+        ),
+      ),
+      child: Row(children: [
+        _customerTableCell(
+          '${customer.name}\n${customer.code}',
+          flex: 2,
+          bold: true,
+        ),
+        _customerTableCell(
+          customer.primaryManagerNickname.isEmpty
+              ? 'не назначен'
+              : customer.primaryManagerNickname,
+          flex: 2,
+        ),
+        _customerTableCell(representative?.email ?? '—', flex: 2),
+        _customerTableCell(representative?.nickname ?? '—', flex: 1),
+        _customerTableCell(representative?.displayName ?? '—', flex: 2),
+        _customerTableCell(status, flex: 1),
+        SizedBox(
+          width: 48,
+          child: PopupMenuButton<_CustomerAction>(
+            tooltip: 'Действия с заказчиком',
+            enabled: !_customerBusy,
+            icon: const Icon(Icons.more_vert),
+            onSelected: (action) =>
+                _handleCustomerAction(action, customer, representative),
+            itemBuilder: (_) => [
+              if (customer.active) ...[
+                const PopupMenuItem(
+                  value: _CustomerAction.edit,
+                  child: Text('Изменить заказчика'),
+                ),
+                const PopupMenuItem(
+                  value: _CustomerAction.addRepresentative,
+                  child: Text('Добавить представителя'),
+                ),
+                if (hasExistingCustomerUser)
+                  const PopupMenuItem(
+                    value: _CustomerAction.linkExistingRepresentative,
+                    child: Text('Выбрать зарегистрированного'),
+                  ),
+                if (representative?.pending == true) ...[
+                  const PopupMenuItem(
+                    value: _CustomerAction.resendInvitation,
+                    child: Text('Повторить приглашение'),
+                  ),
+                  const PopupMenuItem(
+                    value: _CustomerAction.cancelInvitation,
+                    child: Text('Отменить приглашение'),
+                  ),
+                ],
+              ],
+              const PopupMenuItem(
+                value: _CustomerAction.openJobs,
+                child: Text('Открыть работы'),
+              ),
+              if (customer.active)
+                const PopupMenuItem(
+                  value: _CustomerAction.archive,
+                  child: Text(
+                    'В архив',
+                    style: TextStyle(color: Color(0xFFB42318)),
+                  ),
+                )
+              else
+                const PopupMenuItem(
+                  value: _CustomerAction.restore,
+                  child: Text('Восстановить из архива'),
+                ),
+            ],
+          ),
+        ),
+      ]),
     );
   }
 
@@ -2081,6 +2125,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _customerRequestRow(OrganizationCustomerRequest request) {
+    final existingCustomer = _matchingCustomerForRequest(request);
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(8),
@@ -2097,56 +2142,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
             style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 6),
-          Row(
-            children: [
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  key: ValueKey(
-                    'request-${request.id}-${_requestCustomerSelections[request.id] ?? 'none'}',
-                  ),
-                  initialValue: _requestCustomerSelections[request.id],
-                  isExpanded: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Связать с существующим',
-                    border: OutlineInputBorder(),
-                    isDense: true,
-                  ),
-                  items: _organizationCustomers
-                      .map(
-                        (customer) => DropdownMenuItem<String>(
-                          value: customer.id,
-                          child: Text(
-                            customer.displayLabel,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: _customerBusy
-                      ? null
-                      : (value) => setState(
-                            () =>
-                                _requestCustomerSelections[request.id] = value,
-                          ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              XpBtn(
-                label: 'Связать',
-                onPressed: _customerBusy ||
-                        _requestCustomerSelections[request.id] == null
-                    ? null
-                    : () => _resolveCustomerRequest(request),
-              ),
-              const SizedBox(width: 8),
-              XpBtn(
-                label: 'Создать',
-                primary: true,
-                onPressed: _customerBusy
-                    ? null
-                    : () => _prepareCustomerFromRequest(request),
-              ),
-            ],
+          Align(
+            alignment: Alignment.centerRight,
+            child: XpBtn(
+              key: ValueKey('resolve-customer-request-${request.id}'),
+              label: existingCustomer == null
+                  ? 'Заполнить данные'
+                  : 'Связать с созданным',
+              primary: true,
+              onPressed: _customerBusy
+                  ? null
+                  : () => _createOrLinkCustomerRequest(
+                        request,
+                        existingCustomer: existingCustomer,
+                      ),
+            ),
           ),
         ],
       ),
@@ -2233,9 +2243,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _customerDirectoryAvailable = true;
         _customerDirectoryError = null;
         _customerRequestsError = requestsError;
-        _requestCustomerSelections.removeWhere(
-          (requestId, _) => !requests.any((request) => request.id == requestId),
-        );
       });
     } catch (error) {
       if (!mounted) return;
@@ -2249,35 +2256,103 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _saveCustomer() async {
+  Future<void> _saveCustomer({required bool inviteRepresentative}) async {
     final organizationId = widget.organizationAccess.organizationId;
-    final code = _customerCodeCtrl.text.trim();
+    final requestedCode = _customerCodeCtrl.text.trim();
     final name = _customerNameCtrl.text.trim();
+    final representativeEmail =
+        _customerRepresentativeEmailCtrl.text.trim().toLowerCase();
+    final representativeNickname =
+        _customerRepresentativeNicknameCtrl.text.trim().toLowerCase();
+    final representativeDisplayName =
+        _customerRepresentativeDisplayNameCtrl.text.trim();
     if (organizationId == null) return;
-    if (code.isEmpty) {
-      xpDlg(context, 'Заказчик', 'Введите короткий код заказчика.');
-      return;
-    }
     if (name.length < 2) {
       xpDlg(context, 'Заказчик', 'Введите название заказчика.');
       return;
     }
+    if (inviteRepresentative) {
+      if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+          .hasMatch(representativeEmail)) {
+        xpDlg(context, 'Представитель', 'Введите корректный email.');
+        return;
+      }
+      if (!RegExp(r'^[a-z0-9_]{3,24}$').hasMatch(representativeNickname)) {
+        xpDlg(
+          context,
+          'Представитель',
+          'Ник: 3–24 символа, латиница, цифры и подчёркивание.',
+        );
+        return;
+      }
+      if (representativeDisplayName.isEmpty) {
+        xpDlg(context, 'Представитель', 'Введите имя представителя.');
+        return;
+      }
+    }
+
+    final normalizedName = name.toLowerCase();
+    OrganizationCustomer? existingCustomer;
+    for (final customer in _organizationCustomers) {
+      if (customer.id == _editingCustomerId ||
+          (_editingCustomerId == null &&
+              customer.name.trim().toLowerCase() == normalizedName)) {
+        existingCustomer = customer;
+        break;
+      }
+    }
+    final targetCustomerId = existingCustomer?.id ?? _editingCustomerId;
+    final managerUserId =
+        _selectedCustomerManagerId ?? existingCustomer?.primaryManagerUserId;
 
     setState(() => _customerBusy = true);
     try {
-      final customerId = await _customerService.saveCustomer(
-        organizationId: organizationId,
-        code: code,
-        name: name,
-        managerUserId: _selectedCustomerManagerId,
-        customerUserId: _selectedCustomerUserId,
-        customerId: _editingCustomerId,
-      );
+      Future<String> save(String code) => _customerService.saveCustomer(
+            organizationId: organizationId,
+            code: code,
+            name: name,
+            managerUserId: managerUserId,
+            customerUserId: _selectedCustomerUserId,
+            customerId: targetCustomerId,
+          );
+
+      late final String customerId;
+      if (inviteRepresentative && existingCustomer != null) {
+        // Adding another representative must not rewrite the customer. Older
+        // server versions replaced customer links during such an update.
+        customerId = existingCustomer.id;
+      } else {
+        try {
+          customerId = await save(existingCustomer?.code ?? requestedCode);
+        } catch (error) {
+          final needsLegacyCode = targetCustomerId == null &&
+              requestedCode.isEmpty &&
+              error.toString().toLowerCase().contains('customer code');
+          if (!needsLegacyCode) rethrow;
+          customerId = await save(_nextCustomerCode());
+        }
+      }
       if (_customerRequestBeingCreatedId != null) {
         await _customerService.resolveRequest(
           requestId: _customerRequestBeingCreatedId!,
           customerId: customerId,
         );
+      }
+      Object? invitationError;
+      if (inviteRepresentative) {
+        try {
+          await _organizationService.inviteMember(
+            organizationId: organizationId,
+            email: representativeEmail,
+            nickname: representativeNickname,
+            displayName: representativeDisplayName,
+            role: OrganizationRole.customer,
+            functions: const {},
+            customerId: customerId,
+          );
+        } catch (error) {
+          invitationError = error;
+        }
       }
       _clearCustomerForm(notify: false);
       final customers = await _customerService.listCustomers(
@@ -2299,6 +2374,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _customerDirectoryError = null;
         _customerRequestsError = requestsError;
       });
+      if (invitationError != null && mounted) {
+        xpDlg(
+          context,
+          'Заказчик сохранён, приглашение не отправлено',
+          '${_accessError(invitationError)}\n\n'
+              'Данные не потеряны. Заполните строку ещё раз и повторите отправку.',
+        );
+      }
     } catch (error) {
       if (mounted) {
         xpDlg(context, 'Заказчик не сохранён', _customerError(error));
@@ -2306,6 +2389,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } finally {
       if (mounted) setState(() => _customerBusy = false);
     }
+  }
+
+  String _nextCustomerCode() {
+    var largest = 0;
+    final pattern = RegExp(r'^C-(\d+)$', caseSensitive: false);
+    for (final customer in _organizationCustomers) {
+      final match = pattern.firstMatch(customer.code.trim());
+      final number = int.tryParse(match?.group(1) ?? '');
+      if (number != null && number > largest) largest = number;
+    }
+    return 'C-${(largest + 1).toString().padLeft(4, '0')}';
   }
 
   void _editCustomer(OrganizationCustomer customer) {
@@ -2318,37 +2412,48 @@ class _SettingsScreenState extends State<SettingsScreen> {
         .map((participant) => participant.userId)
         .whereType<String>()
         .toSet();
-    final customerIds = _organizationParticipants
-        .where(
-          (participant) =>
-              !participant.isPending &&
-              participant.role == OrganizationRole.customer,
-        )
-        .map((participant) => participant.userId)
-        .whereType<String>()
-        .toSet();
-
     setState(() {
       _editingCustomerId = customer.id;
+      _customerDraftForRepresentative = false;
       _customerRequestBeingCreatedId = null;
       _customerCodeCtrl.text = customer.code;
       _customerNameCtrl.text = customer.name;
+      _customerRepresentativeEmailCtrl.clear();
+      _customerRepresentativeNicknameCtrl.clear();
+      _customerRepresentativeDisplayNameCtrl.clear();
       _selectedCustomerManagerId =
           managerIds.contains(customer.primaryManagerUserId)
               ? customer.primaryManagerUserId
               : null;
-      _selectedCustomerUserId = customerIds.contains(customer.customerUserId)
-          ? customer.customerUserId
-          : null;
+      _selectedCustomerUserId = null;
+    });
+  }
+
+  void _prepareCustomerRepresentative(OrganizationCustomer customer) {
+    setState(() {
+      _editingCustomerId = customer.id;
+      _customerDraftForRepresentative = true;
+      _customerRequestBeingCreatedId = null;
+      _customerCodeCtrl.text = customer.code;
+      _customerNameCtrl.text = customer.name;
+      _customerRepresentativeEmailCtrl.clear();
+      _customerRepresentativeNicknameCtrl.clear();
+      _customerRepresentativeDisplayNameCtrl.clear();
+      _selectedCustomerManagerId = customer.primaryManagerUserId;
+      _selectedCustomerUserId = null;
     });
   }
 
   void _clearCustomerForm({bool notify = true}) {
     void clear() {
       _editingCustomerId = null;
+      _customerDraftForRepresentative = false;
       _customerRequestBeingCreatedId = null;
       _customerCodeCtrl.clear();
       _customerNameCtrl.clear();
+      _customerRepresentativeEmailCtrl.clear();
+      _customerRepresentativeNicknameCtrl.clear();
+      _customerRepresentativeDisplayNameCtrl.clear();
       _selectedCustomerManagerId = null;
       _selectedCustomerUserId = null;
     }
@@ -2412,43 +2517,65 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  void _prepareCustomerFromRequest(OrganizationCustomerRequest request) {
-    setState(() {
-      _editingCustomerId = null;
-      _customerRequestBeingCreatedId = request.id;
-      _customerCodeCtrl.clear();
-      _customerNameCtrl.text = request.requestedName;
-      _selectedCustomerManagerId = null;
-      _selectedCustomerUserId = null;
-    });
-    xpDlg(
-      context,
-      'Новый заказчик',
-      'Название перенесено в форму. Укажите код и сохраните: заявка свяжется автоматически.',
-    );
+  OrganizationCustomer? _matchingCustomerForRequest(
+    OrganizationCustomerRequest request,
+  ) {
+    final requestedName = request.requestedName.trim().toLowerCase();
+    return _organizationCustomers
+        .where(
+          (customer) =>
+              customer.active &&
+              (customer.name.trim().toLowerCase() == requestedName ||
+                  customer.code.trim().toLowerCase() == requestedName),
+        )
+        .firstOrNull;
   }
 
-  Future<void> _resolveCustomerRequest(
-    OrganizationCustomerRequest request,
-  ) async {
-    final customerId = _requestCustomerSelections[request.id];
-    if (customerId == null) return;
+  Future<void> _createOrLinkCustomerRequest(
+    OrganizationCustomerRequest request, {
+    required OrganizationCustomer? existingCustomer,
+  }) async {
+    if (existingCustomer == null) {
+      final requesterCanBeResponsible = _organizationParticipants.any(
+        (participant) =>
+            !participant.isPending &&
+            participant.userId == request.requestedByUserId &&
+            participant.role != OrganizationRole.customer,
+      );
+      setState(() {
+        _editingCustomerId = null;
+        _customerDraftForRepresentative = false;
+        _customerRequestBeingCreatedId = request.id;
+        _customerCodeCtrl.clear();
+        _customerNameCtrl.text = request.requestedName;
+        _selectedCustomerManagerId =
+            requesterCanBeResponsible ? request.requestedByUserId : null;
+        _selectedCustomerUserId = null;
+        _customerRepresentativeEmailCtrl.clear();
+        _customerRepresentativeNicknameCtrl.clear();
+        _customerRepresentativeDisplayNameCtrl.clear();
+      });
+      xpDlg(
+        context,
+        'Данные заявки заполнены',
+        'При необходимости добавьте почту, ник и имя представителя. Затем '
+            'выберите нужное действие в меню ⋮. Работа свяжется автоматически.',
+      );
+      return;
+    }
+
     setState(() => _customerBusy = true);
     try {
       await _customerService.resolveRequest(
         requestId: request.id,
-        customerId: customerId,
+        customerId: existingCustomer.id,
       );
-      final organizationId = widget.organizationAccess.organizationId;
-      if (organizationId != null) {
-        final requests =
-            await _customerService.listPendingRequests(organizationId);
-        if (mounted) {
-          setState(() {
-            _customerRequests = requests;
-            _requestCustomerSelections.remove(request.id);
-          });
-        }
+      if (mounted) {
+        setState(() {
+          _customerRequests = _customerRequests
+              .where((item) => item.id != request.id)
+              .toList(growable: false);
+        });
       }
     } catch (error) {
       if (mounted) {
@@ -2699,17 +2826,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _handleCustomerAction(
     _CustomerAction action,
     OrganizationCustomer customer,
+    OrganizationCustomerRepresentative? representative,
   ) async {
     switch (action) {
       case _CustomerAction.edit:
         _editCustomer(customer);
+      case _CustomerAction.addRepresentative:
+        _prepareCustomerRepresentative(customer);
       case _CustomerAction.linkExistingRepresentative:
         await _linkExistingCustomerRepresentative(customer);
-      case _CustomerAction.inviteRepresentative:
       case _CustomerAction.resendInvitation:
-        await _inviteCustomerRepresentative(customer);
+        if (representative != null) {
+          await _resendCustomerInvitation(customer, representative);
+        }
       case _CustomerAction.cancelInvitation:
-        await _cancelCustomerInvitation(customer);
+        if (representative != null) {
+          await _cancelCustomerInvitation(representative);
+        }
       case _CustomerAction.openJobs:
         await _openCustomerJobs(customer);
       case _CustomerAction.archive:
@@ -2722,21 +2855,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _linkExistingCustomerRepresentative(
     OrganizationCustomer customer,
   ) async {
+    final linkedUserIds = customer.allRepresentatives
+        .map((representative) => representative.userId)
+        .whereType<String>()
+        .toSet();
     final candidates = _organizationParticipants
         .where(
           (participant) =>
               !participant.isPending &&
               participant.userId != null &&
-              participant.role == OrganizationRole.customer,
+              participant.role == OrganizationRole.customer &&
+              !linkedUserIds.contains(participant.userId),
         )
         .toList();
-    if (candidates.isEmpty) return;
+    if (candidates.isEmpty) {
+      xpDlg(
+        context,
+        'Представители',
+        'Нет других зарегистрированных представителей для подключения.',
+      );
+      return;
+    }
 
-    String? selectedUserId = candidates.any(
-      (participant) => participant.userId == customer.customerUserId,
-    )
-        ? customer.customerUserId
-        : candidates.first.userId;
+    String? selectedUserId = candidates.first.userId;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
@@ -2840,100 +2981,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _inviteCustomerRepresentative(
+  Future<void> _resendCustomerInvitation(
     OrganizationCustomer customer,
+    OrganizationCustomerRepresentative representative,
   ) async {
-    var email = customer.pendingInvitationEmail;
-    var nickname = customer.pendingInvitationNickname;
-    var displayName = customer.pendingInvitationDisplayName;
-    final draft =
-        await showDialog<({String email, String nickname, String displayName})>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text('Представитель: ${customer.name}'),
-        content: SizedBox(
-          width: 440,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextFormField(
-                initialValue: email,
-                onChanged: (value) => email = value,
-                keyboardType: TextInputType.emailAddress,
-                decoration: const InputDecoration(
-                  labelText: 'Email',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 8),
-              TextFormField(
-                initialValue: nickname,
-                onChanged: (value) => nickname = value,
-                decoration: const InputDecoration(
-                  labelText: 'Ник',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 8),
-              TextFormField(
-                initialValue: displayName,
-                onChanged: (value) => displayName = value,
-                decoration: const InputDecoration(
-                  labelText: 'Имя',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Отменить'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(
-              dialogContext,
-              (
-                email: email.trim().toLowerCase(),
-                nickname: nickname.trim().toLowerCase(),
-                displayName: displayName.trim(),
-              ),
-            ),
-            child: Text(
-              customer.hasPendingInvitation ? 'Повторить' : 'Пригласить',
-            ),
-          ),
-        ],
-      ),
-    );
-    if (!mounted || draft == null) return;
-    if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(draft.email)) {
-      xpDlg(context, 'Приглашение', 'Введите корректный email.');
-      return;
-    }
-    if (!RegExp(r'^[a-z0-9_]{3,24}$').hasMatch(draft.nickname)) {
-      xpDlg(
-        context,
-        'Приглашение',
-        'Ник: 3-24 символа, латиница, цифры и подчёркивание.',
-      );
-      return;
-    }
-    if (draft.displayName.isEmpty) {
-      xpDlg(context, 'Приглашение', 'Введите имя представителя.');
-      return;
-    }
-
     final organizationId = widget.organizationAccess.organizationId;
-    if (organizationId == null) return;
+    if (organizationId == null || !representative.pending) return;
     setState(() => _customerBusy = true);
     try {
       await _organizationService.inviteMember(
         organizationId: organizationId,
-        email: draft.email,
-        nickname: draft.nickname,
-        displayName: draft.displayName,
+        email: representative.email,
+        nickname: representative.nickname,
+        displayName: representative.displayName,
         role: OrganizationRole.customer,
         functions: const {},
         customerId: customer.id,
@@ -2952,7 +3012,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       xpDlg(
         context,
         'Приглашение отправлено',
-        'Представитель ${draft.nickname} привязан к ${customer.displayLabel}.',
+        'Письмо для ${representative.nickname} отправлено повторно.',
       );
     } catch (error) {
       if (mounted) {
@@ -2964,9 +3024,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _cancelCustomerInvitation(
-    OrganizationCustomer customer,
+    OrganizationCustomerRepresentative representative,
   ) async {
-    final invitationId = customer.pendingInvitationId;
+    final invitationId = representative.invitationId;
     final organizationId = widget.organizationAccess.organizationId;
     if (invitationId == null || organizationId == null) return;
     setState(() => _customerBusy = true);

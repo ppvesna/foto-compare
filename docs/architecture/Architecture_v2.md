@@ -22,11 +22,14 @@ The implemented boundaries include `lib/features/auth`, `lib/features/protocols`
 `lib/features/references`, the first `billing`, `organization`, customer-directory,
 and production workflow contracts, plus the initial `capabilities/storage` contract
 and local settings adapter. The auth boundary currently owns editable current-profile
-data; the existing sign-in and registration screens remain unchanged.
+data; sign-in, registration, and invitation completion now share an adaptive form UI
+with explicit password visibility controls.
 Entitlements and organization permissions now reach the current application shell as
 typed snapshots. Existing storage keys, file names, JSON, and current user access remain
-compatible. Migrations `006–008` now provide the tested organization and entitlement
-snapshot for the current Supabase environment.
+compatible. The current test environment supports organization access, invitations,
+personal/working entitlement separation, customer and job data, private Storage,
+cloud protocols, secure chat, and test billing. The exact applied-migration ledger
+must still be audited before production.
 
 ## 2. Architectural decision
 
@@ -167,6 +170,9 @@ Realtime messaging has passed a two-account server test. Migration `017` adds an
 explicit customer release boundary: a job remains internal until an owner, admin, or
 assigned manager shares it. Sharing exposes only that job thread and its job-scoped
 protocols and assets; the organization team thread remains internal.
+Migration `022` keeps representatives synchronized with active confirmed jobs of their
+customer without changing that release state. Publication, revocation, preserved chat
+history, and two representatives on one shared job have passed the manual role test.
 
 ## 7. Inspection domain
 

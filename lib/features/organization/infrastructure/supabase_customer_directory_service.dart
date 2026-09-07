@@ -16,54 +16,80 @@ class SupabaseCustomerDirectoryService implements CustomerDirectoryService {
     Object? response;
     try {
       response = await client.rpc(
-        'list_organization_customers_v2',
+        'list_organization_customers_v3',
         params: {
           'target_organization': organizationId,
           'include_archived': includeArchived,
         },
       );
     } catch (_) {
-      response = await client.rpc(
-        'list_organization_customers_v1',
-        params: {
-          'target_organization': organizationId,
-          'include_archived': includeArchived,
-        },
-      );
+      try {
+        response = await client.rpc(
+          'list_organization_customers_v2',
+          params: {
+            'target_organization': organizationId,
+            'include_archived': includeArchived,
+          },
+        );
+      } catch (_) {
+        response = await client.rpc(
+          'list_organization_customers_v1',
+          params: {
+            'target_organization': organizationId,
+            'include_archived': includeArchived,
+          },
+        );
+      }
     }
     if (response is! List) return const [];
     return response
         .whereType<Map>()
         .map((value) => Map<String, dynamic>.from(value))
         .map(
-          (row) => OrganizationCustomer(
-            id: row['customer_id'] as String,
-            organizationId: organizationId,
-            code: row['code'] as String? ?? '',
-            name: row['name'] as String? ?? '',
-            active: row['active'] == true,
-            primaryManagerUserId: row['primary_manager_user_id'] as String?,
-            primaryManagerNickname:
-                row['primary_manager_nickname'] as String? ?? '',
-            customerUserId: row['customer_user_id'] as String?,
-            customerUserNickname:
-                row['customer_user_nickname'] as String? ?? '',
-            createdByUserId: row['created_by_user_id'] as String?,
-            createdByNickname: row['created_by_nickname'] as String? ?? '',
-            updatedByUserId: row['updated_by_user_id'] as String?,
-            updatedByNickname: row['updated_by_nickname'] as String? ?? '',
-            pendingInvitationId: row['pending_invitation_id'] as String?,
-            pendingInvitationEmail:
-                row['pending_invitation_email'] as String? ?? '',
-            pendingInvitationNickname:
-                row['pending_invitation_nickname'] as String? ?? '',
-            pendingInvitationDisplayName:
-                row['pending_invitation_display_name'] as String? ?? '',
-            createdAt: _date(row['created_at']),
-            updatedAt: _date(row['updated_at']),
-          ),
-        )
-        .toList();
+      (row) {
+        final representatives = (row['representatives'] as List? ?? const [])
+            .whereType<Map>()
+            .map((value) => Map<String, dynamic>.from(value))
+            .map(
+              (representative) => OrganizationCustomerRepresentative(
+                userId: representative['user_id'] as String?,
+                invitationId: representative['invitation_id'] as String?,
+                email: representative['email'] as String? ?? '',
+                nickname: representative['nickname'] as String? ?? '',
+                displayName: representative['display_name'] as String? ?? '',
+                pending: representative['status'] == 'pending',
+                emailSent: representative['email_sent'] != false,
+              ),
+            )
+            .toList();
+        return OrganizationCustomer(
+          id: row['customer_id'] as String,
+          organizationId: organizationId,
+          code: row['code'] as String? ?? '',
+          name: row['name'] as String? ?? '',
+          active: row['active'] == true,
+          primaryManagerUserId: row['primary_manager_user_id'] as String?,
+          primaryManagerNickname:
+              row['primary_manager_nickname'] as String? ?? '',
+          customerUserId: row['customer_user_id'] as String?,
+          customerUserNickname: row['customer_user_nickname'] as String? ?? '',
+          createdByUserId: row['created_by_user_id'] as String?,
+          createdByNickname: row['created_by_nickname'] as String? ?? '',
+          updatedByUserId: row['updated_by_user_id'] as String?,
+          updatedByNickname: row['updated_by_nickname'] as String? ?? '',
+          pendingInvitationId: row['pending_invitation_id'] as String?,
+          pendingInvitationEmail:
+              row['pending_invitation_email'] as String? ?? '',
+          pendingInvitationNickname:
+              row['pending_invitation_nickname'] as String? ?? '',
+          pendingInvitationDisplayName:
+              row['pending_invitation_display_name'] as String? ?? '',
+          representatives: representatives,
+          createdAt: _date(row['created_at']),
+          updatedAt: _date(row['updated_at']),
+        );
+      },
+    ).toList();
   }
 
   @override

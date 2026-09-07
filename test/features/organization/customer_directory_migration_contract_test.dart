@@ -29,4 +29,50 @@ void main() {
     expect(function, contains('attach_organization_invitation_customer_v1'));
     expect(function, contains('cancel_organization_invitation_v1'));
   });
+
+  test('customer codes are generated atomically by the organization', () async {
+    final migration = await File(
+      'supabase/migrations/020_customer_auto_codes_v1.sql',
+    ).readAsString();
+
+    expect(migration, contains('next_customer_number'));
+    expect(migration, contains("'C-' || lpad"));
+    expect(migration, contains('next_customer_number + 1'));
+    expect(migration, contains('save_organization_customer_v1'));
+    expect(migration, contains('GRANT EXECUTE'));
+  });
+
+  test('customer directory returns every representative', () async {
+    final migration = await File(
+      'supabase/migrations/021_customer_representatives_v1.sql',
+    ).readAsString();
+
+    expect(migration, contains('list_organization_customers_v3'));
+    expect(migration, contains('jsonb_agg'));
+    expect(migration, contains('organization_customer_users'));
+    expect(migration, contains('organization_invitations'));
+    expect(
+      migration,
+      isNot(contains('DELETE FROM organization_customer_users')),
+    );
+    expect(migration, contains('GRANT EXECUTE'));
+  });
+
+  test('customer representatives follow active customer jobs', () async {
+    final migration = await File(
+      'supabase/migrations/022_customer_job_participant_sync_v1.sql',
+    ).readAsString();
+
+    expect(migration, contains('sync_customer_job_participants_v1'));
+    expect(migration, contains('AFTER INSERT OR DELETE'));
+    expect(migration, contains("'customer'"));
+    expect(migration, contains("job.status = 'active'"));
+    expect(migration, contains('job.customer_confirmed'));
+    expect(migration, contains('ON CONFLICT'));
+    expect(
+      migration,
+      contains("customer_access_status = 'shared'"),
+      reason: 'The migration must document that assignment is not publication.',
+    );
+  });
 }

@@ -136,7 +136,7 @@ extension OrganizationRoleLabel on OrganizationRole {
       case OrganizationRole.employee:
         return 'Сотрудник';
       case OrganizationRole.customer:
-        return 'Заказчик';
+        return 'Представитель заказчика';
       case OrganizationRole.personal:
         return 'Личный профиль';
     }

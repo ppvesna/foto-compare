@@ -181,7 +181,6 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell> {
   int _tab = 0;
-  int _chatBadge = 4;
   int _settingsAccessRequest = 0;
   int _settingsInitialSection = 1;
   EntitlementSnapshot _entitlements = EntitlementSnapshot.legacyCompatible();
@@ -326,7 +325,6 @@ class _MainShellState extends State<MainShell> {
     }
     setState(() {
       _tab = i;
-      if (i == 2) _chatBadge = 0;
     });
   }
 
@@ -563,7 +561,7 @@ class _MainShellState extends State<MainShell> {
             child: Row(children: [
               Expanded(child: _navBtn(0, 'Главная')),
               Expanded(child: _navBtn(1, 'Сравнение')),
-              _navBtnBadge(2, 'Чат', _chatBadge),
+              Expanded(child: _navBtn(2, 'Чат')),
               Expanded(child: _navBtn(3, 'Настройки')),
             ]),
           ),
@@ -653,29 +651,6 @@ class _MainShellState extends State<MainShell> {
           ),
         ),
       ),
-    );
-  }
-
-  Widget _navBtnBadge(int idx, String label, int badge) {
-    return Expanded(
-      child: Stack(children: [
-        SizedBox.expand(child: _navBtn(idx, label)),
-        if (badge > 0)
-          Positioned(
-            top: 6,
-            right: 12,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-              decoration: BoxDecoration(
-                  color: Colors.red, borderRadius: BorderRadius.circular(8)),
-              child: Text('$badge',
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 9,
-                      fontWeight: FontWeight.bold)),
-            ),
-          ),
-      ]),
     );
   }
 }
