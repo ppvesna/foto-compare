@@ -29,11 +29,14 @@ Rule: every step must preserve the working application and be independently reve
   UI are present. Supabase Storage, bounded protocol previews, and job-scoped access are
   connected; originals remain device-only and Google Drive remains disconnected.
 - Secure organization/job chat and Supabase Realtime are connected. Owner/employee
-  text messaging has passed a two-account test.
+  text messaging has passed a two-account test. Private ordinary attachments are
+  implemented for job chats and await the final two-account manual exchange.
 - Migration `019` provides server-owned test prices and assignment-backed entitlement
   snapshots. Real payment processing remains out of scope.
 - Migration `023` separates internal team and customer-representative seat limits;
   the test Pro plan currently uses 20 seats for each category.
+- Migration `024` adds owner-scoped writes under each accessible job's private
+  `/chat/` Storage path without broadening protocol/original upload rights.
 - The `vesna-test` employee and customer job sharing/revocation gate has passed. The
   next release task is to audit remote deployment state and stabilize the branch.
 
@@ -236,6 +239,8 @@ Customer visibility, revocation, preserved history, Realtime messaging, and
 job-scoped cloud-protocol isolation have passed the dedicated multi-account manual
 test with two customers. The chat action now refreshes its protocol list before
 opening, including protocols created after the screen was opened.
+Migration `024` adds the next bounded storage slice: ordinary files and images up to
+10 MB in job chats, backed by private Storage and the existing job-access boundary.
 Google OAuth and Drive remain a separate provider connection.
 
 ### Step 20. Add an outbox

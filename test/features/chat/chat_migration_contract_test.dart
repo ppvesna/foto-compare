@@ -42,4 +42,15 @@ void main() {
     expect(sql, contains('An assigned customer account is required'));
     expect(sql, contains("'job:' || selected_job.id::TEXT"));
   });
+
+  test('ordinary chat attachments stay inside an accessible job', () async {
+    final sql = await File(
+      'supabase/migrations/024_job_chat_attachments_v1.sql',
+    ).readAsString();
+
+    expect(sql, contains("bucket_id = 'trimatrix-assets'"));
+    expect(sql, contains("(storage.foldername(name))[5] = 'chat'"));
+    expect(sql, contains('can_view_production_job_asset_v1'));
+    expect(sql, contains('owner_id = auth.uid()::TEXT'));
+  });
 }

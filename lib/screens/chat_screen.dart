@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import '../config/app_theme.dart';
 import '../features/chat/chat.dart';
@@ -8,6 +9,8 @@ import '../features/protocols/protocols.dart';
 import '../widgets/xp_widgets.dart';
 
 enum _ChatKind { internal, approval }
+
+typedef ChatAttachmentPicker = Future<ChatAttachmentUpload?> Function();
 
 class ChatScreen extends StatefulWidget {
   final String currentUserId;
@@ -17,6 +20,7 @@ class ChatScreen extends StatefulWidget {
   final String organizationName;
   final ProtocolCloudRepository? protocolCloudRepository;
   final ChatRepository? chatRepository;
+  final ChatAttachmentPicker? attachmentPicker;
 
   const ChatScreen({
     super.key,
@@ -27,6 +31,7 @@ class ChatScreen extends StatefulWidget {
     required this.organizationName,
     this.protocolCloudRepository,
     this.chatRepository,
+    this.attachmentPicker,
   });
 
   @override
@@ -49,6 +54,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _serverChatsLoading = false;
   bool _serverMessagesLoading = false;
   bool _sendingMessage = false;
+  bool _sendingAttachment = false;
   bool _customerAccessUpdating = false;
   String? _serverChatError;
   StreamSubscription<List<ChatMessage>>? _messageSubscription;
@@ -836,6 +842,7 @@ class _ChatScreenState extends State<ChatScreen> {
       time: _shortDateTime(message.createdAt),
       text: message.text,
       isMine: message.senderId == widget.currentUserId,
+      attachment: message.attachment,
     );
   }
 
@@ -879,10 +886,15 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             ]),
             const SizedBox(height: 7),
-            Text(
-              message.text,
-              style: const TextStyle(fontSize: 12, height: 1.35),
-            ),
+            if (message.text.isNotEmpty)
+              Text(
+                message.text,
+                style: const TextStyle(fontSize: 12, height: 1.35),
+              ),
+            if (message.attachment != null) ...[
+              if (message.text.isNotEmpty) const SizedBox(height: 9),
+              _attachmentCard(message.attachment!),
+            ],
             if (message.card != null) ...[
               const SizedBox(height: 9),
               _checkCard(message.card!),
@@ -1069,8 +1081,14 @@ class _ChatScreenState extends State<ChatScreen> {
         IconButton.filledTonal(
           key: const ValueKey('chat-attach-button'),
           tooltip: 'Прикрепить',
-          onPressed: _showAttachmentMenu,
-          icon: const Icon(Icons.add),
+          onPressed: _sendingAttachment ? null : _showAttachmentMenu,
+          icon: _sendingAttachment
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.add),
         ),
         const SizedBox(width: 8),
         Expanded(
@@ -1199,12 +1217,9 @@ class _ChatScreenState extends State<ChatScreen> {
                     context: sheetContext,
                     icon: Icons.attach_file,
                     title: 'Файл или изображение',
-                    subtitle: 'вложение к сообщению',
-                    onTap: () => xpDlg(
-                      context,
-                      'Файл или изображение',
-                      'Загрузку обычных вложений подключим вместе с сообщениями чата.',
-                    ),
+                    subtitle: 'до 10 МБ · только для участников работы',
+                    key: const ValueKey('chat-file-attachment-action'),
+                    onTap: _pickAndSendAttachment,
                   ),
                 ],
               ),
@@ -1213,6 +1228,243 @@ class _ChatScreenState extends State<ChatScreen> {
         );
       },
     );
+  }
+
+  Future<void> _pickAndSendAttachment() async {
+    final repository = widget.chatRepository;
+    final thread = _activeServerThread;
+    if (repository == null || thread == null) {
+      await xpDlg(
+        context,
+        'Файл или изображение',
+        'Обычные вложения доступны в облачном чате работы.',
+      );
+      return;
+    }
+    if (thread.kind != ChatThreadKind.job) {
+      await xpDlg(
+        context,
+        'Файл или изображение',
+        'Выберите чат конкретной работы. В командный чат и личные заметки вложения пока не отправляются.',
+      );
+      return;
+    }
+
+    try {
+      final upload = await (widget.attachmentPicker ?? _pickAttachment)();
+      if (upload == null || !mounted) return;
+      if (upload.bytes.isEmpty) {
+        throw const FormatException('empty_attachment');
+      }
+      if (upload.bytes.length > SupabaseChatRepository.maxAttachmentBytes) {
+        throw const FormatException('attachment_too_large');
+      }
+      setState(() => _sendingAttachment = true);
+      final message = await repository.sendAttachment(
+        threadId: thread.id,
+        upload: upload,
+        text: _msgCtrl.text,
+      );
+      if (!mounted || _activeServerThread?.id != thread.id) return;
+      setState(() {
+        if (!_serverMessages.any((item) => item.id == message.id)) {
+          _serverMessages = [..._serverMessages, message];
+        }
+        _msgCtrl.clear();
+        _serverChatError = null;
+      });
+      _scrollMessagesToEnd();
+    } on FormatException catch (error) {
+      if (!mounted) return;
+      final tooLarge = error.message == 'attachment_too_large';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            tooLarge
+                ? 'Файл больше 10 МБ. Выберите файл меньшего размера.'
+                : 'Выбранный файл пустой и не может быть отправлен.',
+          ),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Не удалось отправить вложение. Проверьте доступ к работе и повторите.',
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _sendingAttachment = false);
+    }
+  }
+
+  Future<ChatAttachmentUpload?> _pickAttachment() async {
+    final file = await FilePicker.pickFile(type: FileType.any);
+    if (file == null) return null;
+    final knownLength = file.lengthSync();
+    final length = knownLength ?? await file.length();
+    if (length > SupabaseChatRepository.maxAttachmentBytes) {
+      throw const FormatException('attachment_too_large');
+    }
+    final bytes = await file.readAsBytes();
+    return ChatAttachmentUpload(
+      fileName: file.name,
+      mimeType: _mimeTypeForFileName(file.name),
+      bytes: bytes,
+    );
+  }
+
+  String _mimeTypeForFileName(String fileName) {
+    final extension = fileName.split('.').last.toLowerCase();
+    return switch (extension) {
+      'jpg' || 'jpeg' => 'image/jpeg',
+      'png' => 'image/png',
+      'webp' => 'image/webp',
+      'gif' => 'image/gif',
+      'pdf' => 'application/pdf',
+      'txt' => 'text/plain',
+      'csv' => 'text/csv',
+      'zip' => 'application/zip',
+      'doc' => 'application/msword',
+      'docx' =>
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'xls' => 'application/vnd.ms-excel',
+      'xlsx' =>
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      _ => 'application/octet-stream',
+    };
+  }
+
+  Widget _attachmentCard(ChatAttachment attachment) {
+    return Container(
+      key: ValueKey('chat-attachment-${attachment.assetId}'),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FCFF),
+        border: Border.all(color: const Color(0xFFC9E2F0)),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(children: [
+        Container(
+          width: 42,
+          height: 42,
+          decoration: BoxDecoration(
+            color: const Color(0xFFEAF6FC),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(
+            attachment.isImage ? Icons.image_outlined : Icons.insert_drive_file,
+            color: AppTheme.blue,
+          ),
+        ),
+        const SizedBox(width: 9),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                attachment.fileName,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                _fileSizeLabel(attachment.sizeBytes),
+                style: const TextStyle(fontSize: 9, color: Colors.black54),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 8),
+        TextButton(
+          key: ValueKey('open-chat-attachment-${attachment.assetId}'),
+          onPressed: () => _openAttachment(attachment),
+          child: Text(attachment.isImage ? 'Открыть' : 'Скачать'),
+        ),
+      ]),
+    );
+  }
+
+  String _fileSizeLabel(int bytes) {
+    if (bytes < 1024) return '$bytes Б';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} КБ';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} МБ';
+  }
+
+  Future<void> _openAttachment(ChatAttachment attachment) async {
+    final repository = widget.chatRepository;
+    if (repository == null) return;
+    try {
+      final bytes = await repository.loadAttachment(attachment);
+      if (!mounted) return;
+      if (!attachment.isImage) {
+        await FilePicker.saveFile(
+          fileName: attachment.fileName,
+          bytes: bytes,
+          mimeType: attachment.mimeType,
+        );
+        return;
+      }
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => Dialog(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 900, maxHeight: 760),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 8, 6, 8),
+                child: Row(children: [
+                  Expanded(
+                    child: Text(
+                      attachment.fileName,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Закрыть',
+                    onPressed: () => Navigator.pop(dialogContext),
+                    icon: const Icon(Icons.close),
+                  ),
+                ]),
+              ),
+              const Divider(height: 1),
+              Flexible(
+                child: InteractiveViewer(
+                  child: Image.memory(bytes, fit: BoxFit.contain),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(10),
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: FilledButton.tonalIcon(
+                    onPressed: () => FilePicker.saveFile(
+                      fileName: attachment.fileName,
+                      bytes: bytes,
+                      mimeType: attachment.mimeType,
+                    ),
+                    icon: const Icon(Icons.download_outlined),
+                    label: const Text('Скачать'),
+                  ),
+                ),
+              ),
+            ]),
+          ),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Не удалось открыть вложение.')),
+      );
+    }
   }
 
   Widget _attachmentAction({
@@ -1868,6 +2120,7 @@ class _ChatMessage {
   final bool isMine;
   final _SharedCheckCard? card;
   final _ApprovalCard? approvalCard;
+  final ChatAttachment? attachment;
 
   const _ChatMessage({
     required this.author,
@@ -1877,6 +2130,7 @@ class _ChatMessage {
     required this.isMine,
     this.card,
     this.approvalCard,
+    this.attachment,
   });
 }
 

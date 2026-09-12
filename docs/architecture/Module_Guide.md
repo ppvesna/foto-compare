@@ -316,8 +316,9 @@ signed access references, not unrestricted file paths.
 Current foundation: `features/chat` contains thread/message domain models,
 `ChatRepository`, `MockChatRepository`, and `SupabaseChatRepository`. The first
 vertical slice loads personal and organization threads, sends text, and receives
-updates through Supabase Realtime. Protocol and image attachments remain references
-to the protocols/storage modules rather than duplicated binaries.
+updates through Supabase Realtime. Protocol attachments remain references to the
+protocols module. Ordinary job-chat attachments use typed metadata in the message and
+private bytes in storage; binaries are never duplicated in the chat table.
 
 ### settings
 
@@ -407,6 +408,12 @@ Migration `017` changes customer job access from automatic assignment to an expl
 release controlled by owner, admin, or the job's assigned manager. `ChatRepository`
 lists manageable jobs and changes the release state only through server RPCs. A
 customer sees the job chat, protocols, and assets only while the job is shared.
+
+Migration `024` adds a dedicated `chat` subpath below each job's private Storage
+scope. Any user who can view the job may insert a unique chat attachment there;
+update and delete are restricted to the object's owner. `ChatRepository` enforces a
+10 MB client limit, stores only attachment metadata in `chat_messages`, and downloads
+through `CloudStorage`, so the existing job RLS remains the read boundary.
 
 ### analytics
 

@@ -173,6 +173,10 @@ protocols and assets; the organization team thread remains internal.
 Migration `022` keeps representatives synchronized with active confirmed jobs of their
 customer without changing that release state. Publication, revocation, preserved chat
 history, and two representatives on one shared job have passed the manual role test.
+Migration `024` adds ordinary job-chat attachments as private Storage objects below a
+dedicated `chat` subpath. Messages keep typed metadata only; object reads continue to
+use `can_view_production_job_v1`, and object mutation remains owner-scoped for customer
+uploads.
 
 ## 7. Inspection domain
 

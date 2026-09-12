@@ -36,6 +36,11 @@ class SupabaseCloudStorage implements CloudStorage {
             _pathSegment(scope.organizationId, 'organizationId');
         final jobId = _pathSegment(scope.jobId, 'jobId');
         return 'organizations/$organizationId/jobs/$jobId/$cleanId';
+      case CloudAssetScopeType.organizationJobChat:
+        final organizationId =
+            _pathSegment(scope.organizationId, 'organizationId');
+        final jobId = _pathSegment(scope.jobId, 'jobId');
+        return 'organizations/$organizationId/jobs/$jobId/chat/$cleanId';
     }
   }
 

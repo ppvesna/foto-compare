@@ -237,6 +237,7 @@ class _MainShellState extends State<MainShell> {
           : SupabaseChatRepository(
               client,
               currentUserId: currentUser.id,
+              storage: cloudStorage!,
             );
     });
     _scheduleInvitationDialog(pendingInvitation, organizationService);

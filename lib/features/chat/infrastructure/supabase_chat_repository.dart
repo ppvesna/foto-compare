@@ -1,17 +1,26 @@
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'dart:typed_data';
 
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:uuid/uuid.dart';
+
+import '../../../capabilities/storage/storage.dart';
+import '../domain/chat_attachment.dart';
 import '../domain/chat_message.dart';
 import '../domain/chat_repository.dart';
 import '../domain/chat_thread.dart';
 import '../domain/customer_share_candidate.dart';
 
 class SupabaseChatRepository implements ChatRepository {
+  static const maxAttachmentBytes = 10 * 1024 * 1024;
+
   final SupabaseClient client;
   final String currentUserId;
+  final CloudStorage storage;
 
-  const SupabaseChatRepository(
+  SupabaseChatRepository(
     this.client, {
     required this.currentUserId,
+    required this.storage,
   });
 
   @override
@@ -146,6 +155,93 @@ class SupabaseChatRepository implements ChatRepository {
     );
   }
 
+  @override
+  Future<ChatMessage> sendAttachment({
+    required String threadId,
+    required ChatAttachmentUpload upload,
+    String text = '',
+  }) async {
+    final fileName = upload.fileName.trim();
+    if (fileName.isEmpty) {
+      throw ArgumentError.value(upload.fileName, 'upload.fileName');
+    }
+    if (upload.bytes.isEmpty || upload.bytes.length > maxAttachmentBytes) {
+      throw ArgumentError.value(upload.bytes.length, 'upload.bytes');
+    }
+    final thread = await client
+        .from('chat_groups')
+        .select('organization_id, job_id, kind')
+        .eq('id', threadId)
+        .single();
+    final organizationId = thread['organization_id'] as String? ?? '';
+    final jobId = thread['job_id'] as String? ?? '';
+    if (thread['kind'] != 'job' || organizationId.isEmpty || jobId.isEmpty) {
+      throw StateError(
+          'Attachments are available only in production job chats');
+    }
+
+    final assetId = 'chat-${const Uuid().v4()}';
+    final scope = CloudAssetScope.organizationJobChat(
+      organizationId: organizationId,
+      jobId: jobId,
+    );
+    final attachment = ChatAttachment(
+      assetId: assetId,
+      fileName: fileName,
+      mimeType: upload.mimeType.trim().isEmpty
+          ? 'application/octet-stream'
+          : upload.mimeType.trim(),
+      sizeBytes: upload.bytes.length,
+      organizationId: organizationId,
+      jobId: jobId,
+    );
+    await storage.upload(
+      CloudAssetUpload(
+        id: assetId,
+        name: fileName,
+        mimeType: attachment.mimeType,
+        bytes: upload.bytes,
+        scope: scope,
+      ),
+    );
+    try {
+      final row = await client
+          .from('chat_messages')
+          .insert({
+            'organization_id': organizationId,
+            'group_id': threadId,
+            'sender_id': currentUserId,
+            'message_type': attachment.isImage ? 'image' : 'asset',
+            'text': text.trim(),
+            'metadata': attachment.toMetadata(),
+          })
+          .select(
+            'id, group_id, sender_id, message_type, text, metadata, created_at',
+          )
+          .single();
+      final profiles = await _loadProfiles(threadId, {currentUserId});
+      return _messageFromRow(Map<String, dynamic>.from(row), profiles);
+    } catch (_) {
+      try {
+        await storage.delete(assetId, scope: scope);
+      } catch (_) {
+        // The message failed; cleanup is best effort and never hides the cause.
+      }
+      rethrow;
+    }
+  }
+
+  @override
+  Future<Uint8List> loadAttachment(ChatAttachment attachment) {
+    return storage.download(
+      attachment.assetId,
+      scope: CloudAssetScope.organizationJobChat(
+        organizationId: attachment.organizationId,
+        jobId: attachment.jobId,
+      ),
+    );
+  }
+
   Future<Map<String, _SenderProfile>> _loadProfiles(
     String threadId,
     Set<String> userIds,
@@ -242,8 +338,9 @@ class SupabaseChatRepository implements ChatRepository {
       case 'check_result':
         return ChatMessageKind.protocol;
       case 'image':
-      case 'asset':
         return ChatMessageKind.image;
+      case 'asset':
+        return ChatMessageKind.attachment;
       case 'system':
         return ChatMessageKind.system;
       default:

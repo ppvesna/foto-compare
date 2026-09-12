@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:photo_compare/features/chat/chat.dart';
@@ -103,5 +105,66 @@ void main() {
       (await repository.listCustomerShareCandidates()).single.customerShared,
       isTrue,
     );
+  });
+
+  testWidgets('job participant sends an ordinary attachment', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1024, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final repository = MockChatRepository(
+      currentUserId: 'customer-1',
+      currentNickname: 'customer_sergey',
+      currentDisplayName: 'Сергей',
+      threads: [
+        ChatThread(
+          id: 'job-chat-2',
+          title: 'Работа № VESNA-ISOLATION-TEST-002',
+          kind: ChatThreadKind.job,
+          organizationId: 'organization-1',
+          jobId: 'job-2',
+          updatedAt: DateTime.utc(2026, 9, 12),
+          customerShared: true,
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChatScreen(
+            currentUserId: 'customer-1',
+            email: 'sergey@example.com',
+            displayName: 'Сергей',
+            nickname: 'customer_sergey',
+            organizationName: 'Vesna',
+            chatRepository: repository,
+            attachmentPicker: () async => ChatAttachmentUpload(
+              fileName: 'sample.png',
+              mimeType: 'image/png',
+              bytes: Uint8List.fromList([1, 2, 3]),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const ValueKey('chat-message-input')),
+      'Новый образец',
+    );
+    await tester.tap(find.byKey(const ValueKey('chat-attach-button')));
+    await tester.pumpAndSettle();
+    final attachmentAction =
+        find.byKey(const ValueKey('chat-file-attachment-action'));
+    await tester.ensureVisible(attachmentAction);
+    await tester.pumpAndSettle();
+    await tester.tap(attachmentAction);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Новый образец'), findsOneWidget);
+    expect(find.text('sample.png'), findsOneWidget);
+    expect(find.text('3 Б'), findsOneWidget);
+    final messages = await repository.listMessages('job-chat-2');
+    expect(messages.single.attachment?.fileName, 'sample.png');
   });
 }

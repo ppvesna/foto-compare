@@ -1,7 +1,10 @@
+import 'chat_attachment.dart';
+
 enum ChatMessageKind {
   text,
   protocol,
   image,
+  attachment,
   system,
 }
 
@@ -33,4 +36,6 @@ class ChatMessage {
     if (senderNickname.trim().isNotEmpty) return senderNickname.trim();
     return 'Пользователь';
   }
+
+  ChatAttachment? get attachment => ChatAttachment.fromMetadata(metadata);
 }

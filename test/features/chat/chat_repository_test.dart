@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:photo_compare/features/chat/chat.dart';
 
@@ -57,5 +59,39 @@ void main() {
     );
     expect(candidates.single.customerShared, isFalse);
     expect(jobThread.customerShared, isFalse);
+  });
+
+  test('mock job chat sends and loads a private attachment', () async {
+    final repository = MockChatRepository(
+      currentUserId: 'customer-1',
+      currentNickname: 'customer_sergey',
+      currentDisplayName: 'Сергей',
+      threads: [
+        ChatThread(
+          id: 'job-chat-2',
+          title: 'Работа № VESNA-ISOLATION-TEST-002',
+          kind: ChatThreadKind.job,
+          organizationId: 'organization-1',
+          jobId: 'job-2',
+          updatedAt: DateTime.utc(2026, 9, 12),
+          customerShared: true,
+        ),
+      ],
+    );
+
+    final sent = await repository.sendAttachment(
+      threadId: 'job-chat-2',
+      upload: ChatAttachmentUpload(
+        fileName: 'sample.png',
+        mimeType: 'image/png',
+        bytes: Uint8List.fromList([1, 2, 3]),
+      ),
+      text: 'Новый образец',
+    );
+
+    expect(sent.kind, ChatMessageKind.image);
+    expect(sent.attachment?.fileName, 'sample.png');
+    expect(sent.attachment?.jobId, 'job-2');
+    expect(await repository.loadAttachment(sent.attachment!), [1, 2, 3]);
   });
 }

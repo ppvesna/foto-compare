@@ -1,3 +1,4 @@
+export 'domain/chat_attachment.dart';
 export 'domain/chat_message.dart';
 export 'domain/chat_repository.dart';
 export 'domain/chat_thread.dart';
