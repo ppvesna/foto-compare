@@ -212,7 +212,9 @@ Migration `022` synchronizes those links into active confirmed production jobs. 
 assignment and customer publication remain separate: a customer participant can read
 the job only while its explicit customer-access state is `shared`.
 Migration `023` gives Pro separate server-enforced pools of 20 internal team seats and
-20 customer-representative seats. Enterprise keeps both pools unlimited.
+20 customer-representative seats. Enterprise keeps both pools unlimited. The client
+uses these limits only for an early, non-authoritative UX check; server errors remain
+authoritative and preserve the representative draft so the user does not re-enter it.
 
 ### inspection
 

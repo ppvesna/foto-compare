@@ -2387,6 +2387,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
         xpDlg(context, 'Представитель', 'Введите имя представителя.');
         return;
       }
+      final seatLimit = widget.entitlements.limit(
+        UsageLimit.customerRepresentativeSeats,
+      );
+      final usedSeats = _organizationParticipants
+          .where((participant) => participant.role == OrganizationRole.customer)
+          .length;
+      if (seatLimit != null && usedSeats >= seatLimit) {
+        xpDlg(
+          context,
+          'Нет свободных мест для представителей',
+          'Использовано $usedSeats из $seatLimit мест представителей заказчиков. '
+              'Введённые данные оставлены в строке. Освободите место или '
+              'измените тариф и повторите приглашение.',
+        );
+        return;
+      }
     }
 
     final existingCustomer = _existingCustomerForDraft(name);
@@ -2406,10 +2422,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
           );
 
       late final String customerId;
-      if (inviteRepresentative && existingCustomer != null) {
+      if (inviteRepresentative &&
+          (existingCustomer != null ||
+              (_customerDraftForRepresentative && targetCustomerId != null))) {
         // Adding another representative must not rewrite the customer. Older
         // server versions replaced customer links during such an update.
-        customerId = existingCustomer.id;
+        customerId = targetCustomerId!;
       } else {
         try {
           customerId = await save(existingCustomer?.code ?? requestedCode);
@@ -2443,7 +2461,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           invitationError = error;
         }
       }
-      _clearCustomerForm(notify: false);
+      final invitationWasSaved = _invitationWasSaved(invitationError);
+      if (invitationError == null || invitationWasSaved) {
+        _clearCustomerForm(notify: false);
+      }
       final customers = await _customerService.listCustomers(
         organizationId,
         includeArchived: _showArchivedCustomers,
@@ -2456,20 +2477,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
         requestsError = _customerError(error);
       }
       if (!mounted) return;
+      final retainedCustomer =
+          customers.where((customer) => customer.id == customerId).firstOrNull;
       setState(() {
         _organizationCustomers = customers;
         _customerRequests = requests;
         _customerDirectoryAvailable = true;
         _customerDirectoryError = null;
         _customerRequestsError = requestsError;
+        if (invitationError != null && !invitationWasSaved) {
+          _editingCustomerId = customerId;
+          _customerDraftForRepresentative = true;
+          _customerRequestBeingCreatedId = null;
+          _selectedCustomerUserId = null;
+          if (retainedCustomer != null) {
+            _customerCodeCtrl.text = retainedCustomer.code;
+            _customerNameCtrl.text = retainedCustomer.name;
+            _selectedCustomerManagerId = retainedCustomer.primaryManagerUserId;
+          }
+        }
       });
       if (invitationError != null && mounted) {
-        xpDlg(
-          context,
-          'Заказчик сохранён, приглашение не отправлено',
-          '${_accessError(invitationError)}\n\n'
-              'Данные не потеряны. Заполните строку ещё раз и повторите отправку.',
-        );
+        if (invitationWasSaved) {
+          xpDlg(
+            context,
+            'Приглашение сохранено, письмо не отправлено',
+            _accessError(invitationError),
+          );
+        } else {
+          xpDlg(
+            context,
+            'Приглашение не отправлено',
+            '${_accessError(invitationError)}\n\n'
+                'Введённые данные оставлены в строке. Исправьте причину и повторите приглашение.',
+          );
+        }
       }
     } catch (error) {
       if (mounted) {
@@ -2479,6 +2521,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (mounted) setState(() => _customerBusy = false);
     }
   }
+
+  bool _invitationWasSaved(Object? error) =>
+      error is OrganizationInvitationException &&
+      error.code == 'delivery_failed';
 
   String _nextCustomerCode() {
     var largest = 0;

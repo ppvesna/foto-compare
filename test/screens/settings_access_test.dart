@@ -330,6 +330,160 @@ void main() {
     expect(service.lastInvitation?.customerId, 'customer-1');
   });
 
+  testWidgets('customer seat limit keeps representative draft values',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1440, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final service = MockOrganizationAdministrationService(
+      invitationError: const OrganizationInvitationException(
+        code: 'customer_seat_limit',
+        message: 'invitation_customer_seat_limit',
+      ),
+    );
+    final customerService = MockCustomerDirectoryService(
+      customers: [
+        OrganizationCustomer(
+          id: 'customer-1',
+          organizationId: 'organization-1',
+          code: 'C-0001',
+          name: 'Заказчик 1',
+          active: true,
+          createdAt: DateTime.utc(2026),
+          updatedAt: DateTime.utc(2026),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SettingsScreen(
+            entitlements: EntitlementSnapshot.forPlan(PlanTier.pro),
+            organizationAccess: OrganizationAccess.forRole(
+              organizationId: 'organization-1',
+              role: OrganizationRole.admin,
+            ),
+            organizationAdministrationService: service,
+            customerDirectoryService: customerService,
+            onAccessChanged: () async {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Организация').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Заказчики'));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('add-representative-customer-1')),
+    );
+    await tester.pumpAndSettle();
+
+    var fields = find.descendant(
+      of: find.byKey(const ValueKey('customer-draft-row')),
+      matching: find.byType(TextField),
+    );
+    await tester.enterText(fields.at(0), 'limit@example.com');
+    await tester.enterText(fields.at(1), 'limit_customer');
+    await tester.enterText(fields.at(2), 'Лимит Тест');
+    await tester.tap(find.byKey(const ValueKey('customer-draft-actions')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Пригласить представителя'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Приглашение не отправлено'), findsOneWidget);
+    expect(
+      find.textContaining(
+        'Достигнут лимит представителей заказчиков текущего плана.',
+      ),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('ОК'));
+    await tester.pumpAndSettle();
+    fields = find.descendant(
+      of: find.byKey(const ValueKey('customer-draft-row')),
+      matching: find.byType(TextField),
+    );
+    expect(tester.widget<TextField>(fields.at(0)).controller?.text,
+        'limit@example.com');
+    expect(tester.widget<TextField>(fields.at(1)).controller?.text,
+        'limit_customer');
+    expect(
+        tester.widget<TextField>(fields.at(2)).controller?.text, 'Лимит Тест');
+    expect(find.text('новый представитель'), findsOneWidget);
+  });
+
+  testWidgets('known full customer pool stops before saving or inviting',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1440, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final service = MockOrganizationAdministrationService(
+      participants: [
+        OrganizationParticipant(
+          id: 'customer-member-1',
+          userId: 'customer-user-1',
+          email: 'existing@example.com',
+          nickname: 'existing_customer',
+          displayName: 'Существующий представитель',
+          role: OrganizationRole.customer,
+          functions: const {},
+          status: OrganizationParticipantStatus.active,
+          emailSent: true,
+          createdAt: DateTime.utc(2026),
+        ),
+      ],
+    );
+    final customerService = MockCustomerDirectoryService();
+    final limitedEntitlements =
+        EntitlementSnapshot.forPlan(PlanTier.pro).copyWith(limits: const {
+      UsageLimit.checksPerDay: 500,
+      UsageLimit.savedReferences: 50,
+      UsageLimit.organizationSeats: 20,
+      UsageLimit.customerRepresentativeSeats: 1,
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SettingsScreen(
+            entitlements: limitedEntitlements,
+            organizationAccess: OrganizationAccess.forRole(
+              organizationId: 'organization-1',
+              role: OrganizationRole.admin,
+            ),
+            organizationAdministrationService: service,
+            customerDirectoryService: customerService,
+            onAccessChanged: () async {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Организация').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Заказчики'));
+    await tester.pumpAndSettle();
+
+    final fields = find.descendant(
+      of: find.byKey(const ValueKey('customer-draft-row')),
+      matching: find.byType(TextField),
+    );
+    await tester.enterText(fields.at(0), 'Новый заказчик');
+    await tester.enterText(fields.at(1), 'new@example.com');
+    await tester.enterText(fields.at(2), 'new_customer');
+    await tester.enterText(fields.at(3), 'Новый представитель');
+    await tester.tap(find.byKey(const ValueKey('customer-draft-actions')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Пригласить представителя'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Нет свободных мест для представителей'), findsOneWidget);
+    expect(find.textContaining('Использовано 1 из 1'), findsOneWidget);
+    expect(customerService.savedCustomer, isNull);
+    expect(service.lastInvitation, isNull);
+  });
+
   testWidgets('display label reuses a customer instead of creating a duplicate',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(1440, 1200));

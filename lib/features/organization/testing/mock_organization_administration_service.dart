@@ -33,6 +33,7 @@ class MockOrganizationAdministrationService
   String? lastCancelledInvitationId;
   CurrentOrganizationInvitation? pendingCurrentInvitation;
   bool invitationAccepted;
+  Object? invitationError;
 
   MockOrganizationAdministrationService({
     Map<String, OrganizationUserProfile>? profilesByNickname,
@@ -41,6 +42,7 @@ class MockOrganizationAdministrationService
     this.createdOrganizationId = 'mock-organization-1',
     this.pendingCurrentInvitation,
     this.invitationAccepted = false,
+    this.invitationError,
   })  : profilesByNickname = profilesByNickname ?? {},
         members = members ?? [],
         participants = participants ?? [];
@@ -142,6 +144,8 @@ class MockOrganizationAdministrationService
       functions: functions,
       customerId: customerId,
     );
+    final error = invitationError;
+    if (error != null) throw error;
     return OrganizationInvitationResult(
       invitationId: 'mock-invitation-1',
       email: email,
