@@ -225,8 +225,8 @@ class _CompareScreenState extends State<CompareScreen>
   String _selectedCustomerName = '';
   String _requestedCustomerName = '';
   bool _customerConfirmed = false;
-  bool _customerDirectoryLoading = false;
   bool _customerDirectoryAvailable = true;
+  Future<void>? _customerDirectoryLoadFuture;
   int _sampleNo = 1;
   String? _activeProtocolId;
   DateTime? _activeProtocolCreatedAt;
@@ -308,10 +308,22 @@ class _CompareScreenState extends State<CompareScreen>
       widget.productionJobService ??
       SupabaseProductionJobService(Supabase.instance.client);
 
-  Future<void> _loadCustomerDirectory() async {
+  Future<void> _loadCustomerDirectory() {
     final organizationId = widget.organizationAccess.organizationId;
-    if (organizationId == null || _customerDirectoryLoading) return;
-    if (mounted) setState(() => _customerDirectoryLoading = true);
+    if (organizationId == null) return Future.value();
+    final activeLoad = _customerDirectoryLoadFuture;
+    if (activeLoad != null) return activeLoad;
+
+    final load = _loadCustomerDirectoryOnce(organizationId);
+    _customerDirectoryLoadFuture = load;
+    return load.whenComplete(() {
+      if (identical(_customerDirectoryLoadFuture, load)) {
+        _customerDirectoryLoadFuture = null;
+      }
+    });
+  }
+
+  Future<void> _loadCustomerDirectoryOnce(String organizationId) async {
     try {
       final customers =
           await _customerDirectoryService.listCustomers(organizationId);
@@ -323,8 +335,6 @@ class _CompareScreenState extends State<CompareScreen>
     } catch (_) {
       if (!mounted) return;
       setState(() => _customerDirectoryAvailable = false);
-    } finally {
-      if (mounted) setState(() => _customerDirectoryLoading = false);
     }
   }
 
@@ -4572,9 +4582,10 @@ class _CompareScreenState extends State<CompareScreen>
   }
 
   Future<void> _editJobNumber() async {
-    final jobController = TextEditingController(text: _currentJobNumber);
-    final requestedCustomerController =
-        TextEditingController(text: _requestedCustomerName);
+    await _loadCustomerDirectory();
+    if (!mounted) return;
+    var jobNumberInput = _currentJobNumber;
+    var requestedCustomerInput = _requestedCustomerName;
     var selectedCustomerId = _selectedCustomerId;
     var selectedCustomerName = _selectedCustomerName;
     var customerNotFound =
@@ -4600,13 +4611,14 @@ class _CompareScreenState extends State<CompareScreen>
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  TextField(
-                    controller: jobController,
+                  TextFormField(
+                    initialValue: jobNumberInput,
                     autofocus: true,
                     decoration: const InputDecoration(
                       labelText: 'Номер работы из техзадания',
                       border: OutlineInputBorder(),
                     ),
+                    onChanged: (text) => jobNumberInput = text,
                   ),
                   if (widget.organizationAccess.organizationId != null) ...[
                     const SizedBox(height: 12),
@@ -4695,12 +4707,13 @@ class _CompareScreenState extends State<CompareScreen>
                           : null,
                     ),
                     if (customerNotFound)
-                      TextField(
-                        controller: requestedCustomerController,
+                      TextFormField(
+                        initialValue: requestedCustomerInput,
                         decoration: const InputDecoration(
                           labelText: 'Название точно как в техзадании',
                           border: OutlineInputBorder(),
                         ),
+                        onChanged: (text) => requestedCustomerInput = text,
                       ),
                   ],
                   if (validationError != null) ...[
@@ -4725,8 +4738,8 @@ class _CompareScreenState extends State<CompareScreen>
             ),
             FilledButton(
               onPressed: () {
-                final number = jobController.text.trim();
-                final requestedName = requestedCustomerController.text.trim();
+                final number = jobNumberInput.trim();
+                final requestedName = requestedCustomerInput.trim();
                 if (number.isEmpty) {
                   setDialogState(
                     () => validationError = 'Введите номер работы.',
@@ -4767,8 +4780,6 @@ class _CompareScreenState extends State<CompareScreen>
         ),
       ),
     );
-    jobController.dispose();
-    requestedCustomerController.dispose();
     if (value == null || !mounted) return;
     setState(() {
       _jobNumber = value.jobNumber;
@@ -4816,24 +4827,11 @@ class _CompareScreenState extends State<CompareScreen>
   Widget _jobInspectorSection() {
     final hasJob = _currentJobNumber.isNotEmpty;
     return _inspectorSection('Работа', [
-      Row(
-        children: [
-          Expanded(
-            child: _jobInfoTile(
-              'Работа',
-              hasJob ? _currentJobNumber : 'не задана',
-              hasJob,
-            ),
-          ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: _jobInfoTile(
-              'Отпечаток',
-              _currentSampleLabel,
-              _cmpImg != null,
-            ),
-          ),
-        ],
+      _jobInfoTile(
+        'Работа',
+        hasJob ? _currentJobNumber : 'не задана',
+        hasJob,
+        maxLines: 2,
       ),
       const SizedBox(height: 6),
       if (widget.organizationAccess.organizationId != null) ...[
@@ -4844,11 +4842,30 @@ class _CompareScreenState extends State<CompareScreen>
         ),
         const SizedBox(height: 6),
       ],
-      _jobInfoTile('ID для базы', _currentJobId, hasJob),
+      Row(
+        children: [
+          Expanded(
+            child: _jobInfoTile(
+              'Отпечаток',
+              _currentSampleLabel,
+              _cmpImg != null,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: _jobInfoTile('ID для базы', _currentJobId, hasJob),
+          ),
+        ],
+      ),
     ]);
   }
 
-  Widget _jobInfoTile(String label, String value, bool active) {
+  Widget _jobInfoTile(
+    String label,
+    String value,
+    bool active, {
+    int maxLines = 1,
+  }) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
       decoration: BoxDecoration(
@@ -4868,11 +4885,14 @@ class _CompareScreenState extends State<CompareScreen>
           ),
         ),
         const SizedBox(height: 2),
-        Text(
-          value,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w900),
+        Tooltip(
+          message: value,
+          child: Text(
+            value,
+            maxLines: maxLines,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w900),
+          ),
         ),
       ]),
     );
