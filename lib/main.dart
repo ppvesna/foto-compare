@@ -188,6 +188,8 @@ class _MainShellState extends State<MainShell> {
   CloudStorage? _cloudStorage;
   ProtocolCloudRepository? _protocolCloudRepository;
   ChatRepository? _chatRepository;
+  CheckUsageService? _checkUsageService;
+  int _checkUsageRevision = 0;
   String? _handledInvitationId;
 
   @override
@@ -239,6 +241,8 @@ class _MainShellState extends State<MainShell> {
               currentUserId: currentUser.id,
               storage: cloudStorage!,
             );
+      _checkUsageService =
+          currentUser == null ? null : SupabaseCheckUsageService(client);
     });
     _scheduleInvitationDialog(pendingInvitation, organizationService);
   }
@@ -426,6 +430,10 @@ class _MainShellState extends State<MainShell> {
         entitlements: _entitlements,
         organizationAccess: _organizationAccess,
         protocolCloudRepository: _protocolCloudRepository,
+        checkUsageService: _checkUsageService,
+        onCheckUsageChanged: () {
+          if (mounted) setState(() => _checkUsageRevision++);
+        },
       ),
       ChatScreen(
         currentUserId: user?.id ?? '',
@@ -442,6 +450,8 @@ class _MainShellState extends State<MainShell> {
         organizationAccess: _organizationAccess,
         initialSection: _settingsInitialSection,
         cloudStorage: _cloudStorage,
+        checkUsageService: _checkUsageService,
+        checkUsageRevision: _checkUsageRevision,
         onAccessChanged: _loadAccess,
       ),
     ];

@@ -1,9 +1,13 @@
+export 'domain/check_usage.dart';
+export 'domain/check_usage_service.dart';
 export 'domain/billing.dart';
 export 'domain/entitlement.dart';
 export 'domain/entitlement_service.dart';
 export 'domain/payment_service.dart';
 export 'infrastructure/legacy_entitlement_service.dart';
+export 'infrastructure/supabase_check_usage_service.dart';
 export 'infrastructure/supabase_entitlement_service.dart';
 export 'infrastructure/supabase_payment_service.dart';
 export 'testing/mock_entitlement_service.dart';
+export 'testing/mock_check_usage_service.dart';
 export 'testing/mock_payment_service.dart';

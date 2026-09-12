@@ -47,6 +47,8 @@ class SettingsScreen extends StatefulWidget {
   final AccountProfileService? accountProfileService;
   final CloudStorage? cloudStorage;
   final PaymentService? paymentService;
+  final CheckUsageService? checkUsageService;
+  final int checkUsageRevision;
 
   const SettingsScreen({
     super.key,
@@ -59,6 +61,8 @@ class SettingsScreen extends StatefulWidget {
     this.accountProfileService,
     this.cloudStorage,
     this.paymentService,
+    this.checkUsageService,
+    this.checkUsageRevision = 0,
   });
 
   @override
@@ -136,6 +140,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _billingProfileSaving = false;
   bool _billingActivating = false;
   String? _billingError;
+  CheckUsageSnapshot? _checkUsage;
+  bool _checkUsageLoading = false;
+  String? _checkUsageError;
 
   static const _sections = [
     _SettingsSection('Аккаунт', 'профиль пользователя'),
@@ -164,6 +171,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _loadCameraCaptureSettings();
     _loadStorageSettings();
     _loadCloudConnection();
+    _loadCheckUsage();
     _billingScope = _defaultBillingScope();
     if (_section == 2) _loadBillingData();
   }
@@ -203,6 +211,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (oldWidget.cloudStorage != widget.cloudStorage) {
       _loadCloudConnection();
     }
+    if (oldWidget.checkUsageService != widget.checkUsageService ||
+        oldWidget.checkUsageRevision != widget.checkUsageRevision) {
+      _loadCheckUsage();
+    }
     if (oldWidget.organizationAccess.organizationId !=
             widget.organizationAccess.organizationId ||
         oldWidget.organizationAccess.role != widget.organizationAccess.role) {
@@ -212,6 +224,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _billingScope = nextScope;
         _billingQuote = null;
       }
+    }
+  }
+
+  Future<void> _loadCheckUsage() async {
+    final service = widget.checkUsageService;
+    if (service == null) return;
+    setState(() {
+      _checkUsageLoading = true;
+      _checkUsageError = null;
+    });
+    try {
+      final usage = await service.load();
+      if (!mounted) return;
+      setState(() => _checkUsage = usage);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _checkUsage = null;
+        _checkUsageError = 'не удалось получить';
+      });
+    } finally {
+      if (mounted) setState(() => _checkUsageLoading = false);
     }
   }
 
@@ -687,6 +721,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             'Проверок/день',
             checksLimit == null ? 'без ограничения' : '$checksLimit',
           ),
+          if (widget.checkUsageService != null)
+            _infoRow('Использовано сегодня', _checkUsageLabel()),
           _infoRow(
             'Эталонов',
             referencesLimit == null ? 'без ограничения' : '$referencesLimit',
@@ -1191,6 +1227,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ),
     );
+  }
+
+  String _checkUsageLabel() {
+    if (_checkUsageLoading) return 'загрузка…';
+    if (_checkUsageError != null) return _checkUsageError!;
+    final usage = _checkUsage;
+    if (usage == null) return 'нет данных';
+    if (usage.limit == null) return '${usage.used} · без ограничения';
+    return '${usage.used} из ${usage.limit}';
   }
 
   String _billingErrorMessage(Object error) {

@@ -9,6 +9,10 @@ Migration `012` and the later customer-sharing boundary are validated separately
 through `CUSTOMER_WORKFLOW_V1_TEST_PLAN.md`. Do not treat customer or job isolation as
 production-ready until that plan and publication/revocation checks pass.
 
+`daily_check_usage_smoke_test.sql` validates migration `025` against an existing
+job-scoped cloud protocol. It performs one increment, repeats the same protocol ID to
+verify idempotency, and rolls the whole transaction back.
+
 ## Preparation
 
 1. Create a dedicated user in Supabase Authentication or register it through Trimatrix.
@@ -67,8 +71,9 @@ The configured test environment supports the current organization, invitation,
 customer/job, Storage, cloud-protocol, secure-chat, and test-billing flows. Owner,
 administrator, employee, and two customer-representative accounts have passed the
 current role flow. Customer publication, revocation, preserved work-chat history, and
-Realtime messaging have passed for one work. Foreign-work isolation still needs a
-second work fixture. Before production, verify the actual remote migration ledger.
+Realtime messaging and foreign-work isolation have passed with two customer fixtures.
+The transactional daily-usage smoke test passed on 2026-09-12. Before production,
+verify the actual remote migration ledger.
 
 ## Cleanup
 

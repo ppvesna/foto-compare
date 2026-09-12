@@ -291,8 +291,8 @@ inspection metrics.
 Responsibilities: plans, limits, subscription state, trials, enterprise contracts,
 checkout sessions, invoices, receipts, and refunds.
 
-Public contracts: `SubscriptionService`, `EntitlementService`, `PaymentService`,
-`BillingPortalService`, `PlanRepository`.
+Public contracts: `SubscriptionService`, `EntitlementService`, `CheckUsageService`,
+`PaymentService`, `BillingPortalService`, `PlanRepository`.
 
 Dependencies: auth identity, organization, licensing, and remote subscription/payment
 adapters. Other product features depend only on `EntitlementService`; a payment result
@@ -302,6 +302,10 @@ Current checkpoint: `PaymentService` and `MockPaymentService` support quotes, sa
 profiles, and a test subscription activation. `SupabasePaymentService` calls protected
 RPCs from migration `019`; prices and final access assignments are decided on the server.
 No card number, CVV, or provider secret crosses this module boundary.
+Migration `025` adds server-owned completed-check usage. `CheckUsageService` reads the
+current UTC day and records a stable protocol ID atomically; organization plans share
+one counter, while personal plans use the current user. Advisory locking prevents
+concurrent overrun, and the stable ID makes exact-result updates idempotent.
 
 ### collaboration
 

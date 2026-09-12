@@ -109,6 +109,10 @@ mocks, and Supabase adapters exist. Migration `019` adds server-owned prices, sa
 profiles, test activation records, and assignment-backed `current_entitlement_v4`.
 Accounts without that function continue to use the older snapshots during rollout. Card
 numbers and security codes are never accepted or stored by the Flutter application.
+Migration `025` separates plan definition from measured usage through
+`CheckUsageService`. The server records only completed checks, uses one UTC-day counter
+per organization or personal account, and performs the final quota check under an
+advisory transaction lock. Re-saving the same protocol ID does not consume quota again.
 
 ### 6.1 Organization and job access
 

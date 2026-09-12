@@ -58,6 +58,8 @@ class CompareScreen extends StatefulWidget {
   final CustomerDirectoryService? customerDirectoryService;
   final ProductionJobService? productionJobService;
   final ProtocolCloudRepository? protocolCloudRepository;
+  final CheckUsageService? checkUsageService;
+  final VoidCallback? onCheckUsageChanged;
 
   const CompareScreen({
     super.key,
@@ -66,6 +68,8 @@ class CompareScreen extends StatefulWidget {
     this.customerDirectoryService,
     this.productionJobService,
     this.protocolCloudRepository,
+    this.checkUsageService,
+    this.onCheckUsageChanged,
   });
 
   @override
@@ -114,9 +118,28 @@ class _CompareScreenState extends State<CompareScreen>
         local.day == now.day;
   }
 
-  bool _hasDailyCheckQuota() {
+  Future<bool> _hasDailyCheckQuota() async {
     final limit = widget.entitlements.limit(UsageLimit.checksPerDay);
     if (limit == null) return true;
+    final usageService = widget.checkUsageService;
+    if (usageService != null) {
+      try {
+        final usage = await usageService.load();
+        if (!mounted) return false;
+        if (!usage.limitReached) return true;
+        _showDailyCheckLimit(usage);
+        return false;
+      } catch (_) {
+        if (mounted) {
+          await xpDlg(
+            context,
+            'Счётчик проверок недоступен',
+            'Не удалось проверить общий дневной лимит на сервере. Повторите после восстановления соединения.',
+          );
+        }
+        return false;
+      }
+    }
     final used = CheckHistoryService.checks.value
         .where((p) => _isToday(p.createdAt))
         .length;
@@ -127,6 +150,14 @@ class _CompareScreenState extends State<CompareScreen>
       'Использовано $used из $limit проверок. Новая проверка будет доступна после обновления лимита.',
     );
     return false;
+  }
+
+  void _showDailyCheckLimit(CheckUsageSnapshot usage) {
+    xpDlg(
+      context,
+      'Дневной лимит',
+      'Использовано ${usage.used} из ${usage.limit} проверок. Новая проверка будет доступна после смены серверного дня (UTC).',
+    );
   }
 
   bool _hasReferenceQuota() {
@@ -1437,7 +1468,7 @@ class _CompareScreenState extends State<CompareScreen>
       );
       return;
     }
-    if (!_hasDailyCheckQuota()) return;
+    if (!await _hasDailyCheckQuota() || !mounted) return;
     if (!_hasRequiredJobContext) {
       xpDlg(
         context,
@@ -1622,6 +1653,9 @@ class _CompareScreenState extends State<CompareScreen>
           'Предварительная проверка готова. '
           'Откройте «ΔE цвет» для точного расчёта.',
         );
+      } on DailyCheckLimitException catch (error) {
+        _showDailyCheckLimit(error.snapshot);
+        _setCompareStatus('Проверка завершена, но дневной лимит уже исчерпан.');
       } catch (_) {
         _setCompareStatus(
           'Проверка завершена. Локальный протокол не сохранён.',
@@ -1736,6 +1770,9 @@ class _CompareScreenState extends State<CompareScreen>
       );
       try {
         await _saveCheckResult();
+      } on DailyCheckLimitException catch (error) {
+        _showDailyCheckLimit(error.snapshot);
+        _setCompareStatus('Точная Delta E готова, дневной лимит уже исчерпан.');
       } catch (_) {
         _setCompareStatus(
           'Точная Delta E готова. Локальный протокол не обновлён.',
@@ -1935,6 +1972,13 @@ class _CompareScreenState extends State<CompareScreen>
       apertureMm: _measurementSettings.aperture.diameterMm,
       stages: _checkProtocolStages(r),
     );
+    if (!replacingCurrent && widget.checkUsageService != null) {
+      await widget.checkUsageService!.recordCompletedCheck(
+        checkId: protocol.id,
+        jobId: widget.entitlements.usesOrganizationPlan ? protocol.jobId : null,
+      );
+      widget.onCheckUsageChanged?.call();
+    }
     await CheckHistoryService.saveLast(protocol);
     _cloudProtocolSyncQueue = _cloudProtocolSyncQueue.then(
       (_) => _syncProtocolToCloud(protocol, r.diffL3),

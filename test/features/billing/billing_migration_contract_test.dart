@@ -30,4 +30,25 @@ void main() {
     expect(sql, isNot(contains("WHEN 'operator'")));
     expect(sql, isNot(contains("now() + INTERVAL '90 days'")));
   });
+
+  test('daily usage is server owned, atomic, and idempotent', () {
+    final sql = File('supabase/migrations/025_daily_check_usage_v1.sql')
+        .readAsStringSync();
+
+    expect(
+        sql, contains('CREATE TABLE IF NOT EXISTS daily_check_usage_events'));
+    expect(sql, contains('current_check_usage_v1'));
+    expect(sql, contains('record_completed_check_v1'));
+    expect(sql, contains('pg_advisory_xact_lock'));
+    expect(sql, contains('UNIQUE (usage_scope, subject_id, check_id)'));
+    expect(sql, contains("member.role IN ('owner', 'admin', 'employee')"));
+    expect(sql, contains('can_view_production_job_v1(job.id)'));
+    expect(sql, contains('daily_check_limit_reached'));
+    expect(sql, contains("AT TIME ZONE 'UTC'"));
+    expect(sql, contains('FROM cloud_check_protocols AS protocol'));
+    expect(
+      sql,
+      contains('ON CONFLICT (usage_scope, subject_id, check_id) DO NOTHING'),
+    );
+  });
 }

@@ -37,6 +37,10 @@ Rule: every step must preserve the working application and be independently reve
   the test Pro plan currently uses 20 seats for each category.
 - Migration `024` adds owner-scoped writes under each accessible job's private
   `/chat/` Storage path without broadening protocol/original upload rights.
+- Migration `025` replaces browser-local daily quota enforcement with an atomic,
+  idempotent server counter shared by an organization plan. The live test workspace
+  shows the migrated value `1/500`; one new completed-check increment remains to be
+  confirmed manually across two accounts.
 - The `vesna-test` employee and customer job sharing/revocation gate has passed. The
   next release task is to audit remote deployment state and stabilize the branch.
 
