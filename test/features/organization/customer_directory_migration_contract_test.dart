@@ -28,6 +28,7 @@ void main() {
     expect(function, contains('body.customerId'));
     expect(function, contains('attach_organization_invitation_customer_v1'));
     expect(function, contains('cancel_organization_invitation_v1'));
+    expect(function, contains('customer_seat_limit'));
   });
 
   test('customer codes are generated atomically by the organization', () async {
@@ -74,5 +75,18 @@ void main() {
       contains("customer_access_status = 'shared'"),
       reason: 'The migration must document that assignment is not publication.',
     );
+  });
+
+  test('team and customer representatives have separate seat limits', () async {
+    final migration = await File(
+      'supabase/migrations/023_split_organization_seat_limits_v1.sql',
+    ).readAsString();
+
+    expect(migration, contains('"organizationSeats":20'));
+    expect(migration, contains('"customerRepresentativeSeats":20'));
+    expect(migration, contains('organization_role_seat_limit_v2'));
+    expect(migration, contains('organization_invitation_seats_v2'));
+    expect(migration, contains('organization_member_seats_v2'));
+    expect(migration, contains('invitation_customer_seat_limit'));
   });
 }

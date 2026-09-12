@@ -37,4 +37,16 @@ void main() {
     expect(error.code, 'invitation_failed');
     expect(error.message, 'Temporary server error');
   });
+
+  test('keeps a separate customer representative seat limit', () {
+    final error = OrganizationInvitationException.fromResponse(
+      details: const {
+        'code': 'customer_seat_limit',
+        'error': 'invitation_customer_seat_limit',
+      },
+      status: 400,
+    );
+
+    expect(error.code, 'customer_seat_limit');
+  });
 }

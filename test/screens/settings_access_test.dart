@@ -106,6 +106,9 @@ void main() {
     expect(find.text('Менеджер'), findsOneWidget);
     expect(find.text('Дизайнер'), findsOneWidget);
     expect(find.text('Специалист проверки'), findsOneWidget);
+    expect(find.text('Мест в команде'), findsOneWidget);
+    expect(find.text('Представителей заказчиков'), findsOneWidget);
+    expect(find.text('20'), findsNWidgets(2));
     expect(find.text('Тестирование доступа'), findsNothing);
     expect(find.text('Обновить права с сервера'), findsNothing);
     expect(find.text('Сбросить'), findsNothing);
@@ -304,17 +307,19 @@ void main() {
     await tester.tap(find.text('Заказчики'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Действия с заказчиком'));
+    await tester.tap(
+      find.byKey(const ValueKey('add-representative-customer-1')),
+    );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Добавить представителя'));
-    await tester.pumpAndSettle();
+    expect(find.text('новый представитель'), findsOneWidget);
     final invitationFields = find.descendant(
       of: find.byKey(const ValueKey('customer-draft-row')),
       matching: find.byType(TextField),
     );
-    await tester.enterText(invitationFields.at(1), 'client@example.com');
-    await tester.enterText(invitationFields.at(2), 'client_user');
-    await tester.enterText(invitationFields.at(3), 'Представитель');
+    expect(invitationFields, findsNWidgets(3));
+    await tester.enterText(invitationFields.at(0), 'client@example.com');
+    await tester.enterText(invitationFields.at(1), 'client_user');
+    await tester.enterText(invitationFields.at(2), 'Представитель');
     await tester.tap(find.byKey(const ValueKey('customer-draft-actions')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Пригласить представителя'));
@@ -323,6 +328,67 @@ void main() {
     expect(service.lastInvitation?.role, OrganizationRole.customer);
     expect(service.lastInvitation?.nickname, 'client_user');
     expect(service.lastInvitation?.customerId, 'customer-1');
+  });
+
+  testWidgets('display label reuses a customer instead of creating a duplicate',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1440, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final organizationService = MockOrganizationAdministrationService();
+    final customerService = MockCustomerDirectoryService(
+      customers: [
+        OrganizationCustomer(
+          id: 'customer-2',
+          organizationId: 'organization-1',
+          code: 'C-0002',
+          name: 'VESNA-CLIENT-OTHER',
+          active: true,
+          createdAt: DateTime.utc(2026),
+          updatedAt: DateTime.utc(2026),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SettingsScreen(
+            entitlements: EntitlementSnapshot.forPlan(PlanTier.pro),
+            organizationAccess: OrganizationAccess.forRole(
+              organizationId: 'organization-1',
+              role: OrganizationRole.admin,
+            ),
+            organizationAdministrationService: organizationService,
+            customerDirectoryService: customerService,
+            onAccessChanged: () async {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Организация').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Заказчики'));
+    await tester.pumpAndSettle();
+
+    final customerFields = find.descendant(
+      of: find.byKey(const ValueKey('customer-draft-row')),
+      matching: find.byType(TextField),
+    );
+    await tester.enterText(
+      customerFields.at(0),
+      'C-0002 — VESNA-CLIENT-OTHER',
+    );
+    await tester.enterText(customerFields.at(1), 'sergey@example.com');
+    await tester.enterText(customerFields.at(2), 'vesna_customer_test3');
+    await tester.enterText(customerFields.at(3), 'Сергей');
+    await tester.tap(find.byKey(const ValueKey('customer-draft-actions')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Пригласить представителя'));
+    await tester.pumpAndSettle();
+
+    expect(customerService.savedCustomer, isNull);
+    expect(organizationService.lastInvitation?.customerId, 'customer-2');
   });
 
   testWidgets('shows one customer row for each representative', (tester) async {

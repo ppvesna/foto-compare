@@ -205,9 +205,14 @@ to be selected without turning “manager” into an organization role.
 Migration `021` exposes every active or pending representative of a customer. The
 directory renders one row per representative while keeping the customer as a single
 entity; customer-detail updates no longer replace existing representative links.
+The existing-customer row exposes a direct add-representative action. In that mode the
+customer identity is fixed, and pasted display labels are matched back to an existing
+customer so that a representative invitation cannot create a duplicate directory entry.
 Migration `022` synchronizes those links into active confirmed production jobs. Job
 assignment and customer publication remain separate: a customer participant can read
 the job only while its explicit customer-access state is `shared`.
+Migration `023` gives Pro separate server-enforced pools of 20 internal team seats and
+20 customer-representative seats. Enterprise keeps both pools unlimited.
 
 ### inspection
 

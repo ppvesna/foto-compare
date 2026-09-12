@@ -16,7 +16,12 @@ enum ProductCapability {
   collaboration,
 }
 
-enum UsageLimit { checksPerDay, savedReferences, organizationSeats }
+enum UsageLimit {
+  checksPerDay,
+  savedReferences,
+  organizationSeats,
+  customerRepresentativeSeats,
+}
 
 class EntitlementSnapshot {
   final PlanTier plan;
@@ -58,6 +63,7 @@ class EntitlementSnapshot {
             UsageLimit.checksPerDay: 10,
             UsageLimit.savedReferences: 3,
             UsageLimit.organizationSeats: 1,
+            UsageLimit.customerRepresentativeSeats: 0,
           },
         );
       case PlanTier.pro:
@@ -79,7 +85,8 @@ class EntitlementSnapshot {
           limits: {
             UsageLimit.checksPerDay: 500,
             UsageLimit.savedReferences: 50,
-            UsageLimit.organizationSeats: 5,
+            UsageLimit.organizationSeats: 20,
+            UsageLimit.customerRepresentativeSeats: 20,
           },
         );
       case PlanTier.enterprise:
@@ -102,6 +109,7 @@ class EntitlementSnapshot {
             UsageLimit.checksPerDay: null,
             UsageLimit.savedReferences: null,
             UsageLimit.organizationSeats: null,
+            UsageLimit.customerRepresentativeSeats: null,
           },
         );
     }
@@ -127,6 +135,7 @@ class EntitlementSnapshot {
         UsageLimit.checksPerDay: null,
         UsageLimit.savedReferences: null,
         UsageLimit.organizationSeats: null,
+        UsageLimit.customerRepresentativeSeats: null,
       },
       legacyFallback: true,
     );

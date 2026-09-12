@@ -24,6 +24,8 @@ function invitationError(error: unknown) {
   } else if (lower.includes("invitation_user_already_member") ||
       (lower.includes("already") && lower.includes("organization"))) {
     code = "already_member";
+  } else if (lower.includes("invitation_customer_seat_limit")) {
+    code = "customer_seat_limit";
   } else if (lower.includes("invitation_seat_limit") ||
       (lower.includes("seat") && lower.includes("limit"))) {
     code = "seat_limit";

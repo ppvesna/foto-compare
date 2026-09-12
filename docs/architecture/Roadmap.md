@@ -32,6 +32,8 @@ Rule: every step must preserve the working application and be independently reve
   text messaging has passed a two-account test.
 - Migration `019` provides server-owned test prices and assignment-backed entitlement
   snapshots. Real payment processing remains out of scope.
+- Migration `023` separates internal team and customer-representative seat limits;
+  the test Pro plan currently uses 20 seats for each category.
 - The `vesna-test` employee and customer job sharing/revocation gate has passed. The
   next release task is to audit remote deployment state and stabilize the branch.
 

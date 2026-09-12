@@ -644,6 +644,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final referencesLimit =
         widget.entitlements.limit(UsageLimit.savedReferences);
     final seatsLimit = widget.entitlements.limit(UsageLimit.organizationSeats);
+    final customerSeatsLimit =
+        widget.entitlements.limit(UsageLimit.customerRepresentativeSeats);
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       _settingsPanel(
         title: 'Текущий доступ',
@@ -689,10 +691,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
             'Эталонов',
             referencesLimit == null ? 'без ограничения' : '$referencesLimit',
           ),
-          _infoRow(
-            'Мест в группе',
-            seatsLimit == null ? 'без ограничения' : '$seatsLimit',
-          ),
+          if (widget.organizationAccess.organizationId != null) ...[
+            _infoRow(
+              'Мест в команде',
+              seatsLimit == null ? 'без ограничения' : '$seatsLimit',
+            ),
+            _infoRow(
+              'Представителей заказчиков',
+              customerSeatsLimit == null
+                  ? 'без ограничения'
+                  : '$customerSeatsLimit',
+            ),
+          ] else
+            _infoRow(
+              'Мест в группе',
+              seatsLimit == null ? 'без ограничения' : '$seatsLimit',
+            ),
           if (_canManageBilling)
             XpBtn(
               label: 'Открыть тариф и оплату',
@@ -1255,13 +1269,38 @@ class _SettingsScreenState extends State<SettingsScreen> {
       );
     }
 
-    final activeParticipants = _organizationParticipants
-        .where((participant) => !participant.isPending)
+    final activeTeamParticipants = _organizationParticipants
+        .where(
+          (participant) =>
+              !participant.isPending &&
+              participant.role != OrganizationRole.customer,
+        )
         .length;
-    final pendingParticipants = _organizationParticipants
-        .where((participant) => participant.isPending)
+    final pendingTeamParticipants = _organizationParticipants
+        .where(
+          (participant) =>
+              participant.isPending &&
+              participant.role != OrganizationRole.customer,
+        )
         .length;
-    final seatLimit = widget.entitlements.limit(UsageLimit.organizationSeats);
+    final activeCustomerParticipants = _organizationParticipants
+        .where(
+          (participant) =>
+              !participant.isPending &&
+              participant.role == OrganizationRole.customer,
+        )
+        .length;
+    final pendingCustomerParticipants = _organizationParticipants
+        .where(
+          (participant) =>
+              participant.isPending &&
+              participant.role == OrganizationRole.customer,
+        )
+        .length;
+    final teamSeatLimit =
+        widget.entitlements.limit(UsageLimit.organizationSeats);
+    final customerSeatLimit =
+        widget.entitlements.limit(UsageLimit.customerRepresentativeSeats);
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       _settingsPanel(
         title: 'Организация',
@@ -1271,10 +1310,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _infoRow('ID', access.organizationId ?? 'не определён'),
           _infoRow('Моя роль', access.role.label),
           _infoRow(
-            'Места',
-            seatLimit == null
-                ? '$activeParticipants активно, $pendingParticipants ожидают'
-                : '$activeParticipants активно, $pendingParticipants ожидают из $seatLimit',
+            'Команда',
+            teamSeatLimit == null
+                ? '$activeTeamParticipants активно, $pendingTeamParticipants ожидают'
+                : '$activeTeamParticipants активно, $pendingTeamParticipants ожидают из $teamSeatLimit',
+          ),
+          _infoRow(
+            'Представители',
+            customerSeatLimit == null
+                ? '$activeCustomerParticipants активно, $pendingCustomerParticipants ожидают'
+                : '$activeCustomerParticipants активно, $pendingCustomerParticipants ожидают из $customerSeatLimit',
           ),
           _notePanel(
             access.role == OrganizationRole.owner
@@ -1724,9 +1769,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 8),
             ],
             _notePanel(
-              'Заполните первую строку и выберите действие в меню ⋮. '
-              'Код присвоится автоматически. Для нескольких представителей '
-              'добавьте несколько строк с тем же заказчиком.',
+              'Первая строка создаёт нового заказчика. Чтобы добавить человека '
+              'к существующему заказчику, нажмите «Добавить представителя» в '
+              'его строке или выберите это действие в меню ⋮. Код присвоится '
+              'автоматически.',
             ),
             Align(
               alignment: Alignment.centerRight,
@@ -1887,6 +1933,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _customerDraftRow(
     List<OrganizationParticipant> managerCandidates,
   ) {
+    final representativeMode =
+        _editingCustomerId != null && _customerDraftForRepresentative;
+    final selectedManager = managerCandidates
+        .where(
+            (participant) => participant.userId == _selectedCustomerManagerId)
+        .firstOrNull;
     return Container(
       key: const ValueKey('customer-draft-row'),
       decoration: const BoxDecoration(
@@ -1895,29 +1947,46 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       child: Row(
         children: [
-          _organizationTableInput(
-            controller: _customerNameCtrl,
-            hint: 'заказчик',
-            flex: 2,
-            enabled: !_customerBusy,
-          ),
-          Expanded(
-            flex: 2,
-            child: Container(
-              height: 56,
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 7),
-              decoration: const BoxDecoration(
-                border: Border(right: BorderSide(color: Color(0xFFC9E2F0))),
-              ),
-              child: _participantDropdown(
-                label: 'Ответственный',
-                value: _selectedCustomerManagerId,
-                participants: managerCandidates,
-                onChanged: (value) =>
-                    setState(() => _selectedCustomerManagerId = value),
+          if (representativeMode)
+            _customerTableCell(
+              '${_customerNameCtrl.text}\n${_customerCodeCtrl.text}',
+              flex: 2,
+              bold: true,
+              draft: true,
+            )
+          else
+            _organizationTableInput(
+              controller: _customerNameCtrl,
+              hint: 'название нового заказчика',
+              flex: 2,
+              enabled: !_customerBusy,
+            ),
+          if (representativeMode)
+            _customerTableCell(
+              selectedManager == null
+                  ? 'не назначен'
+                  : _participantLabel(selectedManager),
+              flex: 2,
+              draft: true,
+            )
+          else
+            Expanded(
+              flex: 2,
+              child: Container(
+                height: 56,
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 7),
+                decoration: const BoxDecoration(
+                  border: Border(right: BorderSide(color: Color(0xFFC9E2F0))),
+                ),
+                child: _participantDropdown(
+                  label: 'Ответственный',
+                  value: _selectedCustomerManagerId,
+                  participants: managerCandidates,
+                  onChanged: (value) =>
+                      setState(() => _selectedCustomerManagerId = value),
+                ),
               ),
             ),
-          ),
           _organizationTableInput(
             controller: _customerRepresentativeEmailCtrl,
             hint: 'почта',
@@ -1937,7 +2006,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
             enabled: !_customerBusy,
           ),
           _customerTableCell(
-            _editingCustomerId == null ? 'новый' : 'изменение',
+            _editingCustomerId == null
+                ? 'новый заказчик'
+                : representativeMode
+                    ? 'новый представитель'
+                    : 'изменение',
             flex: 1,
             draft: true,
           ),
@@ -2032,13 +2105,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
               : customer.primaryManagerNickname,
           flex: 2,
         ),
-        _customerTableCell(representative?.email ?? '—', flex: 2),
+        if (representative == null && customer.active)
+          _customerAddRepresentativeCell(customer)
+        else
+          _customerTableCell(representative?.email ?? '—', flex: 2),
         _customerTableCell(representative?.nickname ?? '—', flex: 1),
         _customerTableCell(representative?.displayName ?? '—', flex: 2),
         _customerTableCell(status, flex: 1),
         SizedBox(
           width: 48,
           child: PopupMenuButton<_CustomerAction>(
+            key: ValueKey('customer-actions-${customer.id}'),
             tooltip: 'Действия с заказчиком',
             enabled: !_customerBusy,
             icon: const Icon(Icons.more_vert),
@@ -2119,6 +2196,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
             height: 1.2,
             fontWeight: header || bold ? FontWeight.w900 : FontWeight.normal,
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _customerAddRepresentativeCell(OrganizationCustomer customer) {
+    return Expanded(
+      flex: 2,
+      child: Container(
+        height: 48,
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        decoration: const BoxDecoration(
+          border: Border(right: BorderSide(color: Color(0xFFC9E2F0))),
+        ),
+        child: TextButton.icon(
+          key: ValueKey('add-representative-${customer.id}'),
+          onPressed: _customerBusy
+              ? null
+              : () => _prepareCustomerRepresentative(customer),
+          icon: const Icon(Icons.person_add_alt_1_outlined, size: 16),
+          label: const Text('Добавить представителя'),
         ),
       ),
     );
@@ -2291,16 +2389,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
     }
 
-    final normalizedName = name.toLowerCase();
-    OrganizationCustomer? existingCustomer;
-    for (final customer in _organizationCustomers) {
-      if (customer.id == _editingCustomerId ||
-          (_editingCustomerId == null &&
-              customer.name.trim().toLowerCase() == normalizedName)) {
-        existingCustomer = customer;
-        break;
-      }
-    }
+    final existingCustomer = _existingCustomerForDraft(name);
     final targetCustomerId = existingCustomer?.id ?? _editingCustomerId;
     final managerUserId =
         _selectedCustomerManagerId ?? existingCustomer?.primaryManagerUserId;
@@ -2400,6 +2489,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (number != null && number > largest) largest = number;
     }
     return 'C-${(largest + 1).toString().padLeft(4, '0')}';
+  }
+
+  OrganizationCustomer? _existingCustomerForDraft(String rawName) {
+    for (final customer in _organizationCustomers) {
+      if (customer.id == _editingCustomerId) return customer;
+    }
+    if (_editingCustomerId != null) return null;
+
+    final normalized = rawName.trim().toLowerCase();
+    final displayPattern = RegExp(
+      r'^(c-\d+)\s*[·•—–-]\s*(.+)$',
+      caseSensitive: false,
+    );
+    final displayMatch = displayPattern.firstMatch(normalized);
+    for (final customer in _organizationCustomers) {
+      if (customer.name.trim().toLowerCase() == normalized ||
+          customer.displayLabel.trim().toLowerCase() == normalized) {
+        return customer;
+      }
+      if (displayMatch != null &&
+          customer.code.toLowerCase() == displayMatch.group(1) &&
+          customer.name.trim().toLowerCase() == displayMatch.group(2)?.trim()) {
+        return customer;
+      }
+    }
+    return null;
   }
 
   void _editCustomer(OrganizationCustomer customer) {
@@ -3232,7 +3347,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         case 'already_member':
           return 'Этот пользователь уже состоит в организации.';
         case 'seat_limit':
-          return 'Достигнут лимит участников текущего плана.';
+          return 'Достигнут лимит внутренних участников текущего плана.';
+        case 'customer_seat_limit':
+          return 'Достигнут лимит представителей заказчиков текущего плана.';
         case 'access_denied':
           return 'Недостаточно прав для управления участниками.';
         case 'invalid_email':

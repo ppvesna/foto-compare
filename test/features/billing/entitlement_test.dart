@@ -18,6 +18,8 @@ void main() {
     expect(access.allows(ProductCapability.ocr), isTrue);
     expect(access.allows(ProductCapability.cloudSync), isTrue);
     expect(access.limit(UsageLimit.savedReferences), 50);
+    expect(access.limit(UsageLimit.organizationSeats), 20);
+    expect(access.limit(UsageLimit.customerRepresentativeSeats), 20);
   });
 
   test('organization plan remains separate from the personal plan', () {
@@ -42,6 +44,7 @@ void main() {
 
     expect(access.limit(UsageLimit.checksPerDay), isNull);
     expect(access.limit(UsageLimit.organizationSeats), isNull);
+    expect(access.limit(UsageLimit.customerRepresentativeSeats), isNull);
   });
 
   test('expired paid subscription records the fallback to Free', () {
