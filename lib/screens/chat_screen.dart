@@ -43,6 +43,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Uint8List? _selectedCloudPreview;
   bool _cloudProtocolsLoading = false;
   String? _cloudProtocolsError;
+  Future<void>? _cloudProtocolsLoadFuture;
   List<ChatThread> _serverThreads = const [];
   List<ChatMessage> _serverMessages = const [];
   bool _serverChatsLoading = false;
@@ -214,9 +215,24 @@ class _ChatScreenState extends State<ChatScreen> {
     super.dispose();
   }
 
-  Future<void> _loadCloudProtocols() async {
+  Future<void> _loadCloudProtocols() {
     final repository = widget.protocolCloudRepository;
-    if (repository == null || _cloudProtocolsLoading) return;
+    if (repository == null) return Future.value();
+    final activeLoad = _cloudProtocolsLoadFuture;
+    if (activeLoad != null) return activeLoad;
+
+    final load = _loadCloudProtocolsOnce(repository);
+    _cloudProtocolsLoadFuture = load;
+    return load.whenComplete(() {
+      if (identical(_cloudProtocolsLoadFuture, load)) {
+        _cloudProtocolsLoadFuture = null;
+      }
+    });
+  }
+
+  Future<void> _loadCloudProtocolsOnce(
+    ProtocolCloudRepository repository,
+  ) async {
     setState(() {
       _cloudProtocolsLoading = true;
       _cloudProtocolsError = null;
@@ -1379,7 +1395,9 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  void _showProtocolDetails() {
+  Future<void> _showProtocolDetails() async {
+    await _loadCloudProtocols();
+    if (!mounted) return;
     final record = _selectedCloudProtocol;
     if (record == null) {
       xpDlg(

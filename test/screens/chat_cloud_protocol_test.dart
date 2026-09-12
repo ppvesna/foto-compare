@@ -68,4 +68,52 @@ void main() {
     expect(find.textContaining('97.2%'), findsWidgets);
     expect(find.byType(Image), findsWidgets);
   });
+
+  testWidgets('attach action refreshes protocols created after chat opened',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1024, 430));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final repository = MockProtocolCloudRepository();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChatScreen(
+            email: 'admin@example.com',
+            displayName: 'Анна',
+            nickname: 'admin',
+            organizationName: 'Vesna',
+            protocolCloudRepository: repository,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await repository.saveProtocol(
+      CheckProtocol(
+        id: 'protocol-created-later',
+        createdAt: DateTime.utc(2026, 9, 12),
+        jobId: 'job-1',
+        jobNumber: 'VESNA-CHAT-TEST-001',
+        score: 98.4,
+        verdict: 'В норме',
+        refSize: '100×100',
+        cmpSize: '100×100',
+        labId: 'later123',
+        sampleLabel: 'Отпечаток 2',
+        labMatch: 99,
+        stages: const [],
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('chat-attach-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Протокол проверки'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('VESNA-CHAT-TEST-001'), findsWidgets);
+    expect(find.textContaining('98.4%'), findsWidgets);
+    expect(find.text('Доступных облачных протоколов пока нет.'), findsNothing);
+  });
 }

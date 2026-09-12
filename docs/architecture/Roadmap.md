@@ -232,7 +232,10 @@ step using the existing production-job access function and exposes available pro
 through chat attachments. Migration `016` adds the first secure text-chat slice and
 Realtime updates; owner/employee messaging has passed the first two-account test.
 Migration `017` adds manager-controlled customer release for one job at a time.
-Customer visibility and revocation still require a dedicated two-account server test.
+Customer visibility, revocation, preserved history, Realtime messaging, and
+job-scoped cloud-protocol isolation have passed the dedicated multi-account manual
+test with two customers. The chat action now refreshes its protocol list before
+opening, including protocols created after the screen was opened.
 Google OAuth and Drive remain a separate provider connection.
 
 ### Step 20. Add an outbox

@@ -391,6 +391,11 @@ protocol rows and preview objects. New organization previews use
 `organizations/<organization>/jobs/<job>/...`; owner and admin can read every
 organization job, while employees and customers receive only assigned jobs. Chat
 attachments read through `ProtocolCloudRepository`, never around RLS.
+The multi-account manual test confirmed this boundary: an administrator and a
+representative of the assigned customer opened the first job's protocol and preview,
+while a representative of another customer could see only his own second job. The
+chat action refreshes the accessible protocol list before opening it, so a protocol
+created after the chat screen opened no longer requires a full page reload.
 
 Migration `016` secures the existing chat tables, creates default personal and team
 threads, and provides job-scoped threads through `can_view_production_job_v1`.
