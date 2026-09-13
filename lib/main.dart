@@ -187,6 +187,7 @@ class _MainShellState extends State<MainShell> {
   EntitlementSnapshot _entitlements = EntitlementSnapshot.legacyCompatible();
   OrganizationAccess _organizationAccess = OrganizationAccess.legacyPersonal();
   AccountProfile? _accountProfile;
+  bool _accountProfileResolved = false;
   CloudStorage? _cloudStorage;
   ProtocolCloudRepository? _protocolCloudRepository;
   ChatRepository? _chatRepository;
@@ -235,6 +236,7 @@ class _MainShellState extends State<MainShell> {
       _entitlements = entitlements;
       _organizationAccess = organizationAccess;
       _accountProfile = accountProfile;
+      _accountProfileResolved = true;
       _cloudStorage = cloudStorage;
       _protocolCloudRepository = currentUser == null || cloudStorage == null
           ? null
@@ -413,21 +415,27 @@ class _MainShellState extends State<MainShell> {
     final user = Supabase.instance.client.auth.currentUser;
     final email = user?.email ?? '';
     final metadata = user?.userMetadata ?? {};
-    final displayName = _accountProfile?.displayName.trim() ??
-        (metadata['display_name'] as String?)?.trim() ??
-        '';
-    final nickname = _accountProfile?.nickname.trim() ??
-        (metadata['nickname'] as String?)?.trim() ??
-        '';
+    final displayName = !_accountProfileResolved
+        ? 'Загрузка…'
+        : _accountProfile?.displayName.trim() ??
+            (metadata['display_name'] as String?)?.trim() ??
+            '';
+    final nickname = !_accountProfileResolved
+        ? ''
+        : _accountProfile?.nickname.trim() ??
+            (metadata['nickname'] as String?)?.trim() ??
+            '';
     final profileOrganizationName =
         (metadata['organization_name'] as String?)?.trim() ?? '';
     final organizationName =
         _organizationAccess.organizationName ?? profileOrganizationName;
-    final userLabel = nickname.isNotEmpty
-        ? nickname
-        : displayName.isNotEmpty
-            ? displayName
-            : 'Пользователь';
+    final userLabel = !_accountProfileResolved
+        ? 'Загрузка…'
+        : nickname.isNotEmpty
+            ? nickname
+            : displayName.isNotEmpty
+                ? displayName
+                : 'Пользователь';
     final capabilities = _workspaceCapabilityLabels().join(' · ');
     final screens = [
       HomeScreen(
