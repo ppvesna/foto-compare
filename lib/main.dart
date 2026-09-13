@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'capabilities/storage/storage.dart';
 import 'config/app_config.dart';
@@ -10,6 +11,7 @@ import 'screens/compare_screen.dart';
 import 'screens/chat_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/invitation_setup_screen.dart';
+import 'screens/password_recovery_screen.dart';
 import 'screens/settings_screen.dart';
 import 'features/auth/auth.dart';
 import 'features/billing/billing.dart';
@@ -17,9 +19,12 @@ import 'features/chat/chat.dart';
 import 'features/organization/organization.dart';
 import 'features/protocols/protocols.dart';
 import 'services/sync_service.dart';
+import 'services/browser_auth_url.dart';
 import 'widgets/xp_widgets.dart';
 
 String? _startupAuthError;
+bool _startupPasswordRecovery = false;
+const _passwordRecoveryPendingKey = 'password_recovery_pending';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -48,17 +53,34 @@ void main() async {
 
 Future<void> _recoverWebAuthCallback() async {
   if (!kIsWeb) return;
+  final preferences = await SharedPreferences.getInstance();
   final uri = Uri.base;
   final fragment = uri.fragment;
+  final isRecovery = isPasswordRecoveryCallback(uri);
+  if (isRecovery) {
+    _startupPasswordRecovery = true;
+    await preferences.setBool(_passwordRecoveryPendingKey, true);
+  } else if (Supabase.instance.client.auth.currentSession != null &&
+      (preferences.getBool(_passwordRecoveryPendingKey) ?? false)) {
+    _startupPasswordRecovery = true;
+  } else if (Supabase.instance.client.auth.currentSession == null) {
+    await preferences.remove(_passwordRecoveryPendingKey);
+  }
   final isCallback = fragment.contains('access_token=') ||
       fragment.contains('error_description=');
-  if (!isCallback || Supabase.instance.client.auth.currentSession != null) {
+  if (!isCallback ||
+      (Supabase.instance.client.auth.currentSession != null && !isRecovery)) {
     return;
   }
   try {
-    await Supabase.instance.client.auth.getSessionFromUrl(uri);
+    final response = await Supabase.instance.client.auth.getSessionFromUrl(uri);
+    if (response.redirectType == 'recovery') {
+      _startupPasswordRecovery = true;
+    }
   } catch (error) {
     _startupAuthError = error.toString();
+    _startupPasswordRecovery = false;
+    await preferences.remove(_passwordRecoveryPendingKey);
   }
 }
 
@@ -85,11 +107,18 @@ class AuthGate extends StatefulWidget {
 }
 
 class _AuthGateState extends State<AuthGate> {
+  late bool _passwordRecovery;
+
   @override
   void initState() {
     super.initState();
+    _passwordRecovery = _startupPasswordRecovery;
     // Слушаем изменения авторизации
     Supabase.instance.client.auth.onAuthStateChange.listen((data) {
+      if (data.event == AuthChangeEvent.passwordRecovery) {
+        _passwordRecovery = true;
+        _startupPasswordRecovery = true;
+      }
       if (mounted) setState(() {});
       // Запускаем/останавливаем синхронизацию при входе/выходе
       if (data.session != null) {
@@ -104,13 +133,44 @@ class _AuthGateState extends State<AuthGate> {
     }
   }
 
+  Future<void> _finishPasswordRecovery() async {
+    _passwordRecovery = false;
+    _startupPasswordRecovery = false;
+    _startupAuthError = null;
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.remove(_passwordRecoveryPendingKey);
+    clearAuthCallbackUrl();
+    await Supabase.instance.client.auth.signOut(scope: SignOutScope.local);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _dismissAuthLinkError() async {
+    _startupAuthError = null;
+    _startupPasswordRecovery = false;
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.remove(_passwordRecoveryPendingKey);
+    clearAuthCallbackUrl();
+    if (mounted) setState(() {});
+  }
+
   @override
   Widget build(BuildContext context) {
     final session = Supabase.instance.client.auth.currentSession;
     if (session == null && _startupAuthError != null) {
-      return _AuthLinkError(error: _startupAuthError!);
+      return _AuthLinkError(
+        error: _startupAuthError!,
+        onReturnToLogin: _dismissAuthLinkError,
+      );
     }
     if (session != null) {
+      if (_passwordRecovery) {
+        return PasswordRecoveryScreen(
+          service: SupabasePasswordRecoveryService(
+            Supabase.instance.client,
+          ),
+          onCompleted: _finishPasswordRecovery,
+        );
+      }
       final setupFlag = Supabase.instance.client.auth.currentUser
           ?.userMetadata?['organization_invite_setup'];
       if (setupFlag == true || setupFlag == 'true') {
@@ -128,8 +188,12 @@ class _AuthGateState extends State<AuthGate> {
 
 class _AuthLinkError extends StatelessWidget {
   final String error;
+  final Future<void> Function() onReturnToLogin;
 
-  const _AuthLinkError({required this.error});
+  const _AuthLinkError({
+    required this.error,
+    required this.onReturnToLogin,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -150,13 +214,13 @@ class _AuthLinkError extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                'Ссылка приглашения не сработала',
+                'Ссылка не сработала',
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
               ),
               const SizedBox(height: 10),
               const Text(
                 'Ссылка могла устареть или уже использоваться. '
-                'Попросите владельца повторно отправить приглашение.',
+                'Вернитесь ко входу и запросите новое письмо или приглашение.',
               ),
               if (kDebugMode) ...[
                 const SizedBox(height: 12),
@@ -165,6 +229,14 @@ class _AuthLinkError extends StatelessWidget {
                   style: const TextStyle(fontSize: 11, color: Colors.black54),
                 ),
               ],
+              const SizedBox(height: 18),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: onReturnToLogin,
+                  child: const Text('Вернуться ко входу'),
+                ),
+              ),
             ],
           ),
         ),
@@ -213,8 +285,8 @@ class _MainShellState extends State<MainShell> {
     await _ensureCurrentUserProfile(client);
     AccountProfile? accountProfile;
     try {
-      accountProfile = await SupabaseAccountProfileService(client)
-          .loadCurrentProfile();
+      accountProfile =
+          await SupabaseAccountProfileService(client).loadCurrentProfile();
     } catch (_) {
       // Auth metadata remains a compatibility fallback during staged rollout.
     }

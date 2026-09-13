@@ -163,6 +163,10 @@ uniqueness remains enforced by `user_profiles`; the adapter also refreshes Supab
 metadata so the application shell reflects a saved profile without a new sign-in. The
 same adapter changes the authenticated user's password only after verifying the current
 password; password values are never stored in the profile model.
+`PasswordRecoveryService` separates email reset requests and recovery-session password
+updates from the login screen. Its Supabase adapter normalizes email, keeps account
+existence private, and exposes typed failures; the web shell preserves recovery intent
+across reloads until the user returns to login.
 
 ### organization
 

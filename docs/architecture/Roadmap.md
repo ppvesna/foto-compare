@@ -105,8 +105,10 @@ Expose the current Supabase authentication through `AuthService`. Existing scree
 continue to use their current UI while authentication details move behind the adapter.
 
 Progress: current-profile loading and editing are behind `AccountProfileService`, with
-a Supabase adapter and mock. Sign-in, registration, recovery, and session observation
-still use the existing application shell and will move only when their workflow changes.
+a Supabase adapter and mock. Forgotten-password requests and completion are behind
+`PasswordRecoveryService`, with Supabase and mock adapters. Sign-in, registration, and
+session observation still use the existing application shell and will move only when
+their workflow changes.
 
 ### Step 9. Introduce organization context
 

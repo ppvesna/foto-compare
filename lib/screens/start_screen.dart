@@ -2,11 +2,15 @@ import 'package:flutter/material.dart';
 import 'dart:math';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../features/auth/auth.dart';
+import '../services/browser_auth_url.dart';
 import '../widgets/auth_text_field.dart';
 import '../widgets/xp_widgets.dart';
 
 class StartScreen extends StatefulWidget {
-  const StartScreen({super.key});
+  final PasswordRecoveryService? passwordRecoveryService;
+
+  const StartScreen({super.key, this.passwordRecoveryService});
 
   @override
   State<StartScreen> createState() => _StartScreenState();
@@ -26,6 +30,10 @@ class _StartScreenState extends State<StartScreen>
   final _nickCtrl = TextEditingController();
   final _orgCtrl = TextEditingController();
   final _pass2Ctrl = TextEditingController();
+
+  PasswordRecoveryService get _passwordRecoveryService =>
+      widget.passwordRecoveryService ??
+      SupabasePasswordRecoveryService(Supabase.instance.client);
 
   @override
   void initState() {
@@ -322,11 +330,7 @@ class _StartScreenState extends State<StartScreen>
               const Text('Запомнить меня', style: TextStyle(fontSize: 12)),
             ]),
             TextButton(
-              onPressed: () => xpDlg(
-                context,
-                'Восстановление пароля',
-                'Введите email для сброса пароля',
-              ),
+              onPressed: _openPasswordRecovery,
               child: const Text('Забыли пароль?'),
             ),
           ],
@@ -457,6 +461,26 @@ class _StartScreenState extends State<StartScreen>
 
   bool _looksLikeEmail(String value) {
     return value.contains('@');
+  }
+
+  Future<void> _openPasswordRecovery() async {
+    final enteredIdentity = _emailCtrl.text.trim();
+    final sent = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => _ForgotPasswordDialog(
+        service: _passwordRecoveryService,
+        initialEmail: _looksLikeEmail(enteredIdentity) ? enteredIdentity : '',
+        redirectTo: passwordRecoveryRedirectUrl(),
+      ),
+    );
+    if (sent == true && mounted) {
+      await xpDlg(
+        context,
+        'Проверьте почту',
+        'Если аккаунт с таким email существует, письмо отправлено.',
+      );
+    }
   }
 
   Future<void> _saveLocalNickEmail(String nickname, String email) async {
@@ -675,6 +699,128 @@ class _StartScreenState extends State<StartScreen>
       return 'Нет соединения с сервером авторизации. Проверьте интернет и повторите вход.';
     }
     return text;
+  }
+}
+
+class _ForgotPasswordDialog extends StatefulWidget {
+  final PasswordRecoveryService service;
+  final String initialEmail;
+  final String? redirectTo;
+
+  const _ForgotPasswordDialog({
+    required this.service,
+    required this.initialEmail,
+    required this.redirectTo,
+  });
+
+  @override
+  State<_ForgotPasswordDialog> createState() => _ForgotPasswordDialogState();
+}
+
+class _ForgotPasswordDialogState extends State<_ForgotPasswordDialog> {
+  late final TextEditingController _emailController;
+  bool _sending = false;
+  String? _errorText;
+
+  @override
+  void initState() {
+    super.initState();
+    _emailController = TextEditingController(text: widget.initialEmail);
+  }
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final email = _emailController.text.trim().toLowerCase();
+    if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email)) {
+      setState(() => _errorText = 'Введите корректный email.');
+      return;
+    }
+    setState(() {
+      _sending = true;
+      _errorText = null;
+    });
+    try {
+      await widget.service.requestReset(
+        email: email,
+        redirectTo: widget.redirectTo,
+      );
+      if (mounted) Navigator.pop(context, true);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _sending = false;
+        _errorText = error is PasswordRecoveryException &&
+                error.code == 'rate_limited'
+            ? error.message
+            : 'Не удалось отправить письмо. Проверьте подключение и повторите.';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Восстановление пароля'),
+      content: SizedBox(
+        width: 420,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'Введите email аккаунта. Мы отправим ссылку для создания нового пароля.',
+              style: TextStyle(fontSize: 13, color: Colors.black54),
+            ),
+            const SizedBox(height: 14),
+            AuthTextField(
+              key: const ValueKey('password-recovery-email'),
+              label: 'Email',
+              hint: 'user@example.com',
+              controller: _emailController,
+              icon: Icons.mail_outline,
+              enabled: !_sending,
+              keyboardType: TextInputType.emailAddress,
+              textInputAction: TextInputAction.done,
+              autofillHints: const [AutofillHints.email],
+              onChanged: (_) {
+                if (_errorText != null) setState(() => _errorText = null);
+              },
+              onSubmitted: (_) {
+                if (!_sending) _submit();
+              },
+            ),
+            if (_errorText != null) ...[
+              const SizedBox(height: 10),
+              Text(
+                _errorText!,
+                key: const ValueKey('password-recovery-request-error'),
+                style: const TextStyle(
+                  color: Color(0xFFB91C1C),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _sending ? null : () => Navigator.pop(context, false),
+          child: const Text('Отменить'),
+        ),
+        FilledButton(
+          key: const ValueKey('password-recovery-request-submit'),
+          onPressed: _sending ? null : _submit,
+          child: Text(_sending ? 'Отправляем…' : 'Отправить ссылку'),
+        ),
+      ],
+    );
   }
 }
 

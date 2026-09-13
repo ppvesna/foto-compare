@@ -23,7 +23,9 @@ The implemented boundaries include `lib/features/auth`, `lib/features/protocols`
 and production workflow contracts, plus the initial `capabilities/storage` contract
 and local settings adapter. The auth boundary currently owns editable current-profile
 data; sign-in, registration, and invitation completion now share an adaptive form UI
-with explicit password visibility controls.
+with explicit password visibility controls. Forgotten-password recovery is isolated
+behind `PasswordRecoveryService`; the web shell consumes the Supabase recovery callback
+and retains its intent across a reload without storing password values.
 Entitlements and organization permissions now reach the current application shell as
 typed snapshots. Existing storage keys, file names, JSON, and current user access remain
 compatible. The current test environment supports organization access, invitations,
@@ -163,6 +165,9 @@ as server functions, not implemented in the Flutter client.
 Authenticated users change their password through the auth adapter only after the
 current password has been verified by a fresh sign-in. Password values never enter the
 profile table, application logs, repository, or organization administration model.
+Forgotten-password recovery is a separate email flow. It returns the same request
+message whether or not an account exists, accepts only a valid recovery session, and
+clears both the callback URL and local recovery marker before returning to login.
 
 Migration `012` introduces the first job-scoped server model: an organization customer
 directory, customer-to-user and primary-manager links, unconfirmed customer requests,
