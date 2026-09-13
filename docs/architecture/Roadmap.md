@@ -29,8 +29,8 @@ Rule: every step must preserve the working application and be independently reve
   UI are present. Supabase Storage, bounded protocol previews, and job-scoped access are
   connected; originals remain device-only and Google Drive remains disconnected.
 - Secure organization/job chat and Supabase Realtime are connected. Owner/employee
-  text messaging has passed a two-account test. Private ordinary attachments are
-  implemented for job chats and await the final two-account manual exchange.
+  text messaging has passed a two-account test. Private images and ordinary files in
+  job chats have passed a two-account upload, preview, and download test.
 - Migration `019` provides server-owned test prices and assignment-backed entitlement
   snapshots. Real payment processing remains out of scope.
 - Migration `023` separates internal team and customer-representative seat limits;
