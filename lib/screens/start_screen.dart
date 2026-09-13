@@ -497,16 +497,29 @@ class _StartScreenState extends State<StartScreen>
     required String nickname,
     required String displayName,
     String organizationName = '',
+    bool overwriteExisting = false,
   }) async {
     await _saveLocalNickEmail(nickname, email);
     try {
-      await Supabase.instance.client.from('user_profiles').upsert({
+      final profile = {
         'user_id': userId,
         'email': email,
         'nickname': _normalizeNick(nickname),
         'display_name': displayName,
         'organization_name': organizationName,
-      });
+      };
+      if (overwriteExisting) {
+        await Supabase.instance.client.from('user_profiles').upsert(profile);
+      } else {
+        final existing = await Supabase.instance.client
+            .from('user_profiles')
+            .select('user_id')
+            .eq('user_id', userId)
+            .maybeSingle();
+        if (existing == null) {
+          await Supabase.instance.client.from('user_profiles').insert(profile);
+        }
+      }
     } catch (_) {
       // Таблица профилей может быть ещё не применена в Supabase.
       // Auth-аккаунт уже создан/выполнен, не блокируем пользователя.
@@ -625,6 +638,7 @@ class _StartScreenState extends State<StartScreen>
           nickname: nick,
           displayName: name,
           organizationName: organization,
+          overwriteExisting: true,
         );
       }
       if (mounted) {
