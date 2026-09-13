@@ -7,4 +7,9 @@ abstract interface class AccountProfileService {
     required String nickname,
     String displayName = '',
   });
+
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  });
 }

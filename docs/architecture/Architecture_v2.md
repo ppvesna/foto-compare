@@ -160,6 +160,9 @@ Nickname authentication is isolated in an unauthenticated Edge Function that acc
 credentials and returns a Supabase session; the nickname-to-email mapping is no longer
 publicly readable. Email delivery and nickname login must be deployed and rate-limited
 as server functions, not implemented in the Flutter client.
+Authenticated users change their password through the auth adapter only after the
+current password has been verified by a fresh sign-in. Password values never enter the
+profile table, application logs, repository, or organization administration model.
 
 Migration `012` introduces the first job-scoped server model: an organization customer
 directory, customer-to-user and primary-manager links, unconfirmed customer requests,

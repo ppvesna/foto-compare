@@ -11,6 +11,7 @@ import '../features/production/production.dart';
 import '../services/calibration_settings_service.dart';
 import '../features/protocols/protocols.dart';
 import '../services/compare_settings_service.dart';
+import '../widgets/auth_text_field.dart';
 import '../widgets/xp_widgets.dart';
 
 enum _TeamDraftAction { invite, clear }
@@ -345,6 +346,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Future<void> _changePassword() async {
+    final changed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _ChangePasswordDialog(
+        accountService: _accountService,
+      ),
+    );
+
+    if (changed == true && mounted) {
+      xpDlg(
+        context,
+        'Пароль изменён',
+        'Новый пароль сохранён. Текущий вход остаётся активным.',
+      );
+    }
+  }
+
   Future<void> _loadCalibrationSettings() async {
     final settings = await CalibrationSettingsService.load();
     if (mounted) setState(() => _calibrationSettings = settings);
@@ -619,60 +638,92 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Widget _accountSection() {
     final email = _accountProfile?.email ?? '';
-    return _settingsPanel(
-      title: 'Аккаунт и организация',
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        _infoRow('Email', email.isEmpty ? 'не указан' : email),
-        const SizedBox(height: 8),
-        TextField(
-          controller: _accountNicknameCtrl,
-          enabled: !_accountProfileLoading && !_accountProfileSaving,
-          autocorrect: false,
-          enableSuggestions: false,
-          decoration: const InputDecoration(
-            labelText: 'Ник',
-            hintText: 'например printer_ivan',
-            helperText: '3–24 символа: латиница, цифры и подчёркивание',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        const SizedBox(height: 10),
-        TextField(
-          controller: _accountDisplayNameCtrl,
-          enabled: !_accountProfileLoading && !_accountProfileSaving,
-          decoration: const InputDecoration(
-            labelText: 'Имя',
-            hintText: 'необязательно',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        const SizedBox(height: 8),
-        XpBtn(
-          label: _accountProfileSaving
-              ? 'Сохранение…'
-              : _accountProfileLoading
-                  ? 'Загрузка…'
-                  : 'Сохранить профиль',
-          primary: true,
-          onPressed: _accountProfileLoading || _accountProfileSaving
-              ? null
-              : _saveAccountProfile,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _settingsPanel(
+          title: 'Аккаунт и организация',
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            _infoRow('Email', email.isEmpty ? 'не указан' : email),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _accountNicknameCtrl,
+              enabled: !_accountProfileLoading && !_accountProfileSaving,
+              autocorrect: false,
+              enableSuggestions: false,
+              decoration: const InputDecoration(
+                labelText: 'Ник',
+                hintText: 'например printer_ivan',
+                helperText: '3–24 символа: латиница, цифры и подчёркивание',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _accountDisplayNameCtrl,
+              enabled: !_accountProfileLoading && !_accountProfileSaving,
+              decoration: const InputDecoration(
+                labelText: 'Имя',
+                hintText: 'необязательно',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            if (widget.entitlements.usesOrganizationPlan)
+              _infoRow('Личный план', widget.entitlements.personalPlan.label),
+            _infoRow(
+              widget.entitlements.usesOrganizationPlan
+                  ? 'Рабочий план'
+                  : 'План',
+              widget.entitlements.plan.label,
+            ),
+            _infoRow('Роль', widget.organizationAccess.role.label),
+            _infoRow(
+              'Организация',
+              widget.organizationAccess.organizationName ??
+                  'личное пространство',
+            ),
+            if (widget.organizationAccess.organizationId != null)
+              _infoRow(
+                'ID организации',
+                widget.organizationAccess.organizationId!,
+              ),
+            const SizedBox(height: 12),
+            XpBtn(
+              label: _accountProfileSaving
+                  ? 'Сохранение…'
+                  : _accountProfileLoading
+                      ? 'Загрузка…'
+                      : 'Сохранить профиль',
+              primary: true,
+              onPressed: _accountProfileLoading || _accountProfileSaving
+                  ? null
+                  : _saveAccountProfile,
+            ),
+          ]),
         ),
         const SizedBox(height: 12),
-        if (widget.entitlements.usesOrganizationPlan)
-          _infoRow('Личный план', widget.entitlements.personalPlan.label),
-        _infoRow(
-          widget.entitlements.usesOrganizationPlan ? 'Рабочий план' : 'План',
-          widget.entitlements.plan.label,
+        _settingsPanel(
+          title: 'Безопасность',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                'Измените пароль текущего аккаунта. Для подтверждения понадобится действующий пароль.',
+                style: TextStyle(fontSize: 12, color: Colors.black54),
+              ),
+              const SizedBox(height: 12),
+              XpBtn(
+                key: const ValueKey('open-password-change'),
+                label: 'Изменить пароль',
+                icon: Icons.lock_reset,
+                onPressed: _changePassword,
+              ),
+            ],
+          ),
         ),
-        _infoRow('Роль', widget.organizationAccess.role.label),
-        _infoRow(
-          'Организация',
-          widget.organizationAccess.organizationName ?? 'личное пространство',
-        ),
-        if (widget.organizationAccess.organizationId != null)
-          _infoRow('ID организации', widget.organizationAccess.organizationId!),
-      ]),
+      ],
     );
   }
 
@@ -4759,6 +4810,181 @@ class _SettingsScreenState extends State<SettingsScreen> {
       headers: const ['Этап', 'Статус', 'Метрика', 'Комментарий'],
       rows:
           p.stages.map((s) => [s.name, s.status, s.metric, s.comment]).toList(),
+    );
+  }
+}
+
+class _ChangePasswordDialog extends StatefulWidget {
+  final AccountProfileService accountService;
+
+  const _ChangePasswordDialog({required this.accountService});
+
+  @override
+  State<_ChangePasswordDialog> createState() => _ChangePasswordDialogState();
+}
+
+class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
+  final _currentPasswordController = TextEditingController();
+  final _newPasswordController = TextEditingController();
+  final _confirmationController = TextEditingController();
+  bool _saving = false;
+  String? _errorText;
+
+  bool get _confirmationStarted => _confirmationController.text.isNotEmpty;
+  bool get _passwordsMatch =>
+      _newPasswordController.text.isNotEmpty &&
+      _newPasswordController.text == _confirmationController.text;
+
+  void _passwordEdited(String _) {
+    if (!mounted || _saving) return;
+    setState(() => _errorText = null);
+  }
+
+  @override
+  void dispose() {
+    _currentPasswordController.dispose();
+    _newPasswordController.dispose();
+    _confirmationController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final currentPassword = _currentPasswordController.text;
+    final newPassword = _newPasswordController.text;
+    final confirmation = _confirmationController.text;
+    String? validationError;
+    if (currentPassword.isEmpty) {
+      validationError = 'Введите текущий пароль.';
+    } else if (newPassword.length < 8) {
+      validationError = 'Новый пароль должен содержать минимум 8 символов.';
+    } else if (newPassword == currentPassword) {
+      validationError = 'Новый пароль должен отличаться от текущего.';
+    } else if (newPassword != confirmation) {
+      validationError = 'Новые пароли не совпадают.';
+    }
+    if (validationError != null) {
+      setState(() => _errorText = validationError);
+      return;
+    }
+
+    setState(() {
+      _saving = true;
+      _errorText = null;
+    });
+    try {
+      await widget.accountService.changePassword(
+        currentPassword: currentPassword,
+        newPassword: newPassword,
+      );
+      if (mounted) Navigator.pop(context, true);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _errorText = error is AccountProfileException
+            ? error.message
+            : 'Не удалось изменить пароль. Проверьте подключение и повторите.';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Изменить пароль'),
+      content: SizedBox(
+        width: 440,
+        child: AutofillGroup(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                'Сначала подтвердите текущий пароль, затем задайте новый.',
+                style: TextStyle(fontSize: 13, color: Colors.black54),
+              ),
+              const SizedBox(height: 14),
+              AuthTextField(
+                label: 'Текущий пароль',
+                hint: 'Введите текущий пароль',
+                controller: _currentPasswordController,
+                icon: Icons.lock_outline,
+                password: true,
+                enabled: !_saving,
+                textInputAction: TextInputAction.next,
+                autofillHints: const [AutofillHints.password],
+                onChanged: _passwordEdited,
+              ),
+              const SizedBox(height: 10),
+              AuthTextField(
+                label: 'Новый пароль',
+                hint: 'Минимум 8 символов',
+                controller: _newPasswordController,
+                icon: Icons.password_outlined,
+                password: true,
+                enabled: !_saving,
+                textInputAction: TextInputAction.next,
+                autofillHints: const [AutofillHints.newPassword],
+                onChanged: _passwordEdited,
+              ),
+              const SizedBox(height: 10),
+              AuthTextField(
+                label: 'Повторите новый пароль',
+                hint: 'Введите новый пароль ещё раз',
+                controller: _confirmationController,
+                icon: Icons.password_outlined,
+                password: true,
+                enabled: !_saving,
+                textInputAction: TextInputAction.done,
+                autofillHints: const [AutofillHints.newPassword],
+                onChanged: _passwordEdited,
+                onSubmitted: (_) {
+                  if (!_saving) _submit();
+                },
+              ),
+              if (_confirmationStarted && _errorText == null) ...[
+                const SizedBox(height: 10),
+                Text(
+                  _passwordsMatch
+                      ? 'Пароли совпадают.'
+                      : 'Пароли пока не совпадают.',
+                  key: const ValueKey('password-match-status'),
+                  style: TextStyle(
+                    color: _passwordsMatch
+                        ? const Color(0xFF15803D)
+                        : const Color(0xFFB45309),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+              if (_errorText != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  _errorText!,
+                  key: const ValueKey('password-change-error'),
+                  style: const TextStyle(
+                    color: Color(0xFFB91C1C),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.pop(context, false),
+          child: const Text('Отменить'),
+        ),
+        FilledButton(
+          key: const ValueKey('password-change-submit'),
+          onPressed: _saving ? null : _submit,
+          child: Text(_saving ? 'Сохранение…' : 'Сохранить пароль'),
+        ),
+      ],
     );
   }
 }

@@ -160,7 +160,9 @@ It does not own payments or feature entitlements.
 Current foundation: `AccountProfileService`, its Supabase adapter, and mock load and
 update the current user's email, nickname, and optional display name. Nickname
 uniqueness remains enforced by `user_profiles`; the adapter also refreshes Supabase Auth
-metadata so the application shell reflects a saved profile without a new sign-in.
+metadata so the application shell reflects a saved profile without a new sign-in. The
+same adapter changes the authenticated user's password only after verifying the current
+password; password values are never stored in the profile model.
 
 ### organization
 

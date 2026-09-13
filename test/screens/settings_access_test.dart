@@ -44,6 +44,7 @@ void main() {
     expect(find.text('owner@example.com'), findsOneWidget);
     expect(find.text('Сбросить'), findsNothing);
     expect(find.text('Пароль'), findsNothing);
+    expect(find.text('Изменить пароль'), findsOneWidget);
     expect(find.text('Синхронизация'), findsNothing);
 
     await tester.enterText(
@@ -62,6 +63,66 @@ void main() {
     expect(profileService.saveCount, 1);
     expect(refreshCount, 1);
     expect(find.text('Профиль сохранён'), findsOneWidget);
+  });
+
+  testWidgets('user confirms the current password before changing it',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1440, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final profileService = MockAccountProfileService(
+      profile: const AccountProfile(
+        userId: 'user-1',
+        email: 'user@example.com',
+        nickname: 'user_one',
+        displayName: 'Ира',
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SettingsScreen(
+            entitlements: EntitlementSnapshot.forPlan(PlanTier.pro),
+            organizationAccess: OrganizationAccess.legacyPersonal(),
+            accountProfileService: profileService,
+            onAccessChanged: () async {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Аккаунт'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('open-password-change')));
+    await tester.pumpAndSettle();
+
+    final passwordFields = find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.byType(TextField),
+    );
+    expect(passwordFields, findsNWidgets(3));
+    expect(find.byTooltip('Показать пароль'), findsNWidgets(3));
+
+    await tester.enterText(passwordFields.at(0), 'current-password');
+    await tester.enterText(passwordFields.at(1), 'new-password-123');
+    await tester.enterText(passwordFields.at(2), 'different-password');
+    await tester.tap(find.byKey(const ValueKey('password-change-submit')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Новые пароли не совпадают.'), findsOneWidget);
+    expect(profileService.passwordChangeCount, 0);
+
+    await tester.enterText(passwordFields.at(2), 'new-password-123');
+    await tester.pump();
+    expect(find.text('Новые пароли не совпадают.'), findsNothing);
+    expect(find.text('Пароли совпадают.'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('password-change-submit')));
+    await tester.pumpAndSettle();
+
+    expect(profileService.passwordChangeCount, 1);
+    expect(profileService.lastCurrentPassword, 'current-password');
+    expect(profileService.lastNewPassword, 'new-password-123');
+    expect(find.text('Пароль изменён'), findsOneWidget);
   });
 
   testWidgets('shows effective server plan, role, and capabilities',

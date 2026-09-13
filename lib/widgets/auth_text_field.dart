@@ -10,6 +10,7 @@ class AuthTextField extends StatefulWidget {
   final TextInputType? keyboardType;
   final TextInputAction? textInputAction;
   final List<String>? autofillHints;
+  final ValueChanged<String>? onChanged;
   final ValueChanged<String>? onSubmitted;
 
   const AuthTextField({
@@ -23,6 +24,7 @@ class AuthTextField extends StatefulWidget {
     this.keyboardType,
     this.textInputAction,
     this.autofillHints,
+    this.onChanged,
     this.onSubmitted,
   });
 
@@ -50,6 +52,7 @@ class _AuthTextFieldState extends State<AuthTextField> {
       keyboardType: widget.keyboardType,
       textInputAction: widget.textInputAction,
       autofillHints: widget.autofillHints,
+      onChanged: widget.onChanged,
       onSubmitted: widget.onSubmitted,
       style: const TextStyle(fontSize: 14, color: Color(0xFF0F172A)),
       decoration: InputDecoration(

@@ -87,4 +87,75 @@ class SupabaseAccountProfileService implements AccountProfileService {
       displayName: normalizedDisplayName,
     );
   }
+
+  @override
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    final user = client.auth.currentUser;
+    final email = user?.email?.trim() ?? '';
+    if (user == null || email.isEmpty) {
+      throw const AccountProfileException(
+        'not_authenticated',
+        'Пользователь не вошёл в приложение.',
+      );
+    }
+    if (currentPassword.isEmpty) {
+      throw const AccountProfileException(
+        'invalid_current_password',
+        'Введите текущий пароль.',
+      );
+    }
+    if (newPassword.length < 8) {
+      throw const AccountProfileException(
+        'invalid_new_password',
+        'Новый пароль должен содержать минимум 8 символов.',
+      );
+    }
+    if (currentPassword == newPassword) {
+      throw const AccountProfileException(
+        'same_password',
+        'Новый пароль должен отличаться от текущего.',
+      );
+    }
+
+    try {
+      final response = await client.auth.signInWithPassword(
+        email: email,
+        password: currentPassword,
+      );
+      if (response.user?.id != user.id) {
+        throw const AccountProfileException(
+          'invalid_current_password',
+          'Текущий пароль указан неверно.',
+        );
+      }
+      await client.auth.updateUser(UserAttributes(password: newPassword));
+    } on AuthException catch (error) {
+      final message = error.message.toLowerCase();
+      if (message.contains('invalid login credentials') ||
+          message.contains('invalid credentials')) {
+        throw const AccountProfileException(
+          'invalid_current_password',
+          'Текущий пароль указан неверно.',
+        );
+      }
+      if (message.contains('different from the old') ||
+          message.contains('same password')) {
+        throw const AccountProfileException(
+          'same_password',
+          'Новый пароль должен отличаться от текущего.',
+        );
+      }
+      if (message.contains('password') &&
+          (message.contains('weak') || message.contains('characters'))) {
+        throw const AccountProfileException(
+          'invalid_new_password',
+          'Сервер отклонил новый пароль. Используйте более сложный пароль.',
+        );
+      }
+      throw AccountProfileException('password_change_failed', error.message);
+    }
+  }
 }
