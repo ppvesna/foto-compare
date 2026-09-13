@@ -1376,4 +1376,53 @@ void main() {
     expect(find.text('Использовано сегодня'), findsOneWidget);
     expect(find.text('3 из 500'), findsOneWidget);
   });
+
+  testWidgets('opening access again refreshes check usage from the server',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1440, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final usageService = MockCheckUsageService(
+      CheckUsageSnapshot(
+        usageDateUtc: DateTime.utc(2026, 9, 13),
+        used: 0,
+        limit: 500,
+        scope: 'organization',
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SettingsScreen(
+            entitlements: EntitlementSnapshot.forPlan(PlanTier.pro).copyWith(
+              scope: EntitlementScope.organization,
+              organizationId: 'organization-1',
+            ),
+            organizationAccess: OrganizationAccess.forRole(
+              organizationId: 'organization-1',
+              organizationName: 'vesna',
+              role: OrganizationRole.admin,
+            ),
+            checkUsageService: usageService,
+            onAccessChanged: () async {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('0 из 500'), findsOneWidget);
+    usageService.snapshot = CheckUsageSnapshot(
+      usageDateUtc: DateTime.utc(2026, 9, 13),
+      used: 1,
+      limit: 500,
+      scope: 'organization',
+    );
+
+    await tester.tap(find.text('Доступ'));
+    await tester.pumpAndSettle();
+
+    expect(usageService.loadCalls, 2);
+    expect(find.text('1 из 500'), findsOneWidget);
+  });
 }

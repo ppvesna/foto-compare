@@ -527,6 +527,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         setState(() => _section = index);
         if (index == 0) {
           _loadAccountProfile();
+        } else if (index == 1) {
+          _loadCheckUsage();
         } else if (index == 2) {
           _loadBillingData();
         } else if (index == 3) {

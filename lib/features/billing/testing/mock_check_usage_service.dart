@@ -3,12 +3,16 @@ import '../domain/check_usage_service.dart';
 
 class MockCheckUsageService implements CheckUsageService {
   CheckUsageSnapshot snapshot;
+  int loadCalls = 0;
   final Set<String> _recordedCheckIds = {};
 
   MockCheckUsageService(this.snapshot);
 
   @override
-  Future<CheckUsageSnapshot> load() async => snapshot;
+  Future<CheckUsageSnapshot> load() async {
+    loadCalls++;
+    return snapshot;
+  }
 
   @override
   Future<CheckUsageSnapshot> recordCompletedCheck({
