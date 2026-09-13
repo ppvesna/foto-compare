@@ -39,8 +39,8 @@ Rule: every step must preserve the working application and be independently reve
   `/chat/` Storage path without broadening protocol/original upload rights.
 - Migration `025` replaces browser-local daily quota enforcement with an atomic,
   idempotent server counter shared by an organization plan. The live test workspace
-  recorded a fresh completed check after the UTC reset and shows `1/500`. The next
-  manual step is to confirm that same shared value from a second organization account.
+  recorded a fresh completed check after the UTC reset; both an administrator and the
+  owner see the same shared value `1/500`.
 - The `vesna-test` employee and customer job sharing/revocation gate has passed. The
   next release task is to audit remote deployment state and stabilize the branch.
 
