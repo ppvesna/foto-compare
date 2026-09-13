@@ -215,6 +215,10 @@ Migration `023` gives Pro separate server-enforced pools of 20 internal team sea
 20 customer-representative seats. Enterprise keeps both pools unlimited. The client
 uses these limits only for an early, non-authoritative UX check; server errors remain
 authoritative and preserve the representative draft so the user does not re-enter it.
+Migration `026` adds a protected edit operation to the same customer-row menu. Pending
+representatives may have email, nickname, and display name corrected before resending;
+active representatives may have only their display name corrected by organization
+administrators. The operation keeps customer links, job access, chat, and history.
 
 ### inspection
 

@@ -181,6 +181,11 @@ Migration `024` adds ordinary job-chat attachments as private Storage objects be
 dedicated `chat` subpath. Messages keep typed metadata only; object reads continue to
 use `can_view_production_job_v1`, and object mutation remains owner-scoped for customer
 uploads.
+Migration `026` lets an owner or administrator correct a customer representative
+without recreating the relationship. Pending invitations accept corrected email,
+nickname, and display name and can then be resent; active representatives keep their
+login identity while their display name is corrected. Customer links, job grants,
+chat messages, and history are unchanged.
 
 ## 7. Inspection domain
 

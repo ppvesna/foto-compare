@@ -26,6 +26,7 @@ enum _CustomerDraftAction {
 
 enum _CustomerAction {
   edit,
+  editRepresentative,
   addRepresentative,
   linkExistingRepresentative,
   resendInvitation,
@@ -2174,6 +2175,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   value: _CustomerAction.edit,
                   child: Text('Изменить заказчика'),
                 ),
+                if (representative != null)
+                  const PopupMenuItem(
+                    value: _CustomerAction.editRepresentative,
+                    child: Text('Изменить представителя'),
+                  ),
                 const PopupMenuItem(
                   value: _CustomerAction.addRepresentative,
                   child: Text('Добавить представителя'),
@@ -2796,6 +2802,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   String _customerError(Object error) {
     final text = error.toString();
+    if (text.contains('customer_representative_invalid_display_name')) {
+      return 'Имя представителя должно содержать 2–120 символов.';
+    }
+    if (text.contains('customer_representative_invalid_email')) {
+      return 'Введите корректный email.';
+    }
+    if (text.contains('customer_representative_invalid_nickname')) {
+      return 'Ник: 3–24 символа, латиница, цифры и подчёркивание.';
+    }
+    if (text.contains('customer_representative_nickname_conflict') ||
+        text.contains('customer_representative_invitation_conflict')) {
+      return 'Этот email или ник уже используется.';
+    }
+    if (text.contains('customer_representative_access_denied')) {
+      return 'Недостаточно прав для изменения представителя.';
+    }
+    if (text.contains('update_customer_representative_v1') ||
+        text.contains('PGRST202')) {
+      return 'Редактирование представителей ещё не подключено. '
+          'Нужна миграция 026.';
+    }
     if (text.contains('organization_customers') ||
         text.contains('list_organization_customers_v1') ||
         text.contains('PGRST202')) {
@@ -3039,6 +3066,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     switch (action) {
       case _CustomerAction.edit:
         _editCustomer(customer);
+      case _CustomerAction.editRepresentative:
+        if (representative != null) {
+          await _editCustomerRepresentative(customer, representative);
+        }
       case _CustomerAction.addRepresentative:
         _prepareCustomerRepresentative(customer);
       case _CustomerAction.linkExistingRepresentative:
@@ -3057,6 +3088,170 @@ class _SettingsScreenState extends State<SettingsScreen> {
         await _confirmArchiveCustomer(customer);
       case _CustomerAction.restore:
         await _restoreCustomer(customer);
+    }
+  }
+
+  Future<void> _editCustomerRepresentative(
+    OrganizationCustomer customer,
+    OrganizationCustomerRepresentative representative,
+  ) async {
+    final organizationId = widget.organizationAccess.organizationId;
+    if (organizationId == null) return;
+    final formKey = GlobalKey<FormState>();
+    var email = representative.email;
+    var nickname = representative.nickname;
+    var displayName = representative.displayName;
+    final result =
+        await showDialog<({String email, String nickname, String displayName})>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text(
+          'Изменить представителя',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+        ),
+        content: SizedBox(
+          width: 480,
+          child: Form(
+            key: formKey,
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              TextFormField(
+                initialValue: email,
+                enabled: representative.pending,
+                decoration: const InputDecoration(
+                  labelText: 'Email',
+                  border: OutlineInputBorder(),
+                ),
+                validator: (value) {
+                  if (!representative.pending) return null;
+                  return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+                          .hasMatch(value?.trim() ?? '')
+                      ? null
+                      : 'Введите корректный email';
+                },
+                onChanged: (value) => email = value,
+              ),
+              const SizedBox(height: 10),
+              TextFormField(
+                initialValue: nickname,
+                enabled: representative.pending,
+                decoration: const InputDecoration(
+                  labelText: 'Ник',
+                  border: OutlineInputBorder(),
+                ),
+                validator: (value) {
+                  if (!representative.pending) return null;
+                  return RegExp(r'^[a-z0-9_]{3,24}$')
+                          .hasMatch(value?.trim().toLowerCase() ?? '')
+                      ? null
+                      : '3–24 символа: латиница, цифры, _';
+                },
+                onChanged: (value) => nickname = value,
+              ),
+              const SizedBox(height: 10),
+              TextFormField(
+                key: const ValueKey('customer-representative-display-name'),
+                initialValue: displayName,
+                decoration: const InputDecoration(
+                  labelText: 'Имя',
+                  border: OutlineInputBorder(),
+                ),
+                validator: (value) {
+                  final length = value?.trim().length ?? 0;
+                  return length >= 2 && length <= 120
+                      ? null
+                      : 'От 2 до 120 символов';
+                },
+                onChanged: (value) => displayName = value,
+              ),
+              if (!representative.pending) ...[
+                const SizedBox(height: 10),
+                const Text(
+                  'Email и ник активного аккаунта меняет '
+                  'сам представитель в разделе «Аккаунт».',
+                  style: TextStyle(fontSize: 12, color: Colors.black54),
+                ),
+              ],
+            ]),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Отменить'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (formKey.currentState?.validate() != true) return;
+              Navigator.pop(
+                dialogContext,
+                (
+                  email: email.trim().toLowerCase(),
+                  nickname: nickname.trim().toLowerCase(),
+                  displayName: displayName.trim(),
+                ),
+              );
+            },
+            child: const Text('Сохранить'),
+          ),
+        ],
+      ),
+    );
+    if (result == null || !mounted) return;
+
+    setState(() => _customerBusy = true);
+    try {
+      await _customerService.updateRepresentative(
+        customerId: customer.id,
+        userId: representative.userId,
+        invitationId: representative.invitationId,
+        email: result.email,
+        nickname: result.nickname,
+        displayName: result.displayName,
+      );
+      Object? deliveryError;
+      if (representative.pending) {
+        try {
+          await _organizationService.inviteMember(
+            organizationId: organizationId,
+            email: result.email,
+            nickname: result.nickname,
+            displayName: result.displayName,
+            role: OrganizationRole.customer,
+            functions: const {},
+            customerId: customer.id,
+          );
+        } catch (error) {
+          deliveryError = error;
+        }
+      }
+      final customers = await _customerService.listCustomers(
+        organizationId,
+        includeArchived: _showArchivedCustomers,
+      );
+      final participants =
+          await _organizationService.listParticipants(organizationId);
+      if (!mounted) return;
+      setState(() {
+        _organizationCustomers = customers;
+        _organizationParticipants = participants;
+      });
+      if (deliveryError != null) {
+        xpDlg(
+          context,
+          'Данные сохранены, письмо не отправлено',
+          _accessError(deliveryError),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        xpDlg(
+          context,
+          'Представитель не изменён',
+          _customerError(error),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _customerBusy = false);
     }
   }
 

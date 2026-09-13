@@ -23,6 +23,15 @@ abstract interface class CustomerDirectoryService {
 
   Future<void> restoreCustomer(String customerId);
 
+  Future<void> updateRepresentative({
+    required String customerId,
+    String? userId,
+    String? invitationId,
+    required String email,
+    required String nickname,
+    required String displayName,
+  });
+
   Future<List<OrganizationCustomerJob>> listCustomerJobs(String customerId);
 
   Future<void> resolveRequest({

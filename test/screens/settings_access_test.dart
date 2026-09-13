@@ -608,6 +608,148 @@ void main() {
     expect(find.text('ожидает регистрации'), findsOneWidget);
   });
 
+  testWidgets('administrator corrects an active representative display name',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1440, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final customerService = MockCustomerDirectoryService(
+      customers: [
+        OrganizationCustomer(
+          id: 'customer-1',
+          organizationId: 'organization-1',
+          code: 'C-0001',
+          name: 'Типография',
+          active: true,
+          representatives: const [
+            OrganizationCustomerRepresentative(
+              userId: 'representative-1',
+              email: 'client@example.com',
+              nickname: 'client_one',
+              displayName: 'Анна',
+              pending: false,
+            ),
+          ],
+          createdAt: DateTime.utc(2026),
+          updatedAt: DateTime.utc(2026),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SettingsScreen(
+            entitlements: EntitlementSnapshot.forPlan(PlanTier.pro),
+            organizationAccess: OrganizationAccess.forRole(
+              organizationId: 'organization-1',
+              role: OrganizationRole.admin,
+            ),
+            organizationAdministrationService:
+                MockOrganizationAdministrationService(),
+            customerDirectoryService: customerService,
+            onAccessChanged: () async {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Организация').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Заказчики'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Действия с заказчиком'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Изменить представителя'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const ValueKey('customer-representative-display-name')),
+      'Ира',
+    );
+    await tester.tap(find.text('Сохранить'));
+    await tester.pumpAndSettle();
+
+    expect(customerService.updatedRepresentative?.customerId, 'customer-1');
+    expect(customerService.updatedRepresentative?.userId, 'representative-1');
+    expect(customerService.updatedRepresentative?.invitationId, isNull);
+    expect(customerService.updatedRepresentative?.email, 'client@example.com');
+    expect(customerService.updatedRepresentative?.nickname, 'client_one');
+    expect(customerService.updatedRepresentative?.displayName, 'Ира');
+  });
+
+  testWidgets('administrator corrects and resends a pending representative',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1440, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final organizationService = MockOrganizationAdministrationService();
+    final customerService = MockCustomerDirectoryService(
+      customers: [
+        OrganizationCustomer(
+          id: 'customer-1',
+          organizationId: 'organization-1',
+          code: 'C-0001',
+          name: 'Типография',
+          active: true,
+          representatives: const [
+            OrganizationCustomerRepresentative(
+              invitationId: 'invitation-1',
+              email: 'wrong@example.com',
+              nickname: 'wrong_name',
+              displayName: 'Анна',
+              pending: true,
+            ),
+          ],
+          createdAt: DateTime.utc(2026),
+          updatedAt: DateTime.utc(2026),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SettingsScreen(
+            entitlements: EntitlementSnapshot.forPlan(PlanTier.pro),
+            organizationAccess: OrganizationAccess.forRole(
+              organizationId: 'organization-1',
+              role: OrganizationRole.admin,
+            ),
+            organizationAdministrationService: organizationService,
+            customerDirectoryService: customerService,
+            onAccessChanged: () async {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Организация').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Заказчики'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Действия с заказчиком'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Изменить представителя'));
+    await tester.pumpAndSettle();
+
+    final editableFields = find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.byType(TextFormField),
+    );
+    await tester.enterText(editableFields.at(0), 'ira@example.com');
+    await tester.enterText(editableFields.at(1), 'client_ira');
+    await tester.enterText(editableFields.at(2), 'Ира');
+    await tester.tap(find.text('Сохранить'));
+    await tester.pumpAndSettle();
+
+    expect(customerService.updatedRepresentative?.invitationId, 'invitation-1');
+    expect(customerService.updatedRepresentative?.email, 'ira@example.com');
+    expect(customerService.updatedRepresentative?.nickname, 'client_ira');
+    expect(customerService.updatedRepresentative?.displayName, 'Ира');
+    expect(organizationService.lastInvitation?.email, 'ira@example.com');
+    expect(organizationService.lastInvitation?.nickname, 'client_ira');
+    expect(organizationService.lastInvitation?.customerId, 'customer-1');
+  });
+
   testWidgets('owner links an existing customer account from the row menu',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(1440, 1200));

@@ -159,6 +159,28 @@ class SupabaseCustomerDirectoryService implements CustomerDirectoryService {
   }
 
   @override
+  Future<void> updateRepresentative({
+    required String customerId,
+    String? userId,
+    String? invitationId,
+    required String email,
+    required String nickname,
+    required String displayName,
+  }) async {
+    await client.rpc(
+      'update_customer_representative_v1',
+      params: {
+        'target_customer': customerId,
+        'target_user': userId,
+        'target_invitation': invitationId,
+        'target_email': email.trim().toLowerCase(),
+        'target_nickname': nickname.trim().toLowerCase(),
+        'target_display_name': displayName.trim(),
+      },
+    );
+  }
+
+  @override
   Future<List<OrganizationCustomerJob>> listCustomerJobs(
     String customerId,
   ) async {

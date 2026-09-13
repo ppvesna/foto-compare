@@ -89,4 +89,20 @@ void main() {
     expect(migration, contains('organization_member_seats_v2'));
     expect(migration, contains('invitation_customer_seat_limit'));
   });
+
+  test('customer representative details can be corrected without relinking',
+      () async {
+    final migration = await File(
+      'supabase/migrations/026_customer_representative_profile_edit_v1.sql',
+    ).readAsString();
+
+    expect(migration, contains('update_customer_representative_v1'));
+    expect(migration, contains("actor_role NOT IN ('owner', 'admin')"));
+    expect(migration, contains('UPDATE organization_invitations'));
+    expect(migration, contains('UPDATE user_profiles'));
+    expect(migration, contains('organization_customer_users'));
+    expect(
+        migration, isNot(contains('DELETE FROM organization_customer_users')));
+    expect(migration, contains('GRANT EXECUTE'));
+  });
 }

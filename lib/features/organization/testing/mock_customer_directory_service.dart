@@ -10,6 +10,14 @@ class MockCustomerDirectoryService implements CustomerDirectoryService {
   String? restoredCustomerId;
   ({String requestId, String customerId})? resolvedRequest;
   ({
+    String customerId,
+    String? userId,
+    String? invitationId,
+    String email,
+    String nickname,
+    String displayName,
+  })? updatedRepresentative;
+  ({
     String organizationId,
     String code,
     String name,
@@ -81,6 +89,25 @@ class MockCustomerDirectoryService implements CustomerDirectoryService {
   @override
   Future<void> restoreCustomer(String customerId) async {
     restoredCustomerId = customerId;
+  }
+
+  @override
+  Future<void> updateRepresentative({
+    required String customerId,
+    String? userId,
+    String? invitationId,
+    required String email,
+    required String nickname,
+    required String displayName,
+  }) async {
+    updatedRepresentative = (
+      customerId: customerId,
+      userId: userId,
+      invitationId: invitationId,
+      email: email,
+      nickname: nickname,
+      displayName: displayName,
+    );
   }
 
   @override
