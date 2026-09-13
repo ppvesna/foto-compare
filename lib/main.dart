@@ -11,6 +11,7 @@ import 'screens/chat_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/invitation_setup_screen.dart';
 import 'screens/settings_screen.dart';
+import 'features/auth/auth.dart';
 import 'features/billing/billing.dart';
 import 'features/chat/chat.dart';
 import 'features/organization/organization.dart';
@@ -185,6 +186,7 @@ class _MainShellState extends State<MainShell> {
   int _settingsInitialSection = 1;
   EntitlementSnapshot _entitlements = EntitlementSnapshot.legacyCompatible();
   OrganizationAccess _organizationAccess = OrganizationAccess.legacyPersonal();
+  AccountProfile? _accountProfile;
   CloudStorage? _cloudStorage;
   ProtocolCloudRepository? _protocolCloudRepository;
   ChatRepository? _chatRepository;
@@ -208,6 +210,13 @@ class _MainShellState extends State<MainShell> {
       }
     }
     await _ensureCurrentUserProfile(client);
+    AccountProfile? accountProfile;
+    try {
+      accountProfile = await SupabaseAccountProfileService(client)
+          .loadCurrentProfile();
+    } catch (_) {
+      // Auth metadata remains a compatibility fallback during staged rollout.
+    }
     final organizationService =
         SupabaseOrganizationAdministrationService(client);
     final pendingInvitation = await organizationService.currentInvitation();
@@ -225,6 +234,7 @@ class _MainShellState extends State<MainShell> {
     setState(() {
       _entitlements = entitlements;
       _organizationAccess = organizationAccess;
+      _accountProfile = accountProfile;
       _cloudStorage = cloudStorage;
       _protocolCloudRepository = currentUser == null || cloudStorage == null
           ? null
@@ -403,8 +413,12 @@ class _MainShellState extends State<MainShell> {
     final user = Supabase.instance.client.auth.currentUser;
     final email = user?.email ?? '';
     final metadata = user?.userMetadata ?? {};
-    final displayName = (metadata['display_name'] as String?)?.trim() ?? '';
-    final nickname = (metadata['nickname'] as String?)?.trim() ?? '';
+    final displayName = _accountProfile?.displayName.trim() ??
+        (metadata['display_name'] as String?)?.trim() ??
+        '';
+    final nickname = _accountProfile?.nickname.trim() ??
+        (metadata['nickname'] as String?)?.trim() ??
+        '';
     final profileOrganizationName =
         (metadata['organization_name'] as String?)?.trim() ?? '';
     final organizationName =
