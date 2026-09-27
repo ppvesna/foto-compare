@@ -13,6 +13,7 @@ import '../features/protocols/protocols.dart';
 import '../services/compare_settings_service.dart';
 import '../widgets/auth_text_field.dart';
 import '../widgets/xp_widgets.dart';
+import 'camera_calibration_screen.dart';
 
 enum _TeamDraftAction { invite, clear }
 
@@ -92,6 +93,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   ColorMeasurementSettings _colorMeasurementSettings =
       ColorMeasurementSettings.defaults;
   CameraCaptureSettings _cameraCaptureSettings = CameraCaptureSettings.defaults;
+  CameraCalibrationProfile? _cameraCalibrationProfile;
   StorageSettings _storageSettings = StorageSettings.defaults;
   CloudConnection _cloudConnection = CloudConnection.disconnected;
   bool _cloudConnectionChecking = false;
@@ -171,6 +173,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _loadCompareSettings();
     _loadColorMeasurementSettings();
     _loadCameraCaptureSettings();
+    _loadCameraCalibrationProfile();
     _loadStorageSettings();
     _loadCloudConnection();
     _loadCheckUsage();
@@ -384,6 +387,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (mounted) setState(() => _cameraCaptureSettings = settings);
   }
 
+  Future<void> _loadCameraCalibrationProfile() async {
+    final profile = await CameraCalibrationProfileService.loadActive();
+    if (mounted) setState(() => _cameraCalibrationProfile = profile);
+  }
+
   Future<void> _loadStorageSettings() async {
     final settings = await StorageSettingsService.load();
     if (mounted) setState(() => _storageSettings = settings);
@@ -507,7 +515,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Widget _sectionSidebar() {
     return Container(
-      color: const Color(0xFFEAF6FC),
+      decoration: const BoxDecoration(
+        color: AppTheme.surfaceMuted,
+        border: Border(right: BorderSide(color: AppTheme.line)),
+      ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         const Padding(
           padding: EdgeInsets.fromLTRB(14, 14, 14, 8),
@@ -529,7 +540,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Widget _sectionStrip() {
     return Container(
-      color: const Color(0xFFEAF6FC),
+      color: AppTheme.surfaceMuted,
       child: ListView.builder(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.all(8),
@@ -561,9 +572,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         margin: const EdgeInsets.only(bottom: 7),
         padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
-          color: selected ? Colors.white : const Color(0xFFF8FCFF),
+          color: selected ? AppTheme.surface : const Color(0xFFE8EDEF),
           border: Border.all(
-            color: selected ? AppTheme.blue : const Color(0xFFC9E2F0),
+            color: selected ? AppTheme.blue : AppTheme.line,
           ),
           borderRadius: BorderRadius.circular(14),
           boxShadow: selected ? AppTheme.shadowSubtle : null,
@@ -614,9 +625,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             width: double.infinity,
             padding: const EdgeInsets.fromLTRB(12, 9, 12, 10),
             decoration: const BoxDecoration(
-              color: Color(0xFFF8FCFF),
+              color: AppTheme.surface,
               border: Border(
-                top: BorderSide(color: Color(0xFFC9E2F0)),
+                top: BorderSide(color: AppTheme.line),
               ),
             ),
             child: Row(
@@ -3874,6 +3885,67 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ]),
       ),
       const SizedBox(height: 10),
+      _settingsPanel(
+        title: 'Калибровочный профиль',
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (_cameraCalibrationProfile == null)
+              const Text(
+                'Профиль ещё не создан. Мастер свяжет RGB фотографии с приборными L*a*b* и Dc/Dm/Dy/Dk.',
+                style: TextStyle(fontSize: 11, height: 1.35),
+              )
+            else ...[
+              _infoRow('Профиль', _cameraCalibrationProfile!.name),
+              _infoRow(
+                'Поля',
+                'учебных ${_cameraCalibrationProfile!.trainingPatchCount} · '
+                    'проверочных ${_cameraCalibrationProfile!.validationPatchCount}',
+              ),
+              _infoRow(
+                'Статус',
+                _cameraCalibrationProfile!.model == null
+                    ? 'черновик'
+                    : _cameraCalibrationProfile!.validationPatchCount == 0
+                        ? 'рассчитан, не проверен'
+                        : 'рассчитан и проверен',
+              ),
+              _infoRow(
+                'Применение',
+                _cameraCalibrationProfile!.enabled
+                    ? 'включён для контрольной точки'
+                    : 'выключен',
+              ),
+            ],
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: FilledButton.icon(
+                key: const ValueKey('open-camera-calibration'),
+                onPressed: () async {
+                  await Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => CameraCalibrationScreen(
+                        captureSettings: _cameraCaptureSettings,
+                        cameraName: _cameraMode,
+                        resolution: _captureResolution,
+                      ),
+                    ),
+                  );
+                  await _loadCameraCalibrationProfile();
+                },
+                icon: const Icon(Icons.tune),
+                label: Text(
+                  _cameraCalibrationProfile == null
+                      ? 'Начать калибровку'
+                      : 'Открыть калибровку',
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 10),
       _notePanel(
         'Освещение и фильтр описывают условия получения готового изображения и записываются в протокол. Они не изменяют пиксели и не пересчитывают Lab программно.',
       ),
@@ -3913,8 +3985,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           _sliderRow(
             title: 'Сила ч/б магнита',
-            subtitle:
-                'после точного клика программа может чуть подтянуть точку к резкой границе',
+            subtitle: 'автоподтяжка к резкой границе в быстром режиме без лупы',
             value: _calibrationSettings.magnetMaxShiftPx,
             min: 0,
             max: 8,
@@ -3928,9 +3999,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 6),
           _infoRow(
             'Рекомендация',
-            _calibrationSettings.magnetMaxShiftPx <= 0.1
-                ? 'ручная точка без автоподтяжки'
-                : 'для печатника удобно 1-2 px; больше 4 px может уводить точку',
+            _calibrationSettings.loupeEnabled
+                ? 'лупа: выбранная вручную точка не сдвигается'
+                : _calibrationSettings.magnetMaxShiftPx <= 0.1
+                    ? 'ручная точка без автоподтяжки'
+                    : 'без лупы удобно 1-2 px; больше 4 px может уводить точку',
           ),
         ]),
       ),

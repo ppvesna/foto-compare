@@ -35,7 +35,7 @@ void main() {
 
   testWidgets('start screen uses modern login and registration forms',
       (tester) async {
-    await tester.binding.setSurfaceSize(const Size(390, 1200));
+    await tester.binding.setSurfaceSize(const Size(390, 844));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
     await tester.pumpWidget(const MaterialApp(home: StartScreen()));
@@ -57,6 +57,17 @@ void main() {
       findsOneWidget,
     );
     expect(find.byTooltip('Показать пароль'), findsNWidgets(2));
+
+    await tester.enterText(
+      find.byKey(const ValueKey('register-password')),
+      'new-password-123',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('register-password-confirmation')),
+      'new-password-123',
+    );
+    await tester.pump();
+    expect(find.text('Пароли совпадают.'), findsOneWidget);
   });
 
   testWidgets('forgot password validates email and requests a reset link',

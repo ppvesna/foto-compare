@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../features/auth/auth.dart';
 import '../services/browser_auth_url.dart';
+import '../widgets/auth_page_backdrop.dart';
 import '../widgets/auth_text_field.dart';
 import '../widgets/xp_widgets.dart';
 
@@ -60,48 +61,72 @@ class _StartScreenState extends State<StartScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF111827),
-      body: Stack(
-        children: [
-          const Positioned.fill(child: _HeroPhotoBackground()),
-          SafeArea(
-            child: FadeTransition(
-              opacity: _fade,
-              child: LayoutBuilder(builder: (context, constraints) {
-                final wide = constraints.maxWidth >= 860;
-                return SingleChildScrollView(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: wide ? 44 : 18,
-                    vertical: wide ? 42 : 24,
+      body: AuthPageBackdrop(
+        child: SafeArea(
+          child: FadeTransition(
+            opacity: _fade,
+            child: LayoutBuilder(builder: (context, constraints) {
+              final wide = constraints.maxWidth >= 920;
+              return SingleChildScrollView(
+                padding: EdgeInsets.symmetric(
+                  horizontal: wide ? 48 : 18,
+                  vertical: wide ? 44 : 18,
+                ),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    minHeight: constraints.maxHeight - (wide ? 84 : 48),
                   ),
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(
-                      minHeight: constraints.maxHeight - (wide ? 84 : 48),
-                    ),
-                    child: Center(
-                      child: wide
-                          ? Row(
-                              crossAxisAlignment: CrossAxisAlignment.center,
-                              children: [
-                                _authPanel(width: 420),
-                                const SizedBox(width: 52),
-                                Expanded(child: _brandHero(wide: true)),
-                              ],
-                            )
-                          : Column(
-                              children: [
-                                _brandHero(wide: false),
-                                const SizedBox(height: 26),
-                                _authPanel(width: double.infinity),
-                              ],
-                            ),
-                    ),
+                  child: Center(
+                    child: wide
+                        ? Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              _authPanel(width: 420),
+                              const SizedBox(width: 52),
+                              Expanded(child: _brandHero(wide: true)),
+                            ],
+                          )
+                        : Column(
+                            children: [
+                              _mobileBrand(),
+                              const SizedBox(height: 16),
+                              _authPanel(width: double.infinity),
+                            ],
+                          ),
                   ),
-                );
-              }),
-            ),
+                ),
+              );
+            }),
           ),
-        ],
+        ),
       ),
+    );
+  }
+
+  Widget _mobileBrand() {
+    return const Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        AuthBrandMark(),
+        SizedBox(height: 11),
+        Text(
+          'Проверяйте цвет и качество уверенно',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: Color(0xFFF8FAFC),
+            fontSize: 22,
+            fontWeight: FontWeight.w900,
+            height: 1.15,
+            shadows: [
+              Shadow(
+                color: Color(0xAA000000),
+                blurRadius: 14,
+                offset: Offset(0, 3),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -199,6 +224,18 @@ class _StartScreenState extends State<StartScreen>
       child: ClipRRect(
         borderRadius: BorderRadius.circular(24),
         child: Column(children: [
+          Container(
+            height: 4,
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  Color(0xFF22D3EE),
+                  Color(0xFF2563EB),
+                  Color(0xFF8B5CF6),
+                ],
+              ),
+            ),
+          ),
           Padding(
             padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
             child: Row(children: [
@@ -408,6 +445,7 @@ class _StartScreenState extends State<StartScreen>
           password: true,
           textInputAction: TextInputAction.next,
           autofillHints: const [AutofillHints.newPassword],
+          onChanged: (_) => setState(() {}),
         ),
         const SizedBox(height: 12),
         AuthTextField(
@@ -419,16 +457,31 @@ class _StartScreenState extends State<StartScreen>
           password: true,
           textInputAction: TextInputAction.done,
           autofillHints: const [AutofillHints.newPassword],
+          onChanged: (_) => setState(() {}),
           onSubmitted: (_) {
             if (!_authBusy) _doRegister();
           },
         ),
         const SizedBox(height: 8),
-        const Align(
+        Align(
           alignment: Alignment.centerLeft,
           child: Text(
-            'Пароль должен содержать не менее 8 символов.',
-            style: TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+            _pass2Ctrl.text.isEmpty
+                ? 'Пароль должен содержать не менее 8 символов.'
+                : _passCtrl.text == _pass2Ctrl.text
+                    ? 'Пароли совпадают.'
+                    : 'Пароли пока не совпадают.',
+            key: const ValueKey('registration-password-status'),
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight:
+                  _pass2Ctrl.text.isEmpty ? FontWeight.w500 : FontWeight.w700,
+              color: _pass2Ctrl.text.isEmpty
+                  ? const Color(0xFF64748B)
+                  : _passCtrl.text == _pass2Ctrl.text
+                      ? const Color(0xFF15803D)
+                      : const Color(0xFFB45309),
+            ),
           ),
         ),
         const SizedBox(height: 16),
@@ -765,7 +818,29 @@ class _ForgotPasswordDialogState extends State<_ForgotPasswordDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Восстановление пароля'),
+      insetPadding: const EdgeInsets.all(18),
+      backgroundColor: const Color(0xFFF8FAFC),
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+      contentPadding: const EdgeInsets.fromLTRB(24, 18, 24, 8),
+      actionsPadding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+      title: const Row(
+        children: [
+          _RecoveryIcon(),
+          SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              'Восстановление пароля',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w900,
+                color: Color(0xFF0F172A),
+              ),
+            ),
+          ),
+        ],
+      ),
       content: SizedBox(
         width: 420,
         child: Column(
@@ -774,7 +849,11 @@ class _ForgotPasswordDialogState extends State<_ForgotPasswordDialog> {
           children: [
             const Text(
               'Введите email аккаунта. Мы отправим ссылку для создания нового пароля.',
-              style: TextStyle(fontSize: 13, color: Colors.black54),
+              style: TextStyle(
+                fontSize: 13,
+                height: 1.45,
+                color: Color(0xFF64748B),
+              ),
             ),
             const SizedBox(height: 14),
             AuthTextField(
@@ -806,70 +885,88 @@ class _ForgotPasswordDialogState extends State<_ForgotPasswordDialog> {
                 ),
               ),
             ],
+            const SizedBox(height: 12),
+            const Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  Icons.shield_outlined,
+                  size: 16,
+                  color: Color(0xFF64748B),
+                ),
+                SizedBox(width: 7),
+                Expanded(
+                  child: Text(
+                    'В целях безопасности мы не сообщаем, зарегистрирован ли этот адрес.',
+                    style: TextStyle(
+                      fontSize: 11,
+                      height: 1.35,
+                      color: Color(0xFF64748B),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ],
         ),
       ),
       actions: [
-        TextButton(
-          onPressed: _sending ? null : () => Navigator.pop(context, false),
-          child: const Text('Отменить'),
-        ),
-        FilledButton(
-          key: const ValueKey('password-recovery-request-submit'),
-          onPressed: _sending ? null : _submit,
-          child: Text(_sending ? 'Отправляем…' : 'Отправить ссылку'),
+        SizedBox(
+          width: 420,
+          child: Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed:
+                      _sending ? null : () => Navigator.pop(context, false),
+                  child: const Text('Отменить'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                flex: 2,
+                child: FilledButton.icon(
+                  key: const ValueKey('password-recovery-request-submit'),
+                  onPressed: _sending ? null : _submit,
+                  icon: _sending
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.send_outlined, size: 18),
+                  label: Text(_sending ? 'Отправляем…' : 'Отправить ссылку'),
+                ),
+              ),
+            ],
+          ),
         ),
       ],
     );
   }
 }
 
-class _HeroPhotoBackground extends StatelessWidget {
-  const _HeroPhotoBackground();
+class _RecoveryIcon extends StatelessWidget {
+  const _RecoveryIcon();
 
   @override
   Widget build(BuildContext context) {
-    return Stack(children: [
-      Positioned.fill(
-        child: Image.asset(
-          'assets/images/start-hero-prism-lab.png',
-          fit: BoxFit.cover,
-          alignment: Alignment.center,
-        ),
+    return Container(
+      width: 42,
+      height: 42,
+      decoration: BoxDecoration(
+        color: const Color(0xFFDBEAFE),
+        borderRadius: BorderRadius.circular(13),
       ),
-      const Positioned.fill(
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.centerLeft,
-              end: Alignment.centerRight,
-              colors: [
-                Color(0xE60B111D),
-                Color(0x9D111827),
-                Color(0x33111827),
-              ],
-              stops: [0.0, 0.48, 1.0],
-            ),
-          ),
-        ),
+      child: const Icon(
+        Icons.lock_reset_rounded,
+        color: Color(0xFF2563EB),
+        size: 23,
       ),
-      const Positioned.fill(
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: RadialGradient(
-              center: Alignment(0.32, 0.10),
-              radius: 1.15,
-              colors: [
-                Color(0x00111827),
-                Color(0x77111827),
-                Color(0xC90B111D),
-              ],
-              stops: [0.0, 0.58, 1.0],
-            ),
-          ),
-        ),
-      ),
-    ]);
+    );
   }
 }
 

@@ -147,7 +147,7 @@ class XpGroup extends StatelessWidget {
             top: -9,
             left: 8,
             child: Container(
-              color: AppTheme.silver,
+              color: AppTheme.surface,
               padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
               child: Text(label,
                   style: const TextStyle(
@@ -431,7 +431,10 @@ class _XpMenuBarState extends State<XpMenuBar> {
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: AppTheme.silver,
+      decoration: const BoxDecoration(
+        color: AppTheme.surface,
+        border: Border(bottom: BorderSide(color: AppTheme.line)),
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -463,7 +466,7 @@ class _XpMenuBarState extends State<XpMenuBar> {
               }),
             ],
           ),
-          Container(height: 2, color: AppTheme.blue),
+          Container(height: 1, color: AppTheme.line),
         ],
       ),
     );
@@ -532,8 +535,8 @@ class XpStatusBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: AppTheme.silver,
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+      color: AppTheme.surfaceMuted,
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
       child: Row(children: [
         Expanded(child: _panel(left)),
         if (right != null) ...[
@@ -547,7 +550,9 @@ class XpStatusBar extends StatelessWidget {
   Widget _panel(String t) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
         decoration: BoxDecoration(
-          border: Border.all(color: Colors.grey.shade400),
+          color: AppTheme.surface.withValues(alpha: 0.72),
+          border: Border.all(color: AppTheme.line),
+          borderRadius: BorderRadius.circular(7),
         ),
         child: Text(t, style: const TextStyle(fontSize: 11)),
       );

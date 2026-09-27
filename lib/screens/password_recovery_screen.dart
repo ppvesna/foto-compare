@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../features/auth/auth.dart';
+import '../widgets/auth_page_backdrop.dart';
 import '../widgets/auth_text_field.dart';
 
 class PasswordRecoveryScreen extends StatefulWidget {
@@ -81,26 +82,50 @@ class _PasswordRecoveryScreenState extends State<PasswordRecoveryScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF111827),
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(20),
-            child: Container(
-              width: 460,
-              padding: const EdgeInsets.all(26),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF8FAFC),
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(color: const Color(0x55FFFFFF)),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Color(0x52000000),
-                    blurRadius: 38,
-                    offset: Offset(0, 22),
+      body: AuthPageBackdrop(
+        child: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(20),
+              child: Container(
+                width: 460,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(26),
+                  border: Border.all(color: const Color(0x55FFFFFF)),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x66000000),
+                      blurRadius: 42,
+                      offset: Offset(0, 24),
+                    ),
+                  ],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(26),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        height: 4,
+                        decoration: const BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [
+                              Color(0xFF22D3EE),
+                              Color(0xFF2563EB),
+                              Color(0xFF8B5CF6),
+                            ],
+                          ),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.all(26),
+                        child: _completed ? _successContent() : _passwordForm(),
+                      ),
+                    ],
                   ),
-                ],
+                ),
               ),
-              child: _completed ? _successContent() : _passwordForm(),
             ),
           ),
         ),
@@ -114,10 +139,25 @@ class _PasswordRecoveryScreenState extends State<PasswordRecoveryScreen> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Icon(
-            Icons.lock_reset_rounded,
-            size: 42,
-            color: Color(0xFF2563EB),
+          const Align(
+            alignment: Alignment.center,
+            child: AuthBrandMark(light: false),
+          ),
+          const SizedBox(height: 18),
+          Center(
+            child: Container(
+              width: 58,
+              height: 58,
+              decoration: BoxDecoration(
+                color: const Color(0xFFDBEAFE),
+                borderRadius: BorderRadius.circular(18),
+              ),
+              child: const Icon(
+                Icons.lock_reset_rounded,
+                size: 31,
+                color: Color(0xFF2563EB),
+              ),
+            ),
           ),
           const SizedBox(height: 14),
           const Text(
@@ -222,10 +262,25 @@ class _PasswordRecoveryScreenState extends State<PasswordRecoveryScreen> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Icon(
-          Icons.check_circle_rounded,
-          size: 54,
-          color: Color(0xFF15803D),
+        const Align(
+          alignment: Alignment.center,
+          child: AuthBrandMark(light: false),
+        ),
+        const SizedBox(height: 18),
+        Center(
+          child: Container(
+            width: 62,
+            height: 62,
+            decoration: const BoxDecoration(
+              color: Color(0xFFDCFCE7),
+              borderRadius: BorderRadius.all(Radius.circular(20)),
+            ),
+            child: const Icon(
+              Icons.check_rounded,
+              size: 34,
+              color: Color(0xFF15803D),
+            ),
+          ),
         ),
         const SizedBox(height: 14),
         const Text(

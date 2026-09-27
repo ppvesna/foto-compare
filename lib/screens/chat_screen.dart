@@ -460,7 +460,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _chatList() {
     return Container(
       decoration: const BoxDecoration(
-        color: Color(0xFFEAF6FC),
+        color: AppTheme.surfaceMuted,
         border: Border(right: BorderSide(color: AppTheme.border)),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -482,7 +482,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _chatStrip() {
     return Container(
-      color: const Color(0xFFEAF6FC),
+      color: AppTheme.surfaceMuted,
       child: Column(children: [
         _listHeader(compact: true),
         Expanded(
@@ -506,7 +506,7 @@ class _ChatScreenState extends State<ChatScreen> {
           height: 34,
           decoration: BoxDecoration(
             gradient: const LinearGradient(
-              colors: [Color(0xFFBDEBFF), AppTheme.blue],
+              colors: [Color(0xFF90C9CC), AppTheme.blue],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
@@ -567,9 +567,9 @@ class _ChatScreenState extends State<ChatScreen> {
         margin: const EdgeInsets.only(bottom: 7),
         padding: const EdgeInsets.all(9),
         decoration: BoxDecoration(
-          color: active ? Colors.white : const Color(0xFFF7FCFF),
+          color: active ? AppTheme.surface : const Color(0xFFF0F4F5),
           border: Border.all(
-            color: active ? AppTheme.blue : const Color(0xFFD6EAF5),
+            color: active ? AppTheme.blue : AppTheme.line,
           ),
           borderRadius: BorderRadius.circular(16),
           boxShadow: active ? AppTheme.shadowSubtle : null,
@@ -657,7 +657,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_usesServerChat) return _serverChatPane();
     final chat = _chats[_activeChat];
     return Container(
-      color: const Color(0xFFF4FAFD),
+      color: AppTheme.appBackground,
       child: Column(children: [
         _chatHeader(chat),
         Expanded(
@@ -676,7 +676,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _serverChatPane() {
     final thread = _activeServerThread!;
     return Container(
-      color: const Color(0xFFF4FAFD),
+      color: AppTheme.appBackground,
       child: Column(children: [
         _chatHeaderContent(
           title: thread.title,
@@ -912,8 +912,8 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _checkCard(_SharedCheckCard card) {
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FCFF),
-        border: Border.all(color: const Color(0xFFC9E2F0)),
+        color: AppTheme.surface,
+        border: Border.all(color: AppTheme.line),
         borderRadius: BorderRadius.circular(14),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -966,7 +966,7 @@ class _ChatScreenState extends State<ChatScreen> {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
           decoration: const BoxDecoration(
-            border: Border(top: BorderSide(color: Color(0xFFC9E2F0))),
+            border: Border(top: BorderSide(color: AppTheme.line)),
           ),
           child: Row(children: [
             Expanded(
@@ -993,8 +993,8 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _approvalCard(_ApprovalCard card) {
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FCFF),
-        border: Border.all(color: const Color(0xFFC9E2F0)),
+        color: AppTheme.surface,
+        border: Border.all(color: AppTheme.line),
         borderRadius: BorderRadius.circular(14),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -1046,7 +1046,7 @@ class _ChatScreenState extends State<ChatScreen> {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
           decoration: const BoxDecoration(
-            border: Border(top: BorderSide(color: Color(0xFFC9E2F0))),
+            border: Border(top: BorderSide(color: AppTheme.line)),
           ),
           child: Wrap(spacing: 8, runSpacing: 8, children: [
             XpBtn(
@@ -1074,7 +1074,7 @@ class _ChatScreenState extends State<ChatScreen> {
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: const BoxDecoration(
-        color: Colors.white,
+        color: AppTheme.surface,
         border: Border(top: BorderSide(color: AppTheme.border)),
       ),
       child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
@@ -1103,7 +1103,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   ? 'Комментарий по согласованию макета'
                   : 'Сообщение',
               filled: true,
-              fillColor: const Color(0xFFF4FAFD),
+              fillColor: AppTheme.surfaceMuted,
               contentPadding:
                   const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
               border: OutlineInputBorder(
@@ -1342,8 +1342,8 @@ class _ChatScreenState extends State<ChatScreen> {
       key: ValueKey('chat-attachment-${attachment.assetId}'),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FCFF),
-        border: Border.all(color: const Color(0xFFC9E2F0)),
+        color: AppTheme.surface,
+        border: Border.all(color: AppTheme.line),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Row(children: [
@@ -1351,7 +1351,7 @@ class _ChatScreenState extends State<ChatScreen> {
           width: 42,
           height: 42,
           decoration: BoxDecoration(
-            color: const Color(0xFFEAF6FC),
+            color: AppTheme.surfaceMuted,
             borderRadius: BorderRadius.circular(10),
           ),
           child: Icon(

@@ -85,6 +85,41 @@ class PointColorMeasurement {
   });
 }
 
+class OpticalDensityMeasurement {
+  final double cyan;
+  final double magenta;
+  final double yellow;
+  final double black;
+
+  const OpticalDensityMeasurement({
+    required this.cyan,
+    required this.magenta,
+    required this.yellow,
+    required this.black,
+  });
+
+  factory OpticalDensityMeasurement.imageRelativeFromRgb(
+    double red,
+    double green,
+    double blue,
+  ) {
+    double density(double value) {
+      final reflectance = value.clamp(1.0, 255.0) / 255.0;
+      return -math.log(reflectance) / math.ln10;
+    }
+
+    final luminance = 0.2126 * red.clamp(0.0, 255.0) +
+        0.7152 * green.clamp(0.0, 255.0) +
+        0.0722 * blue.clamp(0.0, 255.0);
+    return OpticalDensityMeasurement(
+      cyan: density(red),
+      magenta: density(green),
+      yellow: density(blue),
+      black: density(luminance),
+    );
+  }
+}
+
 class ColorMeasurementEngine {
   const ColorMeasurementEngine._();
 

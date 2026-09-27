@@ -60,6 +60,32 @@ void main() {
     expect(large.sampledPixels, greaterThan(small.sampledPixels));
   });
 
+  test('image-relative optical density follows CMY filter channels', () {
+    final density = OpticalDensityMeasurement.imageRelativeFromRgb(
+      255 / 40,
+      255 / 20,
+      255 / 10,
+    );
+
+    expect(density.cyan, closeTo(1.60205999, 0.000001));
+    expect(density.magenta, closeTo(1.30102999, 0.000001));
+    expect(density.yellow, closeTo(1.0, 0.000001));
+    expect(density.black, greaterThan(1.0));
+  });
+
+  test('white image has zero image-relative optical density', () {
+    final density = OpticalDensityMeasurement.imageRelativeFromRgb(
+      255,
+      255,
+      255,
+    );
+
+    expect(density.cyan, closeTo(0, 0.000001));
+    expect(density.magenta, closeTo(0, 0.000001));
+    expect(density.yellow, closeTo(0, 0.000001));
+    expect(density.black, closeTo(0, 0.000001));
+  });
+
   test('measurement profile persists locally', () async {
     const selected = ColorMeasurementSettings(
       deltaEFormula: DeltaEFormula.ciede2000,

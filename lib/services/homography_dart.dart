@@ -24,26 +24,25 @@ Future<DartAlignResult?> dartAlignByAnchors(
   List<Offset> refPoints,
   List<Offset> srcPoints,
 ) async {
-  final refImg = img.decodeImage(refBytes);
-  final srcImg = img.decodeImage(srcBytes);
-  if (refImg == null || srcImg == null) return null;
-
-  final refW = refImg.width, refH = refImg.height;
-  final srcW = srcImg.width, srcH = srcImg.height;
-
-  // Целевая плотность пикселей берётся из физического размера печати, но
-  // рамка сохраняет родную пропорцию эталона — иначе непрямоугольный кадр
-  // (типичное фото) сплющивается/растягивается в квадрат из AppConfig.
   final longPx =
       canonicalDim(math.max(AppConfig.printWidthMm, AppConfig.printHeightMm));
-  int canonW, canonH;
-  if (refW >= refH) {
-    canonW = longPx;
-    canonH = math.max(27, (((refH / refW) * longPx) / 27).round() * 27);
-  } else {
-    canonH = longPx;
-    canonW = math.max(27, (((refW / refH) * longPx) / 27).round() * 27);
-  }
+  // На web два полных decode одновременно плюс две канонические копии
+  // давали резкий пик памяти и могли уронить renderer. Готовим эталон и
+  // образец последовательно. Математика, масштабы и формат результа не меняются.
+  final reference = _prepareCanonicalReference(refBytes, longPx);
+  if (reference == null) return null;
+  await Future<void>.delayed(Duration.zero);
+
+  final source = _prepareAlignmentSource(srcBytes);
+  if (source == null) return null;
+  await Future<void>.delayed(Duration.zero);
+
+  final refW = reference.originalWidth;
+  final refH = reference.originalHeight;
+  final srcW = source.originalWidth;
+  final srcH = source.originalHeight;
+  final canonW = reference.canonicalWidth;
+  final canonH = reference.canonicalHeight;
 
   // Якоря эталона нормализованы относительно его собственных пикселей —
   // переводим их в каноническую рамку независимыми по осям масштабами.
@@ -70,30 +69,84 @@ Future<DartAlignResult?> dartAlignByAnchors(
   if (alignment == null) return null;
   final H = alignment.h;
 
-  // Resize source for warping
-  final srcResized = img.copyResize(srcImg,
-      width: (srcW * srcScale).round(), height: (srcH * srcScale).round());
-
   // Warp (RGBA — альфа=0 у пикселей, не покрытых исходником, чтобы дальше
   // их можно было исключить из сравнения, а не считать чёрным отличием)
-  final warped = _warpPerspective(srcResized, H, canonW, canonH);
+  final warped = _warpPerspective(source.resized, H, canonW, canonH);
   final warpedBytes = Uint8List.fromList(img.encodePng(warped));
-
-  // Эталон приводим к той же канонической рамке — иначе ref/cmp выходят
-  // из этой функции разного размера и веб-сравнение (Dart MAE) получает
-  // заведомо несопоставимые изображения.
-  final refCanonical = img.copyResize(refImg, width: canonW, height: canonH);
-  final refCanonicalBytes = Uint8List.fromList(img.encodePng(refCanonical));
 
   final reproj = _reprojError(H, scaledSrc, scaledRef);
 
   return DartAlignResult(
     alignedBytes: warpedBytes,
-    refCanonicalBytes: refCanonicalBytes,
+    refCanonicalBytes: reference.bytes,
     homography: H,
     reprojError: reproj,
     usedProjective: alignment.projective,
     pointCount: srcPoints.length,
+  );
+}
+
+typedef _PreparedReference = ({
+  Uint8List bytes,
+  int originalWidth,
+  int originalHeight,
+  int canonicalWidth,
+  int canonicalHeight,
+});
+
+typedef _PreparedSource = ({
+  img.Image resized,
+  int originalWidth,
+  int originalHeight,
+});
+
+_PreparedReference? _prepareCanonicalReference(
+  Uint8List bytes,
+  int longPx,
+) {
+  final decoded = img.decodeImage(bytes);
+  if (decoded == null) return null;
+  final width = decoded.width;
+  final height = decoded.height;
+  final int canonicalWidth;
+  final int canonicalHeight;
+  if (width >= height) {
+    canonicalWidth = longPx;
+    canonicalHeight =
+        math.max(27, (((height / width) * longPx) / 27).round() * 27);
+  } else {
+    canonicalHeight = longPx;
+    canonicalWidth =
+        math.max(27, (((width / height) * longPx) / 27).round() * 27);
+  }
+  final canonical = img.copyResize(
+    decoded,
+    width: canonicalWidth,
+    height: canonicalHeight,
+  );
+  return (
+    bytes: Uint8List.fromList(img.encodePng(canonical)),
+    originalWidth: width,
+    originalHeight: height,
+    canonicalWidth: canonicalWidth,
+    canonicalHeight: canonicalHeight,
+  );
+}
+
+_PreparedSource? _prepareAlignmentSource(Uint8List bytes) {
+  final decoded = img.decodeImage(bytes);
+  if (decoded == null) return null;
+  final width = decoded.width;
+  final height = decoded.height;
+  final scale = _kMaxSrcDim / math.max(width, height);
+  return (
+    resized: img.copyResize(
+      decoded,
+      width: (width * scale).round(),
+      height: (height * scale).round(),
+    ),
+    originalWidth: width,
+    originalHeight: height,
   );
 }
 

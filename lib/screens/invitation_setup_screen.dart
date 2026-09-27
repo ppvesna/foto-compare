@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../widgets/auth_page_backdrop.dart';
 import '../widgets/auth_text_field.dart';
 
 class InvitationSetupScreen extends StatefulWidget {
@@ -128,14 +129,8 @@ class _InvitationSetupScreenState extends State<InvitationSetupScreen> {
   Widget build(BuildContext context) {
     final email = Supabase.instance.client.auth.currentUser?.email ?? '';
     return Scaffold(
-      body: DecoratedBox(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xFFEFF6FF), Color(0xFFF8FAFC), Color(0xFFE0F2FE)],
-          ),
-        ),
+      backgroundColor: const Color(0xFF111827),
+      body: AuthPageBackdrop(
         child: SafeArea(
           child: Center(
             child: SingleChildScrollView(
@@ -158,6 +153,11 @@ class _InvitationSetupScreenState extends State<InvitationSetupScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: AuthBrandMark(light: false),
+                    ),
+                    const SizedBox(height: 18),
                     Row(
                       children: [
                         Container(
@@ -253,6 +253,7 @@ class _InvitationSetupScreenState extends State<InvitationSetupScreen> {
                       icon: Icons.lock_outline,
                       password: true,
                       textInputAction: TextInputAction.next,
+                      onChanged: (_) => setState(() => _error = null),
                     ),
                     const SizedBox(height: 12),
                     AuthTextField(
@@ -263,10 +264,30 @@ class _InvitationSetupScreenState extends State<InvitationSetupScreen> {
                       icon: Icons.lock_reset_outlined,
                       password: true,
                       textInputAction: TextInputAction.done,
+                      onChanged: (_) => setState(() => _error = null),
                       onSubmitted: (_) {
                         if (!_busy) _completeInvitation();
                       },
                     ),
+                    if (_passwordConfirmationController.text.isNotEmpty &&
+                        _error == null) ...[
+                      const SizedBox(height: 10),
+                      Text(
+                        _passwordController.text ==
+                                _passwordConfirmationController.text
+                            ? 'Пароли совпадают.'
+                            : 'Пароли пока не совпадают.',
+                        key: const ValueKey('invitation-password-status'),
+                        style: TextStyle(
+                          color: _passwordController.text ==
+                                  _passwordConfirmationController.text
+                              ? const Color(0xFF15803D)
+                              : const Color(0xFFB45309),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
                     if (_error != null) ...[
                       const SizedBox(height: 12),
                       Container(

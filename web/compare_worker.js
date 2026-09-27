@@ -73,10 +73,8 @@ async function compareImages(task) {
   progress('Нормализую яркость...');
   normalizeLuminance(refData.data, cmpData.data);
 
-  progress('Строю Lab-матрицы и контуры...');
+  progress('Строю контуры и готовлю Lab-расчёт...');
   const formula = task.deltaEFormula || 'cie76';
-  const refLab = buildLab(refData.data);
-  const cmpLab = buildLab(cmpData.data);
   const refEdges = buildEdges(refData.data, width, height);
   const cmpEdges = buildEdges(cmpData.data, width, height);
   const shift = estimateResidualShift(
@@ -93,8 +91,6 @@ async function compareImages(task) {
   const color = await compareColor({
     refData: refData.data,
     cmpData: cmpData.data,
-    refLab,
-    cmpLab,
     refMask: refEdges.mask,
     cmpMask: cmpEdges.mask,
     width,
@@ -118,19 +114,17 @@ async function compareImages(task) {
   }
 
   progress('Формирую карты сравнения...');
-  const jobs = [imageDataToPng(color.map)];
-  if (geometry) jobs.push(imageDataToPng(geometry.map));
+  // Кодируем карты последовательно. Параллельные convertToBlob
+  // удерживали в памяти сразу несколько полноразмерных canvas.
+  const diffPng = await imageDataToPng(color.map);
+  const geometryPng = geometry ? await imageDataToPng(geometry.map) : null;
+  let refCanonical = null;
+  let cmpCanonical = null;
   if (task.includeCanonical) {
-    jobs.push(canvasToPng(refCanvas));
+    refCanonical = await canvasToPng(refCanvas);
     cmpContext.putImageData(cmpData, 0, 0);
-    jobs.push(canvasToPng(cmpCanvas));
+    cmpCanonical = await canvasToPng(cmpCanvas);
   }
-  const encoded = await Promise.all(jobs);
-  let cursor = 0;
-  const diffPng = encoded[cursor++];
-  const geometryPng = geometry ? encoded[cursor++] : null;
-  const refCanonical = task.includeCanonical ? encoded[cursor++] : null;
-  const cmpCanonical = task.includeCanonical ? encoded[cursor++] : null;
   const totalPixels = color.validPixels || width * height;
   const meanDeltaE = color.deltaSum / totalPixels;
   const similarity = clamp((1 - clamp(meanDeltaE / CRITICAL_DE, 0, 1)) * 100, 0, 100);
@@ -171,8 +165,6 @@ async function compareColor(options) {
   const {
     refData,
     cmpData,
-    refLab,
-    cmpLab,
     refMask,
     cmpMask,
     width,
@@ -208,8 +200,8 @@ async function compareColor(options) {
           if (noData(refData, refIndex) || noData(cmpData, cmpIndex)) continue;
           const weight = Math.min(pixelStep, width - x) * Math.min(pixelStep, height - y);
           const delta = edgeAwareDeltaE({
-            refLab,
-            cmpLab,
+            refData,
+            cmpData,
             refMask,
             cmpMask,
             width,
@@ -315,36 +307,15 @@ function normalizeLuminance(ref, cmp) {
   }
 }
 
-function buildLab(data) {
-  const pixels = data.length / 4;
-  const lab = new Float32Array(pixels * 3);
-  for (let i = 0; i < pixels; i++) {
-    const p = i * 4;
-    const r = pivotRgb(data[p]);
-    const g = pivotRgb(data[p + 1]);
-    const b = pivotRgb(data[p + 2]);
-    const x = (r * 0.4124564 + g * 0.3575761 + b * 0.1804375) / 0.95047;
-    const y = r * 0.2126729 + g * 0.7151522 + b * 0.0721750;
-    const z = (r * 0.0193339 + g * 0.1191920 + b * 0.9503041) / 1.08883;
-    const fx = pivotXyz(x);
-    const fy = pivotXyz(y);
-    const fz = pivotXyz(z);
-    const q = i * 3;
-    lab[q] = 116 * fy - 16;
-    lab[q + 1] = 500 * (fx - fy);
-    lab[q + 2] = 200 * (fy - fz);
-  }
-  return lab;
-}
-
 function buildEdges(data, width, height) {
   const pixels = width * height;
-  const luma = new Float32Array(pixels);
-  const gradients = new Float32Array(pixels);
+  // Для поиска сдвига достаточно 8-битной яркости. Float32Array
+  // занимал в четыре раза больше памяти без пользы для этого этапа.
+  const luma = new Uint8Array(pixels);
   const mask = new Uint8Array(pixels);
   for (let i = 0; i < pixels; i++) {
     const p = i * 4;
-    luma[i] = lumaRgb(data[p], data[p + 1], data[p + 2]);
+    luma[i] = Math.round(lumaRgb(data[p], data[p + 1], data[p + 2]));
   }
   let sum = 0;
   let maxGradient = 0;
@@ -353,7 +324,6 @@ function buildEdges(data, width, height) {
     for (let x = 1; x < width - 1; x++) {
       const i = y * width + x;
       const gradient = Math.abs(luma[i + 1] - luma[i - 1]) + Math.abs(luma[i + width] - luma[i - width]);
-      gradients[i] = gradient;
       sum += gradient;
       maxGradient = Math.max(maxGradient, gradient);
       count++;
@@ -364,7 +334,8 @@ function buildEdges(data, width, height) {
   for (let y = 1; y < height - 1; y++) {
     for (let x = 1; x < width - 1; x++) {
       const i = y * width + x;
-      if (!noData(data, i) && gradients[i] >= threshold) mask[i] = 1;
+      const gradient = Math.abs(luma[i + 1] - luma[i - 1]) + Math.abs(luma[i + width] - luma[i - width]);
+      if (!noData(data, i) && gradient >= threshold) mask[i] = 1;
     }
   }
   return { luma, mask };
@@ -407,25 +378,25 @@ function estimateResidualShift(refLuma, cmpLuma, refData, cmpData, width, height
 }
 
 function edgeAwareDeltaE(options) {
-  const raw = labDelta(options.refLab, options.refIndex, options.cmpLab, options.cmpIndex, options.formula);
+  const raw = labDeltaRgb(options.refData, options.refIndex, options.cmpData, options.cmpIndex, options.formula);
   if (options.radius <= 0 || raw < MINOR_DE) return raw;
   const nearRef = edgeNear(options.refMask, options.width, options.height, options.x, options.y, options.radius);
   const nearCmp = edgeNear(options.cmpMask, options.width, options.height, options.cx, options.cy, options.radius);
   if (!nearRef && !nearCmp) return raw;
   const local = Math.min(
-    minLocalDelta(options.refLab, options.refIndex, options.cmpLab, options.width, options.height, options.cx, options.cy, options.radius, options.formula),
-    minLocalDelta(options.cmpLab, options.cmpIndex, options.refLab, options.width, options.height, options.x, options.y, options.radius, options.formula),
+    minLocalDelta(options.refData, options.refIndex, options.cmpData, options.width, options.height, options.cx, options.cy, options.radius, options.formula),
+    minLocalDelta(options.cmpData, options.cmpIndex, options.refData, options.width, options.height, options.x, options.y, options.radius, options.formula),
   );
   let corrected = Math.min(raw, local);
   if (nearRef && nearCmp && local < raw) corrected *= 0.42;
   return corrected;
 }
 
-function minLocalDelta(sourceLab, sourceIndex, targetLab, width, height, cx, cy, radius, formula) {
+function minLocalDelta(sourceData, sourceIndex, targetData, width, height, cx, cy, radius, formula) {
   let best = Infinity;
   for (let y = Math.max(0, cy - radius); y <= Math.min(height - 1, cy + radius); y++) {
     for (let x = Math.max(0, cx - radius); x <= Math.min(width - 1, cx + radius); x++) {
-      best = Math.min(best, labDelta(sourceLab, sourceIndex, targetLab, y * width + x, formula));
+      best = Math.min(best, labDeltaRgb(sourceData, sourceIndex, targetData, y * width + x, formula));
     }
   }
   return best;
@@ -440,15 +411,28 @@ function edgeNear(mask, width, height, cx, cy, radius) {
   return false;
 }
 
-function labDelta(a, ai, b, bi, formula) {
-  const ap = ai * 3;
-  const bp = bi * 3;
-  const l1 = a[ap];
-  const a1 = a[ap + 1];
-  const b1 = a[ap + 2];
-  const l2 = b[bp];
-  const a2 = b[bp + 1];
-  const b2 = b[bp + 2];
+function labDeltaRgb(first, firstIndex, second, secondIndex, formula) {
+  const fp = firstIndex * 4;
+  const fr = pivotRgb(first[fp]);
+  const fg = pivotRgb(first[fp + 1]);
+  const fb = pivotRgb(first[fp + 2]);
+  const fx = pivotXyz((fr * 0.4124564 + fg * 0.3575761 + fb * 0.1804375) / 0.95047);
+  const fy = pivotXyz(fr * 0.2126729 + fg * 0.7151522 + fb * 0.0721750);
+  const fz = pivotXyz((fr * 0.0193339 + fg * 0.1191920 + fb * 0.9503041) / 1.08883);
+  const l1 = 116 * fy - 16;
+  const a1 = 500 * (fx - fy);
+  const b1 = 200 * (fy - fz);
+
+  const sp = secondIndex * 4;
+  const sr = pivotRgb(second[sp]);
+  const sg = pivotRgb(second[sp + 1]);
+  const sb = pivotRgb(second[sp + 2]);
+  const sx = pivotXyz((sr * 0.4124564 + sg * 0.3575761 + sb * 0.1804375) / 0.95047);
+  const sy = pivotXyz(sr * 0.2126729 + sg * 0.7151522 + sb * 0.0721750);
+  const sz = pivotXyz((sr * 0.0193339 + sg * 0.1191920 + sb * 0.9503041) / 1.08883);
+  const l2 = 116 * sy - 16;
+  const a2 = 500 * (sx - sy);
+  const b2 = 200 * (sy - sz);
   if (formula === 'cie94GraphicArts') return deltaE94(l1, a1, b1, l2, a2, b2);
   if (formula === 'ciede2000') return deltaE2000(l1, a1, b1, l2, a2, b2);
   if (formula === 'cmc21') return deltaECmc21(l1, a1, b1, l2, a2, b2);

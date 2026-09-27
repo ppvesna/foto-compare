@@ -20,6 +20,7 @@ import 'features/organization/organization.dart';
 import 'features/protocols/protocols.dart';
 import 'services/sync_service.dart';
 import 'services/browser_auth_url.dart';
+import 'widgets/auth_page_backdrop.dart';
 import 'widgets/xp_widgets.dart';
 
 String? _startupAuthError;
@@ -198,46 +199,91 @@ class _AuthLinkError extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFEAF6FC),
-      body: Center(
-        child: Container(
-          width: 480,
-          margin: const EdgeInsets.all(20),
-          padding: const EdgeInsets.all(22),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            border: Border.all(color: const Color(0xFFC9E2F0)),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Ссылка не сработала',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
-              ),
-              const SizedBox(height: 10),
-              const Text(
-                'Ссылка могла устареть или уже использоваться. '
-                'Вернитесь ко входу и запросите новое письмо или приглашение.',
-              ),
-              if (kDebugMode) ...[
-                const SizedBox(height: 12),
-                SelectableText(
-                  error,
-                  style: const TextStyle(fontSize: 11, color: Colors.black54),
+      backgroundColor: const Color(0xFF111827),
+      body: AuthPageBackdrop(
+        child: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(20),
+              child: Container(
+                width: 460,
+                padding: const EdgeInsets.all(26),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(26),
+                  border: Border.all(color: const Color(0x55FFFFFF)),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x66000000),
+                      blurRadius: 42,
+                      offset: Offset(0, 24),
+                    ),
+                  ],
                 ),
-              ],
-              const SizedBox(height: 18),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  onPressed: onReturnToLogin,
-                  child: const Text('Вернуться ко входу'),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Align(
+                      alignment: Alignment.center,
+                      child: AuthBrandMark(light: false),
+                    ),
+                    const SizedBox(height: 20),
+                    const Icon(
+                      Icons.link_off_rounded,
+                      size: 48,
+                      color: Color(0xFFDC2626),
+                    ),
+                    const SizedBox(height: 14),
+                    const Text(
+                      'Ссылка не сработала',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w900,
+                        color: Color(0xFF0F172A),
+                      ),
+                    ),
+                    const SizedBox(height: 9),
+                    const Text(
+                      'Ссылка могла устареть или уже использоваться. '
+                      'Вернитесь ко входу и запросите новое письмо или приглашение.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Color(0xFF64748B),
+                        height: 1.45,
+                      ),
+                    ),
+                    if (kDebugMode) ...[
+                      const SizedBox(height: 14),
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF1F5F9),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: SelectableText(
+                          error,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Color(0xFF64748B),
+                          ),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 22),
+                    SizedBox(
+                      height: 48,
+                      child: FilledButton.icon(
+                        onPressed: onReturnToLogin,
+                        icon: const Icon(Icons.arrow_back_rounded, size: 19),
+                        label: const Text('Вернуться ко входу'),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ],
+            ),
           ),
         ),
       ),
@@ -554,14 +600,26 @@ class _MainShellState extends State<MainShell> {
       body: SafeArea(
         child: Column(children: [
           Container(
-            color: AppTheme.blueDark,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: const BoxDecoration(
+              color: AppTheme.surface,
+              border: Border(
+                bottom: BorderSide(color: AppTheme.line),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Color(0x160E2A31),
+                  blurRadius: 7,
+                  offset: Offset(0, 2),
+                ),
+              ],
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
             child: Row(
               children: [
                 const Icon(
                   Icons.account_circle,
                   size: 15,
-                  color: Colors.white70,
+                  color: AppTheme.blue,
                 ),
                 const SizedBox(width: 6),
                 Flexible(
@@ -573,7 +631,7 @@ class _MainShellState extends State<MainShell> {
                     style: const TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w800,
-                      color: Colors.white,
+                      color: AppTheme.graphite,
                     ),
                   ),
                 ),
@@ -582,15 +640,16 @@ class _MainShellState extends State<MainShell> {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                   decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.14),
-                    borderRadius: BorderRadius.circular(4),
+                    color: AppTheme.surfaceMuted,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: AppTheme.line),
                   ),
                   child: Text(
                     _organizationAccess.role.label,
                     style: const TextStyle(
                       fontSize: 10,
                       fontWeight: FontWeight.w700,
-                      color: Colors.white,
+                      color: AppTheme.graphiteSoft,
                     ),
                   ),
                 ),
@@ -602,19 +661,25 @@ class _MainShellState extends State<MainShell> {
                       const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                   decoration: BoxDecoration(
                     color: _entitlements.usesFallbackPlan
-                        ? const Color(0xFFD97706)
-                        : const Color(0xFF2D8EB9),
-                    borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: Colors.white24),
+                        ? const Color(0xFFFFE4B8)
+                        : const Color(0xFFD7E9EA),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: _entitlements.usesFallbackPlan
+                          ? const Color(0xFFE2A247)
+                          : const Color(0xFF9BC8CB),
+                    ),
                   ),
                   child: Text(
                     _topPlanLabel(),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 10,
                       fontWeight: FontWeight.w800,
-                      color: Colors.white,
+                      color: _entitlements.usesFallbackPlan
+                          ? const Color(0xFF8A4B00)
+                          : const Color(0xFF195F64),
                     ),
                   ),
                 ),
@@ -630,7 +695,7 @@ class _MainShellState extends State<MainShell> {
                       textAlign: TextAlign.right,
                       style: const TextStyle(
                         fontSize: 10,
-                        color: Colors.white70,
+                        color: Color(0xFF708087),
                       ),
                     ),
                   ),
@@ -643,32 +708,31 @@ class _MainShellState extends State<MainShell> {
           ),
         ]),
       ),
-      bottomNavigationBar: Container(
-        padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+      bottomNavigationBar: DecoratedBox(
         decoration: const BoxDecoration(
-          color: Color(0xFFE7F4FB),
-          border: Border(
-            top: BorderSide(color: AppTheme.blue, width: 2),
-          ),
+          color: AppTheme.surface,
+          border: Border(top: BorderSide(color: AppTheme.line)),
           boxShadow: [
             BoxShadow(
-                color: Color(0x33000000),
-                blurRadius: 10,
-                offset: Offset(0, -3)),
-            BoxShadow(
-                color: Color(0x99FFFFFF), blurRadius: 2, offset: Offset(0, -1)),
+              color: Color(0x160E2A31),
+              blurRadius: 7,
+              offset: Offset(0, -2),
+            ),
           ],
         ),
         child: SafeArea(
           top: false,
-          child: SizedBox(
-            height: 58,
-            child: Row(children: [
-              Expanded(child: _navBtn(0, 'Главная')),
-              Expanded(child: _navBtn(1, 'Сравнение')),
-              Expanded(child: _navBtn(2, 'Чат')),
-              Expanded(child: _navBtn(3, 'Настройки')),
-            ]),
+          minimum: const EdgeInsets.fromLTRB(8, 2, 8, 4),
+          child: Center(
+            heightFactor: 1,
+            child: Row(
+              children: [
+                _navBtn(0, 'Главная', Icons.home_outlined),
+                _navBtn(1, 'Сравнение', Icons.compare_outlined),
+                _navBtn(2, 'Чат', Icons.chat_bubble_outline),
+                _navBtn(3, 'Настройки', Icons.tune_outlined),
+              ],
+            ),
           ),
         ),
       ),
@@ -696,62 +760,47 @@ class _MainShellState extends State<MainShell> {
     }
   }
 
-  Widget _navBtn(int idx, String label) {
+  Widget _navBtn(int idx, String label, IconData icon) {
     final active = _tab == idx;
-    return GestureDetector(
-      onTap: () => _onTab(idx),
-      behavior: HitTestBehavior.opaque,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 160),
-        margin: const EdgeInsets.symmetric(horizontal: 4),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: active
-                ? const [
-                    Color(0xFFC8F0FF),
-                    Color(0xFF5BC2F2),
-                    Color(0xFF258FCD)
-                  ]
-                : const [
-                    Color(0xFFFFFFFF),
-                    Color(0xFFBDE7FA),
-                    Color(0xFF6DBCE5)
-                  ],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-          ),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(
-            color: active ? const Color(0xFF137FBC) : const Color(0xFF6CB9DE),
-            width: active ? 2 : 1,
-          ),
-          boxShadow: const [
-            BoxShadow(
-                color: Color(0x44000000), blurRadius: 7, offset: Offset(0, 3)),
-            BoxShadow(
-                color: Color(0xAAFFFFFF), blurRadius: 2, offset: Offset(0, -1)),
-          ],
-        ),
-        child: Center(
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: active ? 13 : 12,
-              fontWeight: FontWeight.w800,
-              color: active ? Colors.white : const Color(0xFF114765),
-              shadows: active
-                  ? const [
-                      Shadow(
-                          color: Color(0x66000000),
-                          offset: Offset(0, 1),
-                          blurRadius: 1)
-                    ]
-                  : const [
-                      Shadow(
-                          color: Color(0x99FFFFFF),
-                          offset: Offset(0, 1),
-                          blurRadius: 1)
-                    ],
+    return Expanded(
+      child: SizedBox(
+        height: 36,
+        child: InkWell(
+          onTap: () => _onTab(idx),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 140),
+            padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(
+                  color: active ? const Color(0xFF238C94) : Colors.transparent,
+                  width: 2,
+                ),
+              ),
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  icon,
+                  size: 15,
+                  color:
+                      active ? const Color(0xFF1F747A) : AppTheme.graphiteSoft,
+                ),
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 8.8,
+                    height: 1.05,
+                    fontWeight: active ? FontWeight.w800 : FontWeight.w600,
+                    color: active
+                        ? const Color(0xFF195F64)
+                        : AppTheme.graphiteSoft,
+                  ),
+                ),
+              ],
             ),
           ),
         ),

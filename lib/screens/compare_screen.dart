@@ -15,6 +15,7 @@ import '../features/color_analysis/color_analysis.dart';
 import '../features/organization/organization.dart';
 import '../features/production/production.dart';
 import '../widgets/xp_widgets.dart';
+import '../widgets/pixel_text.dart';
 import '../services/compare_service.dart';
 import '../features/references/references.dart';
 import '../services/opencv_service.dart';
@@ -60,6 +61,8 @@ class CompareScreen extends StatefulWidget {
   final ProtocolCloudRepository? protocolCloudRepository;
   final CheckUsageService? checkUsageService;
   final VoidCallback? onCheckUsageChanged;
+  // Retained for state-compatible hot reloads; app navigation lives in MainShell.
+  final ValueChanged<int>? onNavigate;
 
   const CompareScreen({
     super.key,
@@ -70,6 +73,7 @@ class CompareScreen extends StatefulWidget {
     this.protocolCloudRepository,
     this.checkUsageService,
     this.onCheckUsageChanged,
+    this.onNavigate,
   });
 
   @override
@@ -78,6 +82,12 @@ class CompareScreen extends StatefulWidget {
 
 class _CompareScreenState extends State<CompareScreen>
     with SingleTickerProviderStateMixin {
+  static const Color _hudGreen = Color(0xFF70FF96);
+  static const Color _hudGreenSecondary = Color(0xFF54EE80);
+  static const Color _hudGreenLabel = Color(0xFF31D463);
+  static const Color _hudWarning = Color(0xFFFF843D);
+  static const Color _hudError = Color(0xFFFF4F55);
+
   late TabController _tabs;
   Uint8List? _refImg;
   Uint8List? _cmpImg;
@@ -307,6 +317,7 @@ class _CompareScreenState extends State<CompareScreen>
   ColorMeasurementSettings _measurementSettings =
       ColorMeasurementSettings.defaults;
   CameraCaptureSettings _cameraCaptureSettings = CameraCaptureSettings.defaults;
+  CameraCalibrationProfile? _cameraCalibrationProfile;
 
   @override
   void initState() {
@@ -317,8 +328,12 @@ class _CompareScreenState extends State<CompareScreen>
     _loadCalibrationSettings();
     _loadColorMeasurementSettings();
     _loadCameraCaptureSettings();
+    _loadCameraCalibrationProfile();
     _loadCustomerDirectory();
     CalibrationSettingsService.notifier.addListener(_onCalibrationSettings);
+    CameraCalibrationProfileService.activeProfileNotifier.addListener(
+      _onCameraCalibrationProfile,
+    );
     HardwareKeyboard.instance.addHandler(_handleCtrlKey);
   }
 
@@ -382,6 +397,19 @@ class _CompareScreenState extends State<CompareScreen>
   Future<void> _loadCameraCaptureSettings() async {
     final settings = await CameraCaptureSettingsService.load();
     if (mounted) setState(() => _cameraCaptureSettings = settings);
+  }
+
+  Future<void> _loadCameraCalibrationProfile() async {
+    final profile = await CameraCalibrationProfileService.loadActive();
+    if (mounted) setState(() => _cameraCalibrationProfile = profile);
+  }
+
+  void _onCameraCalibrationProfile() {
+    if (!mounted) return;
+    setState(() {
+      _cameraCalibrationProfile =
+          CameraCalibrationProfileService.activeProfileNotifier.value;
+    });
   }
 
   void _onCalibrationSettings() {
@@ -627,7 +655,8 @@ class _CompareScreenState extends State<CompareScreen>
     final imageSize = step == 1 ? _refImgSize : _cmpImgSize;
     final resolvedSize = imageSize ?? await _readImageSize(bytes);
     if (!mounted || _calStep != step) return;
-    final precise = _calibrationSettings.loupeEnabled
+    final usesPrecisionLoupe = _calibrationSettings.loupeEnabled;
+    final precise = usesPrecisionLoupe
         ? await _showAnchorLoupe(
             bytes: bytes,
             imageSize: resolvedSize,
@@ -640,13 +669,21 @@ class _CompareScreenState extends State<CompareScreen>
         : imgCoord;
     if (precise == null || !mounted || _calStep != step) return;
 
-    setState(() => _anchorRefining = true);
-    final refined = await AnchorRefinementService.refine(
-      bytes,
-      precise,
-      maxShift: _calibrationSettings.magnetMaxShiftPx,
-    );
-    if (!mounted) return;
+    // В лупе оператор уже выбрал точную точку. Повторный магнит
+    // раньше снова декодировал весь файл ради окна 24×24 px.
+    // Магнит остаётся для быстрого режима без лупы.
+    var refined = precise;
+    final shouldRefine =
+        !usesPrecisionLoupe && _calibrationSettings.magnetMaxShiftPx > 0.1;
+    if (shouldRefine) {
+      setState(() => _anchorRefining = true);
+      refined = await AnchorRefinementService.refine(
+        bytes,
+        precise,
+        maxShift: _calibrationSettings.magnetMaxShiftPx,
+      );
+      if (!mounted) return;
+    }
     setState(() {
       _anchorRefining = false;
       if (_calStep != step) return;
@@ -676,6 +713,23 @@ class _CompareScreenState extends State<CompareScreen>
         pointIndex: pointIndex,
         title: title,
         defaultZoom: defaultZoom,
+      ),
+    );
+  }
+
+  Future<void> _showReferencePointHelper(int pointIndex) async {
+    final bytes = _refImg;
+    final imageSize = _refImgSize;
+    if (bytes == null || imageSize == null || _tempRefPts.isEmpty) return;
+    final activeIndex = pointIndex.clamp(1, _tempRefPts.length);
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (_) => ReferencePointHelperDialog(
+        bytes: bytes,
+        imageSize: imageSize,
+        points: List<Offset>.from(_tempRefPts),
+        activeIndex: activeIndex,
       ),
     );
   }
@@ -1136,6 +1190,9 @@ class _CompareScreenState extends State<CompareScreen>
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_handleCtrlKey);
     CalibrationSettingsService.notifier.removeListener(_onCalibrationSettings);
+    CameraCalibrationProfileService.activeProfileNotifier.removeListener(
+      _onCameraCalibrationProfile,
+    );
     _tabs.dispose();
     _overlayCtrl.dispose();
     _cmp2Ctrl.dispose();
@@ -1678,6 +1735,10 @@ class _CompareScreenState extends State<CompareScreen>
     if (mounted) {
       setState(() {
         _resultMapMode = mode;
+        if (_inspectionTool == _InspectionTool.point) {
+          _inspectionTool = null;
+          _pointProbe = null;
+        }
         if (mode != _ResultMapMode.deltaE) {
           _exactDeltaERequested = false;
         }
@@ -1687,6 +1748,12 @@ class _CompareScreenState extends State<CompareScreen>
         _result == null ||
         _exactDeltaEReady ||
         _exactDeltaEComputing) {
+      return;
+    }
+    if (!_allows(ProductCapability.exactDeltaE)) {
+      _setCompareStatus(
+        'Открыта предварительная карта Delta E. Точный расчёт не входит в текущий план.',
+      );
       return;
     }
     if (_comparing) {
@@ -1911,6 +1978,21 @@ class _CompareScreenState extends State<CompareScreen>
   }
 
   String _fmt(num? value) => value == null ? '-' : value.toStringAsFixed(1);
+
+  bool _displayScorePasses(double score) =>
+      double.parse(score.toStringAsFixed(1)) >= 90;
+
+  String _fmtDensity(double value) =>
+      value.toStringAsFixed(1).replaceAll('.', ',');
+
+  String _densityLine(OpticalDensityMeasurement density) =>
+      'C=${_fmtDensity(density.cyan)}  '
+      'M=${_fmtDensity(density.magenta)}  '
+      'Y=${_fmtDensity(density.yellow)}  '
+      'K=${_fmtDensity(density.black)}';
+
+  int _loupeMagnificationPercent() =>
+      (_resultCmpCtrl.value.getMaxScaleOnAxis() * 100).round();
 
   // ── % совпадения штрихкодов эталон/образец ───────
   double? _barcodeMatchPct() {
@@ -2194,180 +2276,207 @@ class _CompareScreenState extends State<CompareScreen>
   // ── Build ─────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    return Column(
+    return Container(
+      margin: const EdgeInsets.fromLTRB(7, 6, 7, 5),
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: AppTheme.appBackground,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppTheme.workspaceChromeLine),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x180E2A31),
+            blurRadius: 8,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          _workspaceCommandBar(),
+          Expanded(child: _hudWorkbench()),
+        ],
+      ),
+    );
+  }
+
+  void _resetComparison() {
+    setState(() {
+      _workspaceView = _WorkspaceView.reference;
+      _refImg = null;
+      _refCropApplied = false;
+      _refImgSize = null;
+      _cmpImg = null;
+      _cmpCropApplied = false;
+      _cmpImgSize = null;
+      _refAligned = null;
+      _cmpAligned = null;
+      _layoutProfile = null;
+      _refAnchorPts = null;
+      _cmpAnchorPts = null;
+      _result = null;
+      _compareStatus = null;
+      _aiResult = null;
+      _refBarcodes = [];
+      _cmpBarcodes = [];
+      _refOcr = null;
+      _cmpOcr = null;
+      _textDiff = null;
+      _resetZoomControllers();
+      _tabs.animateTo(0);
+    });
+  }
+
+  Widget _workspaceCommandBar() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 760;
+        final showAllModeLabels = constraints.maxWidth >= 430;
+        return Container(
+          height: 48,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          decoration: const BoxDecoration(
+            color: AppTheme.workspaceChrome,
+            border: Border(
+              bottom: BorderSide(color: AppTheme.workspaceChromeLine),
+            ),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: _workspaceModeSelector(
+                  compact: compact,
+                  showAllLabels: showAllModeLabels,
+                ),
+              ),
+              const SizedBox(width: 6),
+              ..._workspaceContextTools(compact: compact),
+              _workspaceOverflowMenu(),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _workspaceModeSelector({
+    required bool compact,
+    required bool showAllLabels,
+  }) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        XpMenuBar(
-          icon: 'PC',
-          menus: [
-            XpMenu(
-              label: 'Файл',
-              items: [
-                XpMenuItem(
-                  label: 'Новое',
-                  icon: '+',
-                  shortcut: 'Ctrl+N',
-                  onTap: () => setState(() {
-                    _workspaceView = _WorkspaceView.reference;
-                    _refImg = null;
-                    _refCropApplied = false;
-                    _refImgSize = null;
-                    _cmpImg = null;
-                    _cmpCropApplied = false;
-                    _cmpImgSize = null;
-                    _refAligned = null;
-                    _cmpAligned = null;
-                    _layoutProfile = null;
-                    _refAnchorPts = null;
-                    _cmpAnchorPts = null;
-                    _result = null;
-                    _compareStatus = null;
-                    _aiResult = null;
-                    _refBarcodes = [];
-                    _cmpBarcodes = [];
-                    _refOcr = null;
-                    _cmpOcr = null;
-                    _textDiff = null;
-                    _resetZoomControllers();
-                    _tabs.animateTo(0);
-                  }),
-                ),
-                XpMenuItem.sep,
-                XpMenuItem(
-                  label: 'Сохранить',
-                  icon: 'S',
-                  shortcut: 'Ctrl+S',
-                  onTap: () async {
-                    if (_result == null) {
-                      xpDlg(context, 'Ошибка', 'Сначала выполните сравнение');
-                      return;
-                    }
-                    try {
-                      await _saveCheckResult();
-                      if (mounted) {
-                        xpDlg(
-                          context,
-                          'Сохранено',
-                          'Результат сохранён в историю',
-                        );
-                      }
-                    } catch (e) {
-                      if (mounted)
-                        xpDlg(context, 'Ошибка сохранения', e.toString());
-                    }
-                  },
-                ),
-                XpMenuItem(
-                  label: 'Экспорт...',
-                  icon: 'EX',
-                  shortcut: 'Ctrl+E',
-                  onTap: () =>
-                      xpDlg(context, 'Экспорт', 'Форматы: PNG, PDF, CSV'),
-                ),
-              ],
-            ),
-            XpMenu(
-              label: 'Вид',
-              items: [
-                XpMenuItem(
-                  label: 'Эталон',
-                  icon: 'R',
-                  onTap: () => _selectWorkspace(_WorkspaceView.reference),
-                ),
-                XpMenuItem(
-                  label: 'Образец',
-                  icon: 'S',
-                  onTap: () => _selectWorkspace(_WorkspaceView.sample),
-                ),
-                XpMenuItem(
-                  label: 'Сравнение',
-                  icon: '%',
-                  onTap: () => _selectWorkspace(_WorkspaceView.comparison),
-                ),
-              ],
-            ),
-            XpMenu(
-              label: 'Инструменты',
-              items: [
-                XpMenuItem(
-                  label: 'AI Анализ',
-                  icon: 'AI',
-                  onTap: _runAiAnalysis,
-                ),
-              ],
-            ),
-            XpMenu(
-              label: 'Справка',
-              items: [
-                XpMenuItem(
-                  label: 'Горячие клавиши',
-                  icon: '?',
-                  onTap: () => xpDlg(
-                    context,
-                    'Горячие клавиши',
-                    'Ctrl+N — Новое\nCtrl+S — Сохранить\nCtrl+E — Экспорт\nCtrl+R — Повернуть\nCtrl+T — Захватить\nCtrl++/- — Зум',
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
         Expanded(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              if (constraints.maxWidth < 820) {
-                return _mobileWorkbench();
-              }
-              return _desktopWorkbench(constraints.maxWidth);
-            },
+          child: _workspaceModeButton(
+            _WorkspaceView.reference,
+            'Эталон',
+            Icons.image_outlined,
+            ready: _refImg != null,
+            compact: compact,
+            showLabel:
+                showAllLabels || _workspaceView == _WorkspaceView.reference,
+          ),
+        ),
+        const SizedBox(width: 3),
+        Expanded(
+          child: _workspaceModeButton(
+            _WorkspaceView.sample,
+            'Образец',
+            Icons.photo_camera_outlined,
+            ready: _cmpImg != null,
+            compact: compact,
+            showLabel: showAllLabels || _workspaceView == _WorkspaceView.sample,
+          ),
+        ),
+        const SizedBox(width: 3),
+        Expanded(
+          child: _workspaceModeButton(
+            _WorkspaceView.comparison,
+            'Сравнение',
+            Icons.compare_outlined,
+            ready: _result != null,
+            compact: compact,
+            showLabel:
+                showAllLabels || _workspaceView == _WorkspaceView.comparison,
           ),
         ),
       ],
     );
   }
 
-  Widget _desktopWorkbench(double width) {
-    final stepWidth = width >= 1200 ? 170.0 : 140.0;
-    final inspectorWidth = width >= 1200 ? 320.0 : 280.0;
-
-    return Container(
-      color: const Color(0xFFC9CDD3),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          SizedBox(width: stepWidth, child: _workflowRail()),
-          Expanded(
-            child: Scrollbar(
-              controller: _workspaceScrollCtrl,
-              thumbVisibility: true,
-              child: SingleChildScrollView(
-                controller: _workspaceScrollCtrl,
-                padding: const EdgeInsets.all(10),
-                child: _workspaceColumn(),
-              ),
-            ),
+  Widget _workspaceModeButton(
+    _WorkspaceView view,
+    String label,
+    IconData icon, {
+    required bool ready,
+    required bool compact,
+    required bool showLabel,
+  }) {
+    final selected = _workspaceView == view;
+    final calibrationView = _calStep == 1
+        ? _WorkspaceView.reference
+        : _calStep == 2 || _calStep == 3
+            ? _WorkspaceView.sample
+            : null;
+    final enabled = _calStep == 0 || calibrationView == view;
+    return Tooltip(
+      message: label,
+      child: InkWell(
+        onTap: enabled ? () => _selectWorkspace(view) : null,
+        borderRadius: BorderRadius.circular(8),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 140),
+          height: 36,
+          padding: EdgeInsets.symmetric(horizontal: compact ? 5 : 10),
+          decoration: BoxDecoration(
+            color: selected ? const Color(0xFFBEDDE0) : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
           ),
-          SizedBox(width: inspectorWidth, child: _inspectorPanel()),
-        ],
-      ),
-    );
-  }
-
-  Widget _mobileWorkbench() {
-    return Container(
-      color: const Color(0xFFC9CDD3),
-      child: Scrollbar(
-        controller: _workspaceScrollCtrl,
-        thumbVisibility: true,
-        child: SingleChildScrollView(
-          controller: _workspaceScrollCtrl,
-          padding: const EdgeInsets.all(10),
-          child: Column(
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              _workflowRail(horizontal: true),
-              const SizedBox(height: 10),
-              _workspaceColumn(),
-              const SizedBox(height: 10),
-              _inspectorPanel(compact: true),
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Icon(
+                    icon,
+                    size: 17,
+                    color: selected
+                        ? const Color(0xFF1F747A)
+                        : const Color(0xFF6B7C83),
+                  ),
+                  if (ready)
+                    const Positioned(
+                      right: -4,
+                      top: -3,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: Color(0xFF55B788),
+                          shape: BoxShape.circle,
+                        ),
+                        child: SizedBox(width: 6, height: 6),
+                      ),
+                    ),
+                ],
+              ),
+              if (showLabel) ...[
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    label,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                      color: enabled
+                          ? selected
+                              ? const Color(0xFF195F64)
+                              : AppTheme.graphiteSoft
+                          : const Color(0xFF9AA7AC),
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -2375,7 +2484,967 @@ class _CompareScreenState extends State<CompareScreen>
     );
   }
 
-  Widget _workflowRail({bool horizontal = false}) {
+  List<Widget> _workspaceContextTools({required bool compact}) {
+    final buttons = <Widget>[];
+    void add(IconData icon, String tooltip, VoidCallback? action) {
+      buttons.add(_hudToolButton(icon, tooltip, action));
+    }
+
+    switch (_workspaceView) {
+      case _WorkspaceView.reference:
+        add(Icons.upload_file, 'Загрузить эталон', () => _pickImage(true));
+        add(Icons.crop, 'Рамка эталона',
+            _refImg == null ? null : () => _cropImage(true));
+        if (!compact) {
+          add(Icons.save_outlined, 'Сохранить эталон',
+              _refImg == null ? null : _saveReference);
+        }
+      case _WorkspaceView.sample:
+        add(Icons.add_a_photo_outlined, 'Загрузить образец',
+            () => _pickImage(false));
+        add(Icons.crop, 'Рамка образца',
+            _cmpImg == null ? null : () => _cropImage(false));
+        if (!compact) {
+          add(Icons.control_camera_outlined, 'Совмещение',
+              _refImg != null && _cmpImg != null ? _startCalibration : null);
+        }
+      case _WorkspaceView.comparison:
+        if (_result == null) {
+          add(Icons.compare, 'Запустить сравнение',
+              _canStartCompareAction ? _runCompare : null);
+        }
+    }
+    if (!compact) {
+      final controller = switch (_workspaceView) {
+        _WorkspaceView.reference => _refAlignCtrl,
+        _WorkspaceView.sample => _cmpAlignCtrl,
+        _WorkspaceView.comparison => _resultCmpCtrl,
+      };
+      final hasImage = switch (_workspaceView) {
+        _WorkspaceView.reference => _refImg != null,
+        _WorkspaceView.sample => _cmpImg != null,
+        _WorkspaceView.comparison => _result != null,
+      };
+      add(Icons.remove, 'Уменьшить',
+          hasImage ? () => _zoomWorkspace(controller, 0.8) : null);
+      add(Icons.add, 'Увеличить',
+          hasImage ? () => _zoomWorkspace(controller, 1.25) : null);
+      add(Icons.fit_screen, 'Показать целиком',
+          hasImage ? () => controller.value = Matrix4.identity() : null);
+    }
+    return buttons;
+  }
+
+  Widget _hudToolButton(
+    IconData icon,
+    String tooltip,
+    VoidCallback? onTap,
+  ) {
+    return Tooltip(
+      message: tooltip,
+      child: IconButton(
+        onPressed: onTap,
+        icon: Icon(icon, size: 19),
+        color: AppTheme.graphiteSoft,
+        disabledColor: const Color(0xFFADB7BB),
+        style: IconButton.styleFrom(
+          minimumSize: const Size(38, 38),
+          maximumSize: const Size(38, 38),
+          backgroundColor: AppTheme.surfaceMuted,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
+        ),
+      ),
+    );
+  }
+
+  Widget _workspaceOverflowMenu() {
+    return PopupMenuButton<String>(
+      tooltip: 'Ещё',
+      color: const Color(0xFFF7FAFC),
+      icon: const Icon(Icons.more_vert, color: AppTheme.graphiteSoft),
+      onSelected: _handleWorkspaceMenu,
+      itemBuilder: (context) => const [
+        PopupMenuItem(value: 'steps', child: Text('Все этапы')),
+        PopupMenuItem(value: 'data', child: Text('Данные и параметры')),
+        PopupMenuDivider(),
+        PopupMenuItem(value: 'new', child: Text('Новая проверка')),
+        PopupMenuItem(value: 'save', child: Text('Сохранить результат')),
+        PopupMenuItem(value: 'export', child: Text('Экспорт…')),
+        PopupMenuItem(value: 'ai', child: Text('AI-анализ')),
+        PopupMenuDivider(),
+        PopupMenuItem(value: 'shortcuts', child: Text('Горячие клавиши')),
+      ],
+    );
+  }
+
+  Future<void> _handleWorkspaceMenu(String value) async {
+    switch (value) {
+      case 'steps':
+        _showWorkflowSheet();
+      case 'data':
+        _showInspectorSheet();
+      case 'new':
+        _resetComparison();
+      case 'save':
+        if (_result == null) {
+          xpDlg(context, 'Ошибка', 'Сначала выполните сравнение');
+          return;
+        }
+        try {
+          await _saveCheckResult();
+          if (mounted) {
+            xpDlg(context, 'Сохранено', 'Результат сохранён в историю');
+          }
+        } catch (error) {
+          if (mounted) xpDlg(context, 'Ошибка сохранения', error.toString());
+        }
+      case 'export':
+        xpDlg(context, 'Экспорт', 'Форматы: PNG, PDF, CSV');
+      case 'ai':
+        _runAiAnalysis();
+      case 'shortcuts':
+        xpDlg(
+          context,
+          'Горячие клавиши',
+          'Ctrl+N — Новое\nCtrl+S — Сохранить\nCtrl+E — Экспорт\nCtrl+R — Повернуть\nCtrl+T — Захватить\nCtrl++/- — Зум',
+        );
+    }
+  }
+
+  Widget _hudWorkbench() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return Stack(
+          children: [
+            Positioned.fill(
+              child: Scrollbar(
+                controller: _workspaceScrollCtrl,
+                thumbVisibility: true,
+                child: SingleChildScrollView(
+                  controller: _workspaceScrollCtrl,
+                  padding: const EdgeInsets.all(12),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minHeight: max(0, constraints.maxHeight - 24),
+                    ),
+                    child: _workspaceBody(),
+                  ),
+                ),
+              ),
+            ),
+            if (_calStep == 0) ...[
+              Positioned(
+                top: 12,
+                left: 12,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _activeWorkflowHud(maxWidth: constraints.maxWidth),
+                    const SizedBox(height: 5),
+                    _activeStatusHud(maxWidth: constraints.maxWidth),
+                  ],
+                ),
+              ),
+            ],
+            if (_workspaceView != _WorkspaceView.comparison || _result == null)
+              Positioned(
+                right: 12,
+                bottom: 12,
+                left: 12,
+                child: _activeParameterStrip(),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  _WorkflowAction _currentWorkflowAction(List<_WorkflowAction> actions) {
+    for (final action in actions) {
+      if (action.active || action.busy) return action;
+    }
+    if (_result != null) return actions[6];
+    for (final action in actions) {
+      if (!action.done && action.onTap != null) return action;
+    }
+    return actions.last;
+  }
+
+  Widget _activeStatusHud({required double maxWidth}) {
+    final narrow = maxWidth < 620;
+    final width = narrow ? min(148.0, (maxWidth - 30) * 0.46) : 230.0;
+    final result = _result;
+    final status = result == null
+        ? _canStartCompareAction
+            ? 'ГОТОВО К СРАВНЕНИЮ'
+            : 'ПОДГОТОВКА'
+        : !_exactDeltaEReady
+            ? 'ПРЕДВАРИТЕЛЬНО'
+            : _shortStatus(result.score).toUpperCase();
+    final statusColor = result == null
+        ? _hudGreen
+        : !_exactDeltaEReady
+            ? _hudWarning
+            : _displayScorePasses(result.score)
+                ? _hudGreen
+                : _hudError;
+    Widget line(
+      String keyLabel,
+      String value,
+      Color color, {
+      bool uppercase = true,
+      double top = 5,
+    }) {
+      return Padding(
+        padding: EdgeInsets.only(top: top),
+        child: Tooltip(
+          message: value,
+          child: PixelText(
+            key: ValueKey('active-status-value-$keyLabel'),
+            text: value,
+            color: color,
+            pixelSize: 1.15,
+            uppercase: uppercase,
+          ),
+        ),
+      );
+    }
+
+    List<Widget> densityLines(
+      String keyPrefix,
+      String title,
+      OpticalDensityMeasurement density,
+    ) {
+      return [
+        line('$keyPrefix-title', title, _hudGreen, top: 8),
+        line(
+          '$keyPrefix-c',
+          'Dc=${_fmtDensity(density.cyan)}',
+          _hudGreenSecondary,
+          uppercase: false,
+          top: 4,
+        ),
+        line(
+          '$keyPrefix-m',
+          'Dm=${_fmtDensity(density.magenta)}',
+          _hudGreenSecondary,
+          uppercase: false,
+          top: 4,
+        ),
+        line(
+          '$keyPrefix-y',
+          'Dy=${_fmtDensity(density.yellow)}',
+          _hudGreenSecondary,
+          uppercase: false,
+          top: 4,
+        ),
+        line(
+          '$keyPrefix-k',
+          'Dk=${_fmtDensity(density.black)}',
+          _hudGreenSecondary,
+          uppercase: false,
+          top: 4,
+        ),
+      ];
+    }
+
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: width),
+      child: DecoratedBox(
+        decoration: const BoxDecoration(),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 5),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 6,
+                    height: 6,
+                    decoration: BoxDecoration(
+                      color: statusColor,
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: statusColor.withOpacity(0.55),
+                          blurRadius: 8,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: PixelText(
+                      key: const ValueKey('current-status-text'),
+                      text: status,
+                      color: statusColor,
+                    ),
+                  ),
+                ],
+              ),
+              if (_currentJobNumber.isNotEmpty)
+                line('РАБОТА', _currentJobNumber, _hudGreen),
+              if (!narrow && _currentCustomerName.isNotEmpty)
+                line(
+                  'ЗАКАЗЧИК',
+                  _currentCustomerName,
+                  _hudGreenSecondary,
+                ),
+              if (result != null)
+                line(
+                  'СХОДСТВО',
+                  '${result.score.toStringAsFixed(1)}%',
+                  _displayScorePasses(result.score) ? _hudGreen : _hudError,
+                ),
+              if (result != null &&
+                  _inspectionTool == _InspectionTool.point) ...[
+                if (_pointProbe == null)
+                  line(
+                    'point-hint',
+                    'НАЖМИТЕ НА ИЗОБРАЖЕНИЕ',
+                    _hudGreenSecondary,
+                    top: 8,
+                  )
+                else ...[
+                  line(
+                    'point-delta',
+                    '${_pointProbe!.formulaLabel}=${_pointProbe!.deltaE.toStringAsFixed(2).replaceAll('.', ',')}',
+                    _pointProbe!.deltaE <= 3 ? _hudGreen : _hudError,
+                    top: 8,
+                  ),
+                  line(
+                    'point-source',
+                    _pointProbe!.measurementSource.toUpperCase(),
+                    _hudGreenSecondary,
+                    top: 4,
+                  ),
+                  ...densityLines(
+                    'point-reference',
+                    'ЭТАЛОН',
+                    _pointProbe!.refDensity,
+                  ),
+                  ...densityLines(
+                    'point-sample',
+                    'ОБРАЗЕЦ',
+                    _pointProbe!.cmpDensity,
+                  ),
+                ],
+              ] else if (result != null &&
+                  _inspectionTool == _InspectionTool.loupe) ...[
+                line(
+                  'loupe-status',
+                  _areaLoupe == null
+                      ? 'ВЫДЕЛИТЕ ОБЛАСТЬ'
+                      : 'УВЕЛИЧЕНИЕ ${_loupeMagnificationPercent()}%',
+                  _hudGreenSecondary,
+                  top: 8,
+                ),
+              ] else if (result != null) ...[
+                line(
+                  'result-difference',
+                  'ОТЛИЧИЯ ${result.diffPercent.toStringAsFixed(1)}%',
+                  statusColor,
+                  top: 8,
+                ),
+                if (result.maxDeltaE != null)
+                  line(
+                    'result-delta-max',
+                    'MAX ΔE ${result.maxDeltaE!.toStringAsFixed(1)}',
+                    statusColor,
+                    top: 4,
+                  ),
+                if (result.defectZoneCount != null)
+                  line(
+                    'result-zones',
+                    'ЗОНЫ ${result.defectZoneCount}',
+                    statusColor,
+                    top: 4,
+                  ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _activeWorkflowHud({required double maxWidth}) {
+    final actions = _workflowActions();
+    final action = _currentWorkflowAction(actions);
+    final index = actions.indexOf(action) + 1;
+    final narrow = maxWidth < 620;
+    final width = narrow ? min(178.0, (maxWidth - 30) * 0.54) : 264.0;
+    final completed = actions.where((item) => item.done).length;
+
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: width),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 5),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextButton(
+              key: const ValueKey('current-workflow-action'),
+              onPressed: action.onTap,
+              style: TextButton.styleFrom(
+                foregroundColor: const Color(0xFF4F7965),
+                disabledForegroundColor: const Color(0xFF7E8D93),
+                padding: EdgeInsets.zero,
+                minimumSize: const Size(0, 28),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                alignment: Alignment.centerLeft,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (action.busy) ...[
+                    const SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(strokeWidth: 1.5),
+                    ),
+                    const SizedBox(width: 7),
+                  ],
+                  Flexible(
+                    child: PixelText(
+                      text: action.busy
+                          ? 'ВЫПОЛНЯЕТСЯ…'
+                          : _workflowButtonLabel(action).toUpperCase(),
+                      color: action.onTap == null && !action.busy
+                          ? const Color(0xFF7E8D93)
+                          : _hudGreen,
+                    ),
+                  ),
+                  if (!action.busy) ...[
+                    const SizedBox(width: 6),
+                    const Icon(
+                      Icons.arrow_forward,
+                      size: 13,
+                      color: _hudGreen,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 7),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: List.generate(actions.length, (stepIndex) {
+                final isDone = stepIndex < completed;
+                final isCurrent = stepIndex == index - 1;
+                return Container(
+                  key: ValueKey('workflow-progress-${stepIndex + 1}'),
+                  width: narrow ? 12 : 18,
+                  height: 2,
+                  margin: EdgeInsets.only(left: stepIndex == 0 ? 0 : 4),
+                  color: isDone
+                      ? const Color(0xFF4D9D89)
+                      : isCurrent
+                          ? const Color(0xFF2B9DA6)
+                          : const Color(0xFFADB8BC),
+                );
+              }),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _workflowButtonLabel(_WorkflowAction action) {
+    return switch (action.number) {
+      '1' => 'Указать работу',
+      '2' => 'Загрузить эталон',
+      '3' => 'Настроить рамку эталона',
+      '4' => 'Загрузить образец',
+      '5' => 'Настроить рамку отпечатка',
+      '6' => 'Начать совмещение',
+      '7' => _result == null ? 'Сравнить' : 'Сравнить снова',
+      _ => _aiResult == null ? 'Запустить AI' : 'Повторить AI',
+    };
+  }
+
+  Widget _activeParameterStrip() {
+    final result = _result;
+    final items = <String>[];
+    if (_calStep == 1) {
+      items.add('ЭТАЛОН ${_tempRefPts.length}/$_minAnchorPts ТОЧКИ');
+    } else if (_calStep == 2 || _calStep == 3) {
+      items.add('ОБРАЗЕЦ ${_tempCmpPts.length}/${_tempRefPts.length} ТОЧЕК');
+    } else if (_compareStatus != null && _comparing) {
+      items.add(_compareStatus!.toUpperCase());
+    } else if (result != null) {
+      if (_loupeDragStart != null) {
+        items.add('ВЫДЕЛИТЕ ОБЛАСТЬ НА ИЗОБРАЖЕНИИ');
+      } else if (_inspectionTool == _InspectionTool.point) {
+        final probe = _pointProbe;
+        if (probe == null) {
+          items.add('НАЖМИТЕ НА ИЗОБРАЖЕНИЕ');
+        } else {
+          items.add('${probe.formulaLabel} ${probe.deltaE.toStringAsFixed(2)}');
+          items.add(probe.measurementSource.toUpperCase());
+          items.add('ЭТАЛОН ${_densityLine(probe.refDensity)}');
+          items.add('ОБРАЗЕЦ ${_densityLine(probe.cmpDensity)}');
+        }
+      } else if (_inspectionTool == _InspectionTool.loupe) {
+        final loupe = _areaLoupe;
+        if (loupe == null) {
+          items.add('ЗАЖМИТЕ И ПРОТЯНИТЕ ПО ИЗОБРАЖЕНИЮ');
+        } else {
+          items.add('УВЕЛИЧЕНИЕ ${_loupeMagnificationPercent()}%');
+          items.add('ПОВТОРНОЕ НАЖАТИЕ — СБРОС');
+        }
+      } else {
+        items.add('СХОДСТВО ${result.score.toStringAsFixed(1)}%');
+        items.add('ОТЛИЧИЯ ${result.diffPercent.toStringAsFixed(1)}%');
+        if (result.maxDeltaE != null) {
+          items.add('MAX ΔE ${result.maxDeltaE!.toStringAsFixed(1)}');
+        }
+        if (result.defectZoneCount != null) {
+          items.add('ЗОНЫ ${result.defectZoneCount}');
+        }
+        if (_areaLoupe != null ||
+            (_loupeMagnificationPercent() - 100).abs() > 1) {
+          items.add('УВЕЛИЧЕНИЕ ${_loupeMagnificationPercent()}%');
+        }
+      }
+    } else {
+      switch (_workspaceView) {
+        case _WorkspaceView.reference:
+          items.add(_refImg == null ? 'ЭТАЛОН НЕ ЗАГРУЖЕН' : 'ЭТАЛОН ГОТОВ');
+        case _WorkspaceView.sample:
+          items.add(_cmpImg == null ? 'ОБРАЗЕЦ НЕ ЗАГРУЖЕН' : 'ОБРАЗЕЦ ГОТОВ');
+        case _WorkspaceView.comparison:
+          items.add('ОЖИДАНИЕ СРАВНЕНИЯ');
+      }
+    }
+
+    return Semantics(
+      label: items.join(' · '),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 5),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: Wrap(
+            spacing: 12,
+            runSpacing: 6,
+            children: [
+              for (var index = 0; index < items.length; index++)
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (index > 0) ...[
+                      Container(
+                        width: 3,
+                        height: 3,
+                        color: _hudGreenLabel,
+                      ),
+                      const SizedBox(width: 9),
+                    ],
+                    PixelText(
+                      key: ValueKey('active-parameter-$index'),
+                      text: items[index],
+                      color: index == 0 ? _hudGreen : _hudGreenSecondary,
+                      pixelSize: 1.35,
+                    ),
+                  ],
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showWorkflowSheet() {
+    final actions = _workflowActions();
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFFF4F7F8),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        top: false,
+        child: FractionallySizedBox(
+          heightFactor: 0.82,
+          child: Column(
+            children: [
+              _sheetHeader('Все этапы', () => Navigator.pop(sheetContext)),
+              Expanded(
+                child: ListView.separated(
+                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 20),
+                  itemCount: actions.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 6),
+                  itemBuilder: (context, index) {
+                    final action = actions[index];
+                    return _workflowActionTile(
+                      _WorkflowAction(
+                        action.number,
+                        action.label,
+                        action.icon,
+                        done: action.done,
+                        active: action.active,
+                        busy: action.busy,
+                        onTap: action.onTap == null
+                            ? null
+                            : () {
+                                Navigator.pop(sheetContext);
+                                action.onTap!();
+                              },
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showInspectorSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFFF4F7F8),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        top: false,
+        child: FractionallySizedBox(
+          heightFactor: 0.88,
+          child: Column(
+            children: [
+              _sheetHeader(
+                'Данные и параметры',
+                () => Navigator.pop(sheetContext),
+              ),
+              Expanded(child: _inspectorPanel(compact: true)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _sheetHeader(String title, VoidCallback onClose) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 8, 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              title,
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+            ),
+          ),
+          IconButton(
+            onPressed: onClose,
+            tooltip: 'Закрыть',
+            icon: const Icon(Icons.close),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _resultModeHud() {
+    Widget mode(
+      _ResultMapMode value,
+      String label,
+      String tooltip,
+      IconData icon,
+    ) {
+      final selected =
+          _inspectionTool != _InspectionTool.point && _resultMapMode == value;
+      return Expanded(
+        child: Tooltip(
+          message: tooltip,
+          child: InkWell(
+            key: ValueKey('result-mode-${value.name}'),
+            onTap: () => _selectResultMapMode(value),
+            borderRadius: BorderRadius.circular(8),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 140),
+              height: 36,
+              margin: const EdgeInsets.symmetric(horizontal: 1.5, vertical: 2),
+              padding: const EdgeInsets.symmetric(horizontal: 5),
+              decoration: BoxDecoration(
+                color: selected ? const Color(0xFFBEDDE0) : Colors.transparent,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    icon,
+                    size: 17,
+                    color: selected
+                        ? const Color(0xFF1F747A)
+                        : const Color(0xFF6B7C83),
+                  ),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      label,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight:
+                            selected ? FontWeight.w800 : FontWeight.w600,
+                        color: selected
+                            ? const Color(0xFF195F64)
+                            : AppTheme.graphiteSoft,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    Widget pointMode() {
+      final selected = _inspectionTool == _InspectionTool.point;
+      return Expanded(
+        child: Tooltip(
+          message: 'Контроль точки',
+          child: InkWell(
+            key: const ValueKey('result-mode-point'),
+            onTap: () => _toggleInspectionTool(_InspectionTool.point),
+            borderRadius: BorderRadius.circular(8),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 140),
+              height: 36,
+              margin: const EdgeInsets.symmetric(horizontal: 1.5, vertical: 2),
+              padding: const EdgeInsets.symmetric(horizontal: 5),
+              decoration: BoxDecoration(
+                color: selected ? const Color(0xFFBEDDE0) : Colors.transparent,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.gps_fixed,
+                    size: 17,
+                    color: selected
+                        ? const Color(0xFF1F747A)
+                        : const Color(0xFF6B7C83),
+                  ),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      'Контроль точки',
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight:
+                            selected ? FontWeight.w800 : FontWeight.w600,
+                        color: selected
+                            ? const Color(0xFF195F64)
+                            : AppTheme.graphiteSoft,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Semantics(
+      label: 'Режим изображения',
+      child: DecoratedBox(
+        decoration: const BoxDecoration(
+          color: AppTheme.workspaceChrome,
+          border: Border(
+            top: BorderSide(color: AppTheme.workspaceChromeLine),
+          ),
+        ),
+        child: SizedBox(
+          height: 40,
+          child: Row(
+            children: [
+              mode(
+                _ResultMapMode.deltaE,
+                _exactDeltaEComputing
+                    ? 'ΔE · расчёт'
+                    : _exactDeltaEReady
+                        ? 'ΔE · точно'
+                        : _allows(ProductCapability.exactDeltaE)
+                            ? 'ΔE цвет'
+                            : 'ΔE · оценка',
+                'Цветовая карта Delta E',
+                Icons.palette_outlined,
+              ),
+              mode(
+                _ResultMapMode.geometry,
+                'Геометрия ЧБ',
+                'Геометрия чёрно-белого изображения',
+                Icons.contrast,
+              ),
+              mode(
+                _ResultMapMode.overlay,
+                'Наложение',
+                'Наложение эталона и образца',
+                Icons.layers_outlined,
+              ),
+              pointMode(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _comparisonLoupeControl() {
+    return AnimatedBuilder(
+      animation: _resultCmpCtrl,
+      builder: (context, _) {
+        final scale = _loupeMagnificationPercent();
+        final active = _loupeDragStart != null ||
+            _areaLoupe != null ||
+            (scale - 100).abs() > 1;
+        return Tooltip(
+          message: active ? 'Сбросить увеличение' : 'Увеличить область',
+          child: InkWell(
+            key: const ValueKey('result-loupe-control'),
+            onTap: _toggleAreaLoupeControl,
+            borderRadius: BorderRadius.circular(3),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 140),
+              width: 44,
+              height: 46,
+              decoration: BoxDecoration(
+                color:
+                    active ? const Color(0xB82A3539) : const Color(0x8230393D),
+                borderRadius: BorderRadius.circular(3),
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  CustomPaint(
+                    size: const Size(24, 24),
+                    painter: _HudLoupePainter(
+                      color: active ? const Color(0xFFFFA23F) : _hudGreen,
+                    ),
+                  ),
+                  PixelText(
+                    text: '$scale%',
+                    color: active ? const Color(0xFFFFA23F) : _hudGreen,
+                    pixelSize: 0.9,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _toggleAreaLoupeControl() {
+    final scale = _resultCmpCtrl.value.getMaxScaleOnAxis();
+    final reset = _loupeDragStart != null ||
+        _loupeDraftRect != null ||
+        _areaLoupe != null ||
+        (scale - 1).abs() > 0.01;
+    if (reset) {
+      _resultCmpCtrl.value = Matrix4.identity();
+      setState(() {
+        _areaLoupe = null;
+        _loupeDraftRect = null;
+        _loupeDragStart = null;
+        _loupeImageSize = null;
+      });
+      return;
+    }
+    setState(() {
+      // Offset.infinite marks the one-shot selection as armed. Pan start
+      // replaces it with the first real image coordinate.
+      _loupeDragStart = Offset.infinite;
+      _loupeDraftRect = null;
+    });
+  }
+
+  Widget _inspectionToolsHud() {
+    Widget tool(_InspectionTool value, String label, IconData icon) {
+      final selected = _inspectionTool == value;
+      return Expanded(
+        child: Tooltip(
+          message: label,
+          child: InkWell(
+            key: ValueKey('result-tool-${value.name}'),
+            onTap: () => _toggleInspectionTool(value),
+            borderRadius: BorderRadius.circular(9),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 140),
+              height: 40,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              decoration: BoxDecoration(
+                color: selected ? const Color(0xFFD7E9EA) : Colors.transparent,
+                borderRadius: BorderRadius.circular(9),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    icon,
+                    size: 17,
+                    color: selected
+                        ? const Color(0xFF1F747A)
+                        : const Color(0xFF6B7C83),
+                  ),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      label,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight:
+                            selected ? FontWeight.w800 : FontWeight.w600,
+                        color: selected
+                            ? const Color(0xFF195F64)
+                            : AppTheme.graphiteSoft,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Semantics(
+      label: 'Инструменты контроля',
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 5),
+        child: Row(
+          children: [
+            tool(_InspectionTool.point, 'Контроль точки', Icons.gps_fixed),
+            tool(_InspectionTool.loupe, 'Лупа', Icons.zoom_in),
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<_WorkflowAction> _workflowActions() {
     final hasJob = _hasRequiredJobContext;
     final hasRef = _refImg != null;
     final hasSample = _cmpImg != null;
@@ -2383,7 +3452,7 @@ class _CompareScreenState extends State<CompareScreen>
     final refCropDone =
         _refCropApplied || hasSample || aligned || _result != null;
     final sampleCropDone = _cmpCropApplied || aligned || _result != null;
-    final actions = [
+    return [
       _WorkflowAction(
         '1',
         'Работа и заказчик',
@@ -2473,80 +3542,6 @@ class _CompareScreenState extends State<CompareScreen>
             : null,
       ),
     ];
-
-    final actionWidgets = actions
-        .map(
-          (action) => Padding(
-            padding: horizontal
-                ? const EdgeInsets.only(right: 6)
-                : const EdgeInsets.only(top: 6),
-            child: SizedBox(
-              width: horizontal ? 168 : null,
-              child: _workflowActionTile(action),
-            ),
-          ),
-        )
-        .toList();
-    final content = horizontal
-        ? Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _railHeader('Порядок действий'),
-              const SizedBox(height: 6),
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(children: actionWidgets),
-              ),
-            ],
-          )
-        : Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _railHeader('Порядок действий'),
-              const SizedBox(height: 6),
-              Expanded(
-                child: SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      ...actionWidgets,
-                      const SizedBox(height: 8),
-                      _railNote(),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          );
-
-    return Container(
-      decoration: const BoxDecoration(
-        color: Color(0xFFE7E8E4),
-        border: Border(right: BorderSide(color: Color(0xFF8C929C))),
-      ),
-      padding: horizontal
-          ? const EdgeInsets.all(6)
-          : const EdgeInsets.fromLTRB(8, 8, 8, 10),
-      child: content,
-    );
-  }
-
-  Widget _railHeader(String title) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
-      decoration: BoxDecoration(
-        color: AppTheme.blueDark,
-        border: Border.all(color: Colors.white38),
-      ),
-      child: Text(
-        title,
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 12,
-          fontWeight: FontWeight.bold,
-        ),
-      ),
-    );
   }
 
   Widget _workflowActionTile(_WorkflowAction action) {
@@ -2657,181 +3652,6 @@ class _CompareScreenState extends State<CompareScreen>
     );
   }
 
-  Widget _railNote() {
-    return Container(
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF7F8F5),
-        border: Border.all(color: AppTheme.silverDark),
-      ),
-      child: const Text(
-        'Выполняйте шаги сверху вниз. Завершённые действия отмечены зелёным.',
-        style: TextStyle(fontSize: 10, height: 1.35, color: Colors.black54),
-      ),
-    );
-  }
-
-  Widget _workspaceColumn() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _workspaceTabs(),
-        const SizedBox(height: 8),
-        _workspaceBody(),
-      ],
-    );
-  }
-
-  Widget _workspaceTabs() {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final compact = constraints.maxWidth < 680;
-        final tabs = Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            if (compact) const SizedBox(width: 4),
-            if (compact)
-              Expanded(
-                child: _workspaceTab(
-                  _WorkspaceView.reference,
-                  'Эталон',
-                  ready: _refImg != null,
-                  width: double.infinity,
-                ),
-              )
-            else
-              _workspaceTab(
-                _WorkspaceView.reference,
-                'Эталон',
-                ready: _refImg != null,
-              ),
-            const SizedBox(width: 4),
-            if (compact)
-              Expanded(
-                child: _workspaceTab(
-                  _WorkspaceView.sample,
-                  'Образец',
-                  ready: _cmpImg != null,
-                  width: double.infinity,
-                ),
-              )
-            else
-              _workspaceTab(
-                _WorkspaceView.sample,
-                'Образец',
-                ready: _cmpImg != null,
-              ),
-            const SizedBox(width: 4),
-            if (compact)
-              Expanded(
-                child: _workspaceTab(
-                  _WorkspaceView.comparison,
-                  'Сравнение',
-                  ready: _result != null,
-                  width: double.infinity,
-                ),
-              )
-            else
-              _workspaceTab(
-                _WorkspaceView.comparison,
-                'Сравнение',
-                ready: _result != null,
-              ),
-            if (compact) const SizedBox(width: 4),
-          ],
-        );
-        return Container(
-          height: compact ? 86 : 48,
-          padding: EdgeInsets.fromLTRB(8, 7, 8, compact ? 5 : 0),
-          decoration: BoxDecoration(
-            color: const Color(0xFFDCE3EA),
-            border: Border.all(color: AppTheme.silverDark),
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
-          ),
-          child: compact
-              ? Column(
-                  children: [
-                    Expanded(child: tabs),
-                    const SizedBox(height: 4),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: _workspaceZoomControls(),
-                    ),
-                  ],
-                )
-              : Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Expanded(child: tabs),
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 5),
-                      child: _workspaceZoomControls(),
-                    ),
-                  ],
-                ),
-        );
-      },
-    );
-  }
-
-  Widget _workspaceTab(
-    _WorkspaceView view,
-    String label, {
-    required bool ready,
-    double width = 132,
-  }) {
-    final selected = _workspaceView == view;
-    final calibrationView = _calStep == 1
-        ? _WorkspaceView.reference
-        : _calStep == 2 || _calStep == 3
-            ? _WorkspaceView.sample
-            : null;
-    final enabled = _calStep == 0 || calibrationView == view;
-    return InkWell(
-      onTap: enabled ? () => _selectWorkspace(view) : null,
-      borderRadius: const BorderRadius.vertical(top: Radius.circular(7)),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 140),
-        width: width,
-        height: selected ? 40 : 36,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        decoration: BoxDecoration(
-          color: selected ? Colors.white : const Color(0xFFC8D2DC),
-          border: Border.all(
-            color: selected ? AppTheme.blueLight : AppTheme.silverDark,
-          ),
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(7)),
-          boxShadow: selected ? AppTheme.shadowSubtle : null,
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 7,
-              height: 7,
-              decoration: BoxDecoration(
-                color: ready ? AppTheme.simHigh : Colors.grey.shade500,
-                shape: BoxShape.circle,
-              ),
-            ),
-            const SizedBox(width: 7),
-            Flexible(
-              child: Text(
-                label,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-                  color: enabled ? Colors.black87 : Colors.black38,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   void _selectWorkspace(_WorkspaceView view) {
     final calibrationView = _calStep == 1
         ? _WorkspaceView.reference
@@ -2844,53 +3664,6 @@ class _CompareScreenState extends State<CompareScreen>
       if (view == _WorkspaceView.comparison) _inspectionTool = null;
     });
   }
-
-  Widget _workspaceZoomControls() {
-    final controller = switch (_workspaceView) {
-      _WorkspaceView.reference => _refAlignCtrl,
-      _WorkspaceView.sample => _cmpAlignCtrl,
-      _WorkspaceView.comparison => _resultCmpCtrl,
-    };
-    final hasImage = switch (_workspaceView) {
-      _WorkspaceView.reference => _refImg != null,
-      _WorkspaceView.sample => _cmpImg != null,
-      _WorkspaceView.comparison => _result != null,
-    };
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _toolBtn(
-          Icons.remove,
-          'Уменьшить',
-          hasImage ? () => _zoomWorkspace(controller, 0.8) : null,
-        ),
-        _toolBtn(
-          Icons.add,
-          'Увеличить',
-          hasImage ? () => _zoomWorkspace(controller, 1.25) : null,
-        ),
-        _toolBtn(
-          Icons.fit_screen,
-          'Показать целиком',
-          hasImage ? () => controller.value = Matrix4.identity() : null,
-        ),
-        if (_workspaceView != _WorkspaceView.comparison)
-          _toolBtn(
-            Icons.open_in_full,
-            'На весь экран',
-            _activeWorkspaceImage == null
-                ? null
-                : () => _openFullScreen(_activeWorkspaceImage!),
-          ),
-      ],
-    );
-  }
-
-  Uint8List? get _activeWorkspaceImage => switch (_workspaceView) {
-        _WorkspaceView.reference => _refImg,
-        _WorkspaceView.sample => _cmpAligned ?? _cmpImg,
-        _WorkspaceView.comparison => null,
-      };
 
   void _zoomWorkspace(TransformationController controller, double factor) {
     final matrix = controller.value.clone()
@@ -2987,200 +3760,200 @@ class _CompareScreenState extends State<CompareScreen>
     const ratio = 16 / 9;
     final busy = _stacking || _imageBusy;
     final busyLabel = _stacking ? 'Объединение снимков...' : _imageBusyLabel;
-    return _xpWindow(
-      title: title,
-      trailing: Row(mainAxisSize: MainAxisSize.min, children: actions),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(8, 7, 8, 0),
-            child: Text(
-              subtitle,
-              style: const TextStyle(fontSize: 11, color: Colors.black54),
+    return Semantics(
+      label: '$title. $subtitle',
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: AspectRatio(
+          aspectRatio: ratio,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: AppTheme.canvas,
+              border: Border.all(color: const Color(0xFF69757A)),
             ),
-          ),
-          const SizedBox(height: 7),
-          AspectRatio(
-            aspectRatio: ratio,
-            child: Container(
-              margin: const EdgeInsets.symmetric(horizontal: 8),
-              color: Colors.black,
-              child: busy
-                  ? Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const CircularProgressIndicator(
-                            color: Colors.white,
-                          ),
-                          const SizedBox(height: 10),
-                          Text(
-                            busyLabel,
-                            style: const TextStyle(
-                              fontSize: 11,
-                              color: Colors.white70,
-                            ),
-                          ),
-                        ],
-                      ),
-                    )
-                  : bytes != null
-                      ? GestureDetector(
-                          onDoubleTap: onOpen,
-                          child: ClipRect(
-                            child: InteractiveViewer(
-                              transformationController:
-                                  transformationController,
-                              boundaryMargin: const EdgeInsets.all(80),
-                              minScale: 0.5,
-                              maxScale: 10.0,
-                              panEnabled: _ctrlHeld,
-                              scaleEnabled: _ctrlHeld,
-                              child: SizedBox.expand(
-                                child: _uiImage(bytes, fit: BoxFit.contain),
-                              ),
-                            ),
-                          ),
-                        )
-                      : InkWell(
-                          onTap: busy ? null : onTap,
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                placeholderIcon,
-                                size: 38,
-                                color: Colors.white38,
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                placeholder,
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.white60,
-                                ),
-                              ),
-                              const SizedBox(height: 3),
-                              const Text(
-                                'JPEG, PNG, камера или галерея',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: Colors.white38,
-                                ),
-                              ),
-                            ],
+            child: busy
+                ? Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const CircularProgressIndicator(
+                          color: Color(0xFF75DEE8),
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          busyLabel,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Color(0xFF9FB3BC),
                           ),
                         ),
-            ),
+                      ],
+                    ),
+                  )
+                : bytes != null
+                    ? GestureDetector(
+                        onDoubleTap: onOpen,
+                        child: ClipRect(
+                          child: InteractiveViewer(
+                            transformationController: transformationController,
+                            boundaryMargin: const EdgeInsets.all(80),
+                            minScale: 0.5,
+                            maxScale: 10.0,
+                            panEnabled: _ctrlHeld,
+                            scaleEnabled: _ctrlHeld,
+                            child: SizedBox.expand(
+                              child: _uiImage(bytes, fit: BoxFit.contain),
+                            ),
+                          ),
+                        ),
+                      )
+                    : InkWell(
+                        onTap: busy ? null : onTap,
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              placeholderIcon,
+                              size: 42,
+                              color: const Color(0xFF526872),
+                            ),
+                            const SizedBox(height: 10),
+                            Text(
+                              placeholder,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Color(0xFFB2C4CB),
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            const Text(
+                              'JPEG · PNG · камера · галерея',
+                              style: TextStyle(
+                                fontSize: 9,
+                                color: Color(0xFF607681),
+                                fontFamily: 'monospace',
+                                letterSpacing: 0.6,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
           ),
-          const SizedBox(height: 8),
-        ],
+        ),
       ),
     );
   }
 
   Widget _comparisonStage() {
     final r = _result;
-    return _xpWindow(
-      title: 'Сравнение и карта отличий',
-      child: Padding(
-        padding: const EdgeInsets.all(8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (r?.diffL3 != null || r?.geometryDiff != null) ...[
-              _resultMapOverlay(r!),
-              Row(
-                children: [
-                  const Text('Эталон', style: TextStyle(fontSize: 11)),
-                  Expanded(
-                    child: Slider(
-                      value: _diffSlider,
-                      onChanged: (v) => setState(() => _diffSlider = v),
-                      activeColor: AppTheme.blue,
-                    ),
-                  ),
-                  Text(
-                    _inspectionTool == _InspectionTool.point ||
-                            _resultMapMode == _ResultMapMode.overlay
-                        ? 'Образец'
-                        : 'Образец + карта',
-                    style: const TextStyle(fontSize: 11),
-                  ),
-                ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final availableWidth = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : MediaQuery.sizeOf(context).width;
+        final viewportHeight =
+            constraints.minHeight.isFinite ? constraints.minHeight : 0.0;
+        final chromeHeight = r == null ? 0.0 : 70.0;
+        final naturalHeight = availableWidth * 9 / 16 + chromeHeight;
+        final stageHeight = max(viewportHeight, naturalHeight);
+
+        return SizedBox(
+          width: double.infinity,
+          height: stageHeight,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: AppTheme.appBackground,
+                border: Border.all(color: AppTheme.line),
               ),
-            ] else if (_comparing)
-              const SizedBox(
-                height: 320,
-                child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
-              )
-            else
-              AspectRatio(
-                aspectRatio: 16 / 9,
-                child: Container(
-                  color: const Color(0xFF111111),
-                  child: Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.difference_outlined,
-                          size: 40,
-                          color: Colors.white.withOpacity(0.34),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          _result == null
-                              ? 'После сравнения здесь появится карта отличий'
-                              : 'Карта отличий пока рассчитывается',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: Colors.white60,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (r != null) ...[
+                    Expanded(child: _resultMapOverlay(r)),
+                    Container(
+                      height: 34,
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      decoration: const BoxDecoration(
+                        color: AppTheme.workspaceChrome,
+                        border: Border(
+                          top: BorderSide(
+                            color: AppTheme.workspaceChromeLine,
                           ),
                         ),
-                      ],
+                      ),
+                      child: Row(
+                        children: [
+                          const Text('Эталон', style: TextStyle(fontSize: 9)),
+                          Expanded(
+                            child: SliderTheme(
+                              data: SliderTheme.of(context).copyWith(
+                                trackHeight: 2,
+                                thumbShape: const RoundSliderThumbShape(
+                                  enabledThumbRadius: 7,
+                                ),
+                                overlayShape: SliderComponentShape.noOverlay,
+                              ),
+                              child: Slider(
+                                value: _diffSlider,
+                                onChanged: (v) =>
+                                    setState(() => _diffSlider = v),
+                                activeColor: AppTheme.blue,
+                              ),
+                            ),
+                          ),
+                          Text(
+                            _inspectionTool == _InspectionTool.point ||
+                                    _resultMapMode == _ResultMapMode.overlay
+                                ? 'Образец'
+                                : 'Образец + карта',
+                            style: const TextStyle(fontSize: 9),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                ),
+                    _resultModeHud(),
+                  ] else if (_comparing)
+                    const Expanded(
+                      child: Center(
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    )
+                  else
+                    Expanded(
+                      child: Container(
+                        color: AppTheme.canvas,
+                        child: Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.difference_outlined,
+                                size: 40,
+                                color: Colors.white.withOpacity(0.34),
+                              ),
+                              const SizedBox(height: 8),
+                              const Text(
+                                'После сравнения здесь появится карта отличий',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.white60,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
               ),
-            if (r?.diffL3 != null || r?.geometryDiff != null) ...[
-              const SizedBox(height: 8),
-              _mapModeSelector(),
-              const SizedBox(height: 8),
-              _mapLegend(),
-              if (_showAreaLoupePanel) ...[
-                const SizedBox(height: 8),
-                _areaLoupePanel(),
-              ],
-            ],
-            if (_compareStatus != null) ...[
-              const SizedBox(height: 8),
-              _compareProgressPanel(compact: true),
-            ],
-            if (r != null) ...[
-              const SizedBox(height: 8),
-              _resultSummaryBar(r),
-            ],
-            if (r != null &&
-                (_inspectionTool == _InspectionTool.point ||
-                    _pointProbe != null)) ...[
-              const SizedBox(height: 8),
-              _pointProbePanel(),
-            ],
-            if (r != null ||
-                CheckHistoryService.checks.value.any(
-                  (p) =>
-                      _activeReferenceId == null ||
-                      p.referenceId == _activeReferenceId ||
-                      p.referenceLabel == _savedRefLabel,
-                )) ...[
-              const SizedBox(height: 10),
-              _checkProtocolListPanel(),
-            ],
-          ],
-        ),
-      ),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -3458,9 +4231,7 @@ class _CompareScreenState extends State<CompareScreen>
 
   void _toggleInspectionTool(_InspectionTool tool) {
     final turningOff = _inspectionTool == tool;
-    final resetLoupe =
-        (_inspectionTool == _InspectionTool.loupe || _areaLoupe != null) &&
-            (turningOff || tool == _InspectionTool.point);
+    final resetLoupe = _inspectionTool == _InspectionTool.loupe && turningOff;
     if (resetLoupe) _resultCmpCtrl.value = Matrix4.identity();
     setState(() {
       _inspectionTool = turningOff ? null : tool;
@@ -3527,12 +4298,22 @@ class _CompareScreenState extends State<CompareScreen>
     final cmpBase = displayMode == _ResultMapMode.geometry
         ? r.geometryCmpCanonical ?? r.cmpCanonical
         : r.cmpCanonical;
-    return _diffOverlay(
-      diff,
-      refBase,
-      cmpBase,
-      _resultCmpCtrl,
-      imageSize: _parseImageSize(r.refSize),
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        _diffOverlay(
+          diff,
+          refBase,
+          cmpBase,
+          _resultCmpCtrl,
+          imageSize: _parseImageSize(r.refSize),
+        ),
+        Positioned(
+          right: 10,
+          top: 10,
+          child: _comparisonLoupeControl(),
+        ),
+      ],
     );
   }
 
@@ -3576,9 +4357,7 @@ class _CompareScreenState extends State<CompareScreen>
               ),
             ),
             Text(
-              probe == null
-                  ? 'кликните по карте'
-                  : 'x ${probe.x}, y ${probe.y}',
+              probe == null ? 'кликните по карте' : 'измерено',
               style: const TextStyle(fontSize: 10, color: Colors.black54),
             ),
           ]),
@@ -3587,7 +4366,7 @@ class _CompareScreenState extends State<CompareScreen>
           const Padding(
             padding: EdgeInsets.all(10),
             child: Text(
-              'Наведите курсор на интересное место в окне сравнения и кликните мышью. Здесь появятся CMYK эталона, CMYK образца и ΔE в выбранной точке.',
+              'Наведите курсор на интересное место в окне сравнения и кликните мышью. Здесь появятся плотности Dc, Dm, Dy, Dk для эталона и образца, а также ΔE.',
               style:
                   TextStyle(fontSize: 11, height: 1.35, color: Colors.black54),
             ),
@@ -3603,8 +4382,16 @@ class _CompareScreenState extends State<CompareScreen>
                   '${probe.formulaLabel} ${probe.deltaE.toStringAsFixed(2)}',
                   flex: 2,
                 ),
-                _probeCell('CMYK эталона', probe.refCmyk.label, flex: 3),
-                _probeCell('CMYK образца', probe.cmpCmyk.label, flex: 3),
+                _probeCell(
+                  'Плотность эталона',
+                  _densityLine(probe.refDensity),
+                  flex: 3,
+                ),
+                _probeCell(
+                  'Плотность образца',
+                  _densityLine(probe.cmpDensity),
+                  flex: 3,
+                ),
                 _probeCell(
                   'Lab',
                   'эталон ${probe.refLab.label}\nобразец ${probe.cmpLab.label}',
@@ -3612,7 +4399,9 @@ class _CompareScreenState extends State<CompareScreen>
                 ),
                 _probeCell(
                   'Измерение',
-                  'апертура ${probe.apertureLabel}\nобласть ${probe.sampledPixels} px',
+                  '${probe.measurementSource}\n'
+                      'апертура ${probe.apertureLabel} · '
+                      '${probe.sampledPixels} px',
                   flex: 3,
                 ),
               ],
@@ -3648,7 +4437,7 @@ class _CompareScreenState extends State<CompareScreen>
             Text(
               loupe == null
                   ? 'выделите область мышью'
-                  : 'эталон ${loupe.refWidth}×${loupe.refHeight} · образец ${loupe.cmpWidth}×${loupe.cmpHeight}',
+                  : 'увеличение ${_loupeMagnificationPercent()}%',
               style: const TextStyle(fontSize: 10, color: Colors.black54),
             ),
           ]),
@@ -3937,7 +4726,7 @@ class _CompareScreenState extends State<CompareScreen>
     final message = _calStep == 1
         ? 'Быстрый режим: 4 точки достаточно. 5-8 точки оператор добавляет сам как контрольные, если фото снято под углом.'
         : _calStep == 2
-            ? 'Перенесите те же ${_tempRefPts.length} точки на образец в том же порядке. Мини-эталон сверху показывает, куда ставили точки.'
+            ? 'Перенесите те же ${_tempRefPts.length} точки на образец в том же порядке. Если нужно напомнить место, откройте сбоку помощник точек эталона.'
             : 'OpenCV рассчитывает гомографию и проверяет качество совмещения.';
 
     return _xpWindow(
@@ -3963,32 +4752,29 @@ class _CompareScreenState extends State<CompareScreen>
             final viewportHeight = MediaQuery.sizeOf(context).height;
             final panelHeight = (viewportHeight - 245).clamp(460.0, 980.0);
             if (_calStep == 2) {
-              final guideHeight = panelHeight < 560 ? 112.0 : 146.0;
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _referencePointGuide(
-                    height: guideHeight,
-                    nextIndex: _tempCmpPts.length + 1,
-                  ),
-                  const SizedBox(height: 8),
-                  _calibrationPointPanel(
-                    label: 'Образец - ставьте точки',
-                    bytes: _cmpImg!,
-                    imgSize: _cmpImgSize,
-                    anchorPts: _cmpAnchorPts,
-                    ctrl: _cmpAlignCtrl,
-                    availableWidth: panelWidth,
-                    panelHeightOverride: panelHeight - guideHeight - 8,
-                    placing: true,
-                    tempPts: _tempCmpPts,
-                    onTap: _addPanelPoint,
-                    onUndo: _undoLastPoint,
-                    minPts: _tempRefPts.isEmpty
-                        ? _minAnchorPts
-                        : _tempRefPts.length,
-                  ),
-                ],
+              final hasNextReferencePoint =
+                  _tempCmpPts.length < _tempRefPts.length;
+              return _calibrationPointPanel(
+                label: 'Образец - ставьте точки',
+                bytes: _cmpImg!,
+                imgSize: _cmpImgSize,
+                anchorPts: _cmpAnchorPts,
+                ctrl: _cmpAlignCtrl,
+                availableWidth: panelWidth,
+                panelHeightOverride: panelHeight,
+                placing: true,
+                tempPts: _tempCmpPts,
+                onTap: _addPanelPoint,
+                onUndo: _undoLastPoint,
+                minPts:
+                    _tempRefPts.isEmpty ? _minAnchorPts : _tempRefPts.length,
+                referenceHelperPoint:
+                    hasNextReferencePoint ? _tempCmpPts.length + 1 : null,
+                onShowReferenceHelper: hasNextReferencePoint
+                    ? () => _showReferencePointHelper(
+                          _tempCmpPts.length + 1,
+                        )
+                    : null,
               );
             }
             if (_calStep == 3) {
@@ -4011,147 +4797,6 @@ class _CompareScreenState extends State<CompareScreen>
           }),
         ]),
       ),
-    );
-  }
-
-  Widget _referencePointGuide({
-    required double height,
-    required int nextIndex,
-  }) {
-    final bytes = _refImg;
-    final imageSize = _refImgSize;
-    if (bytes == null || imageSize == null || _tempRefPts.isEmpty) {
-      return const SizedBox.shrink();
-    }
-    final activeIndex = nextIndex.clamp(1, _tempRefPts.length);
-    return Container(
-      height: height,
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        border: Border.all(color: const Color(0xFFC9E2F0)),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Row(children: [
-        Expanded(
-          flex: 3,
-          child: LayoutBuilder(builder: (_, constraints) {
-            final boxSize = Size(constraints.maxWidth, height);
-            final scale = min(
-              boxSize.width / imageSize.width,
-              boxSize.height / imageSize.height,
-            );
-            final w = imageSize.width * scale;
-            final h = imageSize.height * scale;
-            final rect = Rect.fromLTWH(
-              (boxSize.width - w) / 2,
-              (boxSize.height - h) / 2,
-              w,
-              h,
-            );
-            return Stack(children: [
-              Positioned.fill(child: _uiImage(bytes, fit: BoxFit.contain)),
-              ..._tempRefPts.asMap().entries.map((entry) {
-                final pointNo = entry.key + 1;
-                final p = entry.value;
-                final done = pointNo < nextIndex;
-                final active =
-                    pointNo == activeIndex && nextIndex <= _tempRefPts.length;
-                final x = rect.left + p.dx / imageSize.width * rect.width;
-                final y = rect.top + p.dy / imageSize.height * rect.height;
-                final color = done
-                    ? AppTheme.simHigh
-                    : active
-                        ? AppTheme.blue
-                        : Colors.orange;
-                return Positioned(
-                  left: x - 8,
-                  top: y - 8,
-                  child: Container(
-                    width: 17,
-                    height: 17,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: color,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white, width: 1.2),
-                      boxShadow: AppTheme.shadowSubtle,
-                    ),
-                    child: Text(
-                      '$pointNo',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 9,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ),
-                );
-              }),
-            ]);
-          }),
-        ),
-        Expanded(
-          flex: 2,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(9, 8, 9, 8),
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text(
-                'Карта точек эталона',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900),
-              ),
-              const SizedBox(height: 5),
-              Text(
-                nextIndex <= _tempRefPts.length
-                    ? 'Сейчас поставьте точку $nextIndex на образце.'
-                    : 'Все точки перенесены. Можно рассчитывать.',
-                style: const TextStyle(
-                  fontSize: 11,
-                  height: 1.3,
-                  color: Colors.black54,
-                ),
-              ),
-              const Spacer(),
-              Wrap(
-                spacing: 4,
-                runSpacing: 4,
-                children: _tempRefPts.asMap().entries.map((entry) {
-                  final pointNo = entry.key + 1;
-                  final done = pointNo <= _tempCmpPts.length;
-                  final active =
-                      pointNo == activeIndex && nextIndex <= _tempRefPts.length;
-                  return Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: done
-                          ? AppTheme.simHigh
-                          : active
-                              ? AppTheme.blue
-                              : Colors.white,
-                      border: Border.all(
-                        color: done || active
-                            ? Colors.transparent
-                            : AppTheme.border,
-                      ),
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Text(
-                      '$pointNo',
-                      style: TextStyle(
-                        color: done || active ? Colors.white : Colors.black54,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  );
-                }).toList(),
-              ),
-            ]),
-          ),
-        ),
-      ]),
     );
   }
 
@@ -4274,6 +4919,70 @@ class _CompareScreenState extends State<CompareScreen>
     );
   }
 
+  Widget _referencePointHelperButton({
+    required int pointIndex,
+    required VoidCallback onTap,
+  }) {
+    return Tooltip(
+      message: 'Показать точку $pointIndex на эталоне',
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          key: const ValueKey('reference-point-helper'),
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(
+              color: const Color(0xD92B353A),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFF70FF96), width: 1.4),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x66000000),
+                  blurRadius: 7,
+                  offset: Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                const Icon(
+                  Icons.visibility_outlined,
+                  size: 24,
+                  color: Color(0xFF70FF96),
+                ),
+                Positioned(
+                  right: 4,
+                  top: 4,
+                  child: Container(
+                    width: 17,
+                    height: 17,
+                    alignment: Alignment.center,
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFFF8A3D),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Text(
+                      '$pointIndex',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _calibrationPointPanel({
     required String label,
     required Uint8List bytes,
@@ -4287,6 +4996,8 @@ class _CompareScreenState extends State<CompareScreen>
     void Function(Offset)? onTap,
     VoidCallback? onUndo,
     int minPts = 4,
+    int? referenceHelperPoint,
+    VoidCallback? onShowReferenceHelper,
   }) {
     final imageSize = imgSize;
     final panelHeight =
@@ -4335,6 +5046,7 @@ class _CompareScreenState extends State<CompareScreen>
             y: y,
             index: entry.key + 1,
             color: color,
+            viewportSize: boxSize,
           ),
         );
       }).toList();
@@ -4374,53 +5086,79 @@ class _CompareScreenState extends State<CompareScreen>
           height: panelHeight,
           color: const Color(0xFF101216),
           child: ClipRect(
-            child: InteractiveViewer(
-              transformationController: ctrl,
-              boundaryMargin: const EdgeInsets.all(80),
-              minScale: 0.8,
-              maxScale: 10.0,
-              panEnabled: _ctrlHeld,
-              scaleEnabled: _ctrlHeld,
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTapUp: onTap == null
-                    ? null
-                    : (details) {
-                        final p = toImagePoint(details.localPosition, boxSize);
-                        if (p != null) onTap(p);
-                      },
-                child: SizedBox(
-                  width: boxSize.width,
-                  height: boxSize.height,
-                  child: Stack(children: [
-                    Positioned.fill(
-                      child: _uiImage(bytes, fit: BoxFit.contain),
-                    ),
-                    Positioned.fill(
-                      child: IgnorePointer(
-                        child: CustomPaint(
-                          painter: _ImageBoundsPainter(imageRect(boxSize)),
-                        ),
-                      ),
-                    ),
-                    ...pointWidgets(boxSize, anchorPts ?? [], Colors.red),
-                    ...pointWidgets(boxSize, tempPts, Colors.amber),
-                    if (placing)
-                      Positioned.fill(
-                        child: IgnorePointer(
-                          child: Container(
-                            decoration: BoxDecoration(
-                              border: Border.all(
-                                color: AppTheme.blueLight,
-                                width: 2,
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: InteractiveViewer(
+                    transformationController: ctrl,
+                    boundaryMargin: const EdgeInsets.all(80),
+                    minScale: 0.8,
+                    maxScale: 10.0,
+                    panEnabled: _ctrlHeld,
+                    scaleEnabled: _ctrlHeld,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTapUp: onTap == null
+                          ? null
+                          : (details) {
+                              final p =
+                                  toImagePoint(details.localPosition, boxSize);
+                              if (p != null) onTap(p);
+                            },
+                      child: SizedBox(
+                        width: boxSize.width,
+                        height: boxSize.height,
+                        child: Stack(children: [
+                          Positioned.fill(
+                            child: _uiImage(bytes, fit: BoxFit.contain),
+                          ),
+                          Positioned.fill(
+                            child: IgnorePointer(
+                              child: CustomPaint(
+                                painter:
+                                    _ImageBoundsPainter(imageRect(boxSize)),
                               ),
                             ),
                           ),
-                        ),
+                          ...pointWidgets(
+                            boxSize,
+                            anchorPts ?? [],
+                            const Color(0xFF65F58B),
+                          ),
+                          ...pointWidgets(
+                            boxSize,
+                            tempPts,
+                            const Color(0xFFFF8A3D),
+                          ),
+                          if (placing)
+                            Positioned.fill(
+                              child: IgnorePointer(
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    border: Border.all(
+                                      color: AppTheme.blueLight,
+                                      width: 2,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ]),
                       ),
-                  ]),
+                    ),
+                  ),
                 ),
-              ),
+                if (referenceHelperPoint != null &&
+                    onShowReferenceHelper != null)
+                  Positioned(
+                    right: 12,
+                    top: 12,
+                    child: _referencePointHelperButton(
+                      pointIndex: referenceHelperPoint,
+                      onTap: onShowReferenceHelper,
+                    ),
+                  ),
+              ],
             ),
           ),
         );
@@ -4470,46 +5208,28 @@ class _CompareScreenState extends State<CompareScreen>
     ctrl.value = m;
   }
 
-  Widget _resultSummaryBar(CompareResult r) {
-    return Container(
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: AppTheme.simColor(r.score).withOpacity(0.08),
-        border: Border.all(color: AppTheme.simColor(r.score).withOpacity(0.45)),
-      ),
-      child: Wrap(
-        spacing: 12,
-        runSpacing: 6,
-        children: [
-          _metricChip('Сходство', '${r.score.toStringAsFixed(1)}%'),
-          _metricChip('Отличия', '${r.diffPercent.toStringAsFixed(1)}%'),
-          if (r.maxDeltaE != null)
-            _metricChip('Макс. ΔE', r.maxDeltaE!.toStringAsFixed(1)),
-          if (r.defectZoneCount != null)
-            _metricChip('Зоны', '${r.defectZoneCount}'),
-          if (r.labScore != null)
-            _metricChip('Lab', '${r.labScore!.toStringAsFixed(1)}%'),
-          _metricChip('Размер эталона', r.refSize),
-          _metricChip('Размер образца', r.cmpSize),
-        ],
-      ),
-    );
-  }
-
   Widget _inspectorPanel({bool compact = false}) {
     final r = _result;
     return Container(
       decoration: const BoxDecoration(
-        color: Color(0xFFE3E5E1),
-        border: Border(left: BorderSide(color: Color(0xFF8C929C))),
+        color: Color(0xFFF2F6F7),
       ),
       child: SingleChildScrollView(
-        padding: const EdgeInsets.all(10),
+        padding: const EdgeInsets.fromLTRB(12, 4, 12, 20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _railHeader('Инспектор'),
-            const SizedBox(height: 8),
+            const Text(
+              'АКТИВНЫЕ ДАННЫЕ',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                fontFamily: 'monospace',
+                letterSpacing: 0.8,
+                color: Color(0xFF607681),
+              ),
+            ),
+            const SizedBox(height: 10),
             _inspectorStatusCard(),
             const SizedBox(height: 8),
             _jobInspectorSection(),
@@ -4577,6 +5297,30 @@ class _CompareScreenState extends State<CompareScreen>
             ]),
             const SizedBox(height: 8),
             _aiInspectorSection(),
+            if (r != null &&
+                (_inspectionTool == _InspectionTool.point ||
+                    _pointProbe != null)) ...[
+              const SizedBox(height: 8),
+              _pointProbePanel(),
+            ],
+            if (r != null && _showAreaLoupePanel) ...[
+              const SizedBox(height: 8),
+              _areaLoupePanel(),
+            ],
+            if (_compareStatus != null) ...[
+              const SizedBox(height: 8),
+              _compareProgressPanel(compact: true),
+            ],
+            if (r != null ||
+                CheckHistoryService.checks.value.any(
+                  (protocol) =>
+                      _activeReferenceId == null ||
+                      protocol.referenceId == _activeReferenceId ||
+                      protocol.referenceLabel == _savedRefLabel,
+                )) ...[
+              const SizedBox(height: 8),
+              _checkProtocolListPanel(),
+            ],
           ],
         ),
       ),
@@ -4594,11 +5338,11 @@ class _CompareScreenState extends State<CompareScreen>
         ? AppTheme.blueDark
         : AppTheme.simColor(r.score);
     return Container(
-      padding: const EdgeInsets.all(10),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: color, width: 2),
-        boxShadow: AppTheme.shadowSubtle,
+        color: color.withValues(alpha: 0.08),
+        border: Border.all(color: color.withValues(alpha: 0.34)),
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -4606,7 +5350,7 @@ class _CompareScreenState extends State<CompareScreen>
           Text(
             status,
             style: TextStyle(
-              fontSize: 18,
+              fontSize: 16,
               color: color,
               fontWeight: FontWeight.bold,
             ),
@@ -4913,11 +5657,11 @@ class _CompareScreenState extends State<CompareScreen>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
       decoration: BoxDecoration(
-        color: active ? const Color(0xFFEAF6FC) : Colors.white,
+        color: active ? const Color(0xFFEAF6F8) : const Color(0xFFF7F9FA),
         border: Border.all(
-          color: active ? AppTheme.blue : AppTheme.border,
+          color: active ? const Color(0xFF8ACDD5) : const Color(0xFFD8E2E6),
         ),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(10),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(
@@ -5324,10 +6068,11 @@ class _CompareScreenState extends State<CompareScreen>
 
   Widget _inspectorSection(String title, List<Widget> children) {
     return Container(
-      padding: const EdgeInsets.all(8),
+      padding: const EdgeInsets.all(11),
       decoration: BoxDecoration(
-        color: const Color(0xFFF9FAF7),
-        border: Border.all(color: AppTheme.silverDark),
+        color: Colors.white,
+        border: Border.all(color: const Color(0xFFD8E2E6)),
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -6517,6 +7262,7 @@ class _CompareScreenState extends State<CompareScreen>
             y: py,
             index: e.key + 1,
             color: color,
+            viewportSize: Size(availableWidth, panelHeight),
           ),
         );
       }).toList();
@@ -7644,7 +8390,7 @@ class _CompareScreenState extends State<CompareScreen>
       child: AspectRatio(
         aspectRatio: 16 / 9,
         child: Container(
-          color: Colors.black,
+          color: AppTheme.canvas,
           child: LayoutBuilder(
             builder: (context, constraints) {
               final boxSize = Size(constraints.maxWidth, constraints.maxHeight);
@@ -7707,7 +8453,8 @@ class _CompareScreenState extends State<CompareScreen>
                   ),
                   if (refBase != null &&
                       cmpBase != null &&
-                      _inspectionTool == _InspectionTool.loupe)
+                      (_inspectionTool == _InspectionTool.loupe ||
+                          _loupeDragStart != null))
                     Positioned.fill(
                       child: GestureDetector(
                         behavior: HitTestBehavior.opaque,
@@ -7778,30 +8525,90 @@ class _CompareScreenState extends State<CompareScreen>
       settings: _measurementSettings,
       pixelsPerMm: AppConfig.canonicalPixelsPerMm,
     );
+    var refLab = refMeasurement.lab;
+    var cmpLab = cmpMeasurement.lab;
+    var refDensity = OpticalDensityMeasurement.imageRelativeFromRgb(
+      refMeasurement.red,
+      refMeasurement.green,
+      refMeasurement.blue,
+    );
+    var cmpDensity = OpticalDensityMeasurement.imageRelativeFromRgb(
+      cmpMeasurement.red,
+      cmpMeasurement.green,
+      cmpMeasurement.blue,
+    );
+    final calibrationProfile = _cameraCalibrationProfile;
+    final calibrationModel = calibrationProfile?.model;
+    if (calibrationProfile?.enabled == true && calibrationModel != null) {
+      final calibratedRefLab = calibrationModel.labForRgb(
+        refMeasurement.red,
+        refMeasurement.green,
+        refMeasurement.blue,
+      );
+      final calibratedCmpLab = calibrationModel.labForRgb(
+        cmpMeasurement.red,
+        cmpMeasurement.green,
+        cmpMeasurement.blue,
+      );
+      refLab = LabColor(
+        calibratedRefLab.l,
+        calibratedRefLab.a,
+        calibratedRefLab.b,
+      );
+      cmpLab = LabColor(
+        calibratedCmpLab.l,
+        calibratedCmpLab.a,
+        calibratedCmpLab.b,
+      );
+      final calibratedRefDensity = calibrationModel.densityForRgb(
+        refMeasurement.red,
+        refMeasurement.green,
+        refMeasurement.blue,
+      );
+      final calibratedCmpDensity = calibrationModel.densityForRgb(
+        cmpMeasurement.red,
+        cmpMeasurement.green,
+        cmpMeasurement.blue,
+      );
+      final calibratedDensityReady =
+          calibrationModel.validationDensityMae != null;
+      if (calibratedDensityReady && calibratedRefDensity != null) {
+        refDensity = OpticalDensityMeasurement(
+          cyan: calibratedRefDensity.c,
+          magenta: calibratedRefDensity.m,
+          yellow: calibratedRefDensity.y,
+          black: calibratedRefDensity.k,
+        );
+      }
+      if (calibratedDensityReady && calibratedCmpDensity != null) {
+        cmpDensity = OpticalDensityMeasurement(
+          cyan: calibratedCmpDensity.c,
+          magenta: calibratedCmpDensity.m,
+          yellow: calibratedCmpDensity.y,
+          black: calibratedCmpDensity.k,
+        );
+      }
+    }
     setState(() {
       _pointProbe = _PointProbe(
-        x: rx,
-        y: ry,
         normalized: Offset(nx, ny),
         imageSize: Size(ref.width.toDouble(), ref.height.toDouble()),
-        refLab: _LabColor.fromLab(refMeasurement.lab),
-        cmpLab: _LabColor.fromLab(cmpMeasurement.lab),
-        refCmyk: _CmykColor.fromRgb(
-          refMeasurement.red,
-          refMeasurement.green,
-          refMeasurement.blue,
-        ),
-        cmpCmyk: _CmykColor.fromRgb(
-          cmpMeasurement.red,
-          cmpMeasurement.green,
-          cmpMeasurement.blue,
-        ),
+        refLab: _LabColor.fromLab(refLab),
+        cmpLab: _LabColor.fromLab(cmpLab),
+        refDensity: refDensity,
+        cmpDensity: cmpDensity,
         deltaE: ColorDifferenceCalculator.deltaE(
-          refMeasurement.lab,
-          cmpMeasurement.lab,
+          refLab,
+          cmpLab,
           _measurementSettings.deltaEFormula,
         ),
         formulaLabel: _measurementSettings.deltaEFormula.shortLabel,
+        measurementSource:
+            calibrationProfile?.enabled == true && calibrationModel != null
+                ? calibrationModel.validationDensityMae == null
+                    ? 'профиль ${calibrationProfile!.name} · D по изображению'
+                    : 'профиль ${calibrationProfile!.name}'
+                : 'по изображению',
         apertureLabel: _measurementSettings.aperture.label,
         sampledPixels: min(
           refMeasurement.sampledPixels,
@@ -8250,16 +9057,21 @@ class _AnchorPointMarker extends StatelessWidget {
   final double x, y;
   final int index;
   final Color color;
+  final Size? viewportSize;
+  final bool emphasized;
   const _AnchorPointMarker({
     required this.ctrl,
     required this.x,
     required this.y,
     required this.index,
     this.color = Colors.red,
+    this.viewportSize,
+    this.emphasized = false,
   });
 
-  static const double _dotSize = 3;
-  static const double _labelOffset = 24;
+  static const double _dotSize = 12;
+  static const double _activeDotSize = 17;
+  static const double _labelOffset = 18;
   static const double _labelSize = 16;
 
   @override
@@ -8270,27 +9082,55 @@ class _AnchorPointMarker extends StatelessWidget {
         final scale = ctrl.value.getMaxScaleOnAxis();
         final inv = scale <= 0 ? 1.0 : 1 / scale;
         final off = _labelOffset * inv;
+        final dotSize = emphasized ? _activeDotSize : _dotSize;
+        var labelLeft = x + off;
+        var labelTop = y - off - _labelSize;
+        final viewport = viewportSize;
+        if (viewport != null) {
+          if (labelLeft + _labelSize > viewport.width - 2) {
+            labelLeft = x - off - _labelSize;
+          }
+          if (labelTop < 2) labelTop = y + off;
+          labelLeft = labelLeft.clamp(2.0, max(2.0, viewport.width - 18));
+          labelTop = labelTop.clamp(2.0, max(2.0, viewport.height - 18));
+        }
         return Stack(
           children: [
             Positioned(
-              left: x - _dotSize / 2,
-              top: y - _dotSize / 2,
-              width: _dotSize,
-              height: _dotSize,
+              left: x - dotSize / 2,
+              top: y - dotSize / 2,
+              width: dotSize,
+              height: dotSize,
               child: Transform.scale(
                 scale: inv,
                 child: Container(
                   decoration: BoxDecoration(
-                    color: color.withOpacity(0.85),
+                    color: color.withOpacity(0.14),
                     shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white, width: 0.8),
+                    border: Border.all(
+                      color: color,
+                      width: emphasized ? 2.4 : 1.8,
+                    ),
+                    boxShadow: const [
+                      BoxShadow(color: Colors.black87, blurRadius: 3),
+                    ],
+                  ),
+                  child: Center(
+                    child: Container(
+                      width: 3,
+                      height: 3,
+                      decoration: BoxDecoration(
+                        color: color,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
                   ),
                 ),
               ),
             ),
             Positioned(
-              left: x + off,
-              top: y - off - _labelSize,
+              left: labelLeft,
+              top: labelTop,
               width: _labelSize,
               height: _labelSize,
               child: Transform.scale(
@@ -8300,6 +9140,7 @@ class _AnchorPointMarker extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: Colors.black87,
                     borderRadius: BorderRadius.circular(3),
+                    border: Border.all(color: color, width: 1),
                   ),
                   child: Text(
                     '$index',
@@ -8363,30 +9204,28 @@ class _LevelConclusion {
 }
 
 class _PointProbe {
-  final int x;
-  final int y;
   final Offset normalized;
   final Size imageSize;
   final _LabColor refLab;
   final _LabColor cmpLab;
-  final _CmykColor refCmyk;
-  final _CmykColor cmpCmyk;
+  final OpticalDensityMeasurement refDensity;
+  final OpticalDensityMeasurement cmpDensity;
   final double deltaE;
   final String formulaLabel;
+  final String measurementSource;
   final String apertureLabel;
   final int sampledPixels;
 
   const _PointProbe({
-    required this.x,
-    required this.y,
     required this.normalized,
     required this.imageSize,
     required this.refLab,
     required this.cmpLab,
-    required this.refCmyk,
-    required this.cmpCmyk,
+    required this.refDensity,
+    required this.cmpDensity,
     required this.deltaE,
     required this.formulaLabel,
+    required this.measurementSource,
     required this.apertureLabel,
     required this.sampledPixels,
   });
@@ -8423,30 +9262,6 @@ class _LabColor {
       'L ${l.toStringAsFixed(1)}  a ${a.toStringAsFixed(1)}  b ${b.toStringAsFixed(1)}';
 }
 
-class _CmykColor {
-  final double c;
-  final double m;
-  final double y;
-  final double k;
-
-  const _CmykColor(this.c, this.m, this.y, this.k);
-
-  factory _CmykColor.fromRgb(double red, double green, double blue) {
-    final r = (red / 255.0).clamp(0.0, 1.0);
-    final g = (green / 255.0).clamp(0.0, 1.0);
-    final b = (blue / 255.0).clamp(0.0, 1.0);
-    final k = 1.0 - max(r, max(g, b));
-    if (k >= 0.999) return const _CmykColor(0, 0, 0, 100);
-    final c = (1.0 - r - k) / (1.0 - k);
-    final m = (1.0 - g - k) / (1.0 - k);
-    final y = (1.0 - b - k) / (1.0 - k);
-    return _CmykColor(c * 100, m * 100, y * 100, k * 100);
-  }
-
-  String get label => 'C ${c.toStringAsFixed(1)}  M ${m.toStringAsFixed(1)}\n'
-      'Y ${y.toStringAsFixed(1)}  K ${k.toStringAsFixed(1)}';
-}
-
 class _ImageBoundsPainter extends CustomPainter {
   final Rect rect;
 
@@ -8464,6 +9279,253 @@ class _ImageBoundsPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _ImageBoundsPainter oldDelegate) {
     return oldDelegate.rect != rect;
+  }
+}
+
+class ReferencePointHelperDialog extends StatefulWidget {
+  final Uint8List bytes;
+  final Size imageSize;
+  final List<Offset> points;
+  final int activeIndex;
+
+  const ReferencePointHelperDialog({
+    required this.bytes,
+    required this.imageSize,
+    required this.points,
+    required this.activeIndex,
+  });
+
+  @override
+  State<ReferencePointHelperDialog> createState() =>
+      _ReferencePointHelperDialogState();
+}
+
+class _ReferencePointHelperDialogState
+    extends State<ReferencePointHelperDialog> {
+  final TransformationController _controller = TransformationController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _zoom(double factor) {
+    final matrix = _controller.value.clone()
+      ..multiply(Matrix4.diagonal3Values(factor, factor, 1));
+    final scale = matrix.getMaxScaleOnAxis();
+    if (scale < 1 || scale > 8) return;
+    _controller.value = matrix;
+  }
+
+  void _focusActive(Size viewport, Rect imageRect) {
+    final point = widget.points[widget.activeIndex - 1];
+    final x =
+        imageRect.left + point.dx / widget.imageSize.width * imageRect.width;
+    final y =
+        imageRect.top + point.dy / widget.imageSize.height * imageRect.height;
+    const scale = 3.0;
+    final matrix = Matrix4.diagonal3Values(scale, scale, 1)
+      ..setTranslationRaw(
+        viewport.width / 2 - x * scale,
+        viewport.height / 2 - y * scale,
+        0,
+      );
+    _controller.value = matrix;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final media = MediaQuery.sizeOf(context);
+    final dialogWidth = min(980.0, media.width - 28);
+    final dialogHeight = min(760.0, media.height - 40);
+    final previewScale = min(
+      1.0,
+      3072 / max(widget.imageSize.width, widget.imageSize.height),
+    );
+    final cacheWidth = max(1, (widget.imageSize.width * previewScale).round());
+    final cacheHeight =
+        max(1, (widget.imageSize.height * previewScale).round());
+
+    return Dialog(
+      insetPadding: const EdgeInsets.all(14),
+      backgroundColor: const Color(0xFF1F282D),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      child: SizedBox(
+        width: dialogWidth,
+        height: dialogHeight,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 8, 6, 8),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.visibility_outlined,
+                    color: Color(0xFF70FF96),
+                    size: 20,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Эталон · точка ${widget.activeIndex}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    tooltip: 'Закрыть',
+                    icon: const Icon(Icons.close, color: Colors.white70),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final viewport = constraints.biggest;
+                  final fit = min(
+                    viewport.width / widget.imageSize.width,
+                    viewport.height / widget.imageSize.height,
+                  );
+                  final imageRect = Rect.fromLTWH(
+                    (viewport.width - widget.imageSize.width * fit) / 2,
+                    (viewport.height - widget.imageSize.height * fit) / 2,
+                    widget.imageSize.width * fit,
+                    widget.imageSize.height * fit,
+                  );
+                  return ClipRect(
+                    child: Stack(
+                      children: [
+                        Positioned.fill(
+                          child: InteractiveViewer(
+                            transformationController: _controller,
+                            boundaryMargin: const EdgeInsets.all(160),
+                            minScale: 1,
+                            maxScale: 8,
+                            child: SizedBox(
+                              width: viewport.width,
+                              height: viewport.height,
+                              child: Stack(
+                                children: [
+                                  Positioned.fromRect(
+                                    rect: imageRect,
+                                    child: Image.memory(
+                                      widget.bytes,
+                                      fit: BoxFit.fill,
+                                      cacheWidth: cacheWidth,
+                                      cacheHeight: cacheHeight,
+                                      gaplessPlayback: true,
+                                      filterQuality: FilterQuality.medium,
+                                    ),
+                                  ),
+                                  for (var index = 0;
+                                      index < widget.points.length;
+                                      index++)
+                                    Positioned.fill(
+                                      child: _AnchorPointMarker(
+                                        ctrl: _controller,
+                                        x: imageRect.left +
+                                            widget.points[index].dx /
+                                                widget.imageSize.width *
+                                                imageRect.width,
+                                        y: imageRect.top +
+                                            widget.points[index].dy /
+                                                widget.imageSize.height *
+                                                imageRect.height,
+                                        index: index + 1,
+                                        color: index + 1 == widget.activeIndex
+                                            ? const Color(0xFFFF8A3D)
+                                            : const Color(0xFF65F58B),
+                                        viewportSize: viewport,
+                                        emphasized:
+                                            index + 1 == widget.activeIndex,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          right: 10,
+                          top: 10,
+                          child: Column(
+                            children: [
+                              _ReferenceHelperControl(
+                                icon: Icons.gps_fixed,
+                                tooltip: 'К точке ${widget.activeIndex}',
+                                onTap: () => _focusActive(viewport, imageRect),
+                              ),
+                              const SizedBox(height: 5),
+                              _ReferenceHelperControl(
+                                icon: Icons.add,
+                                tooltip: 'Увеличить',
+                                onTap: () => _zoom(1.3),
+                              ),
+                              const SizedBox(height: 5),
+                              _ReferenceHelperControl(
+                                icon: Icons.remove,
+                                tooltip: 'Уменьшить',
+                                onTap: () => _zoom(0.77),
+                              ),
+                              const SizedBox(height: 5),
+                              _ReferenceHelperControl(
+                                icon: Icons.fit_screen,
+                                tooltip: 'Вся карта',
+                                onTap: () =>
+                                    _controller.value = Matrix4.identity(),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ReferenceHelperControl extends StatelessWidget {
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  const _ReferenceHelperControl({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: const Color(0xD92B353A),
+        borderRadius: BorderRadius.circular(6),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(6),
+          child: SizedBox(
+            width: 36,
+            height: 36,
+            child: Icon(icon, size: 18, color: const Color(0xFF70FF96)),
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -8489,6 +9551,7 @@ class _AnchorLoupeDialog extends StatefulWidget {
 }
 
 class _AnchorLoupeDialogState extends State<_AnchorLoupeDialog> {
+  static const double _maxPreviewEdge = 3072;
   ui.Image? _image;
   late Offset _center;
   Offset? _selectedPoint;
@@ -8503,9 +9566,31 @@ class _AnchorLoupeDialogState extends State<_AnchorLoupeDialog> {
   }
 
   Future<void> _decode() async {
-    final codec = await ui.instantiateImageCodec(widget.bytes);
+    final previewScale = min(
+      1.0,
+      _maxPreviewEdge / max(widget.imageSize.width, widget.imageSize.height),
+    );
+    final targetWidth = max(1, (widget.imageSize.width * previewScale).round());
+    final targetHeight =
+        max(1, (widget.imageSize.height * previewScale).round());
+    final codec = await ui.instantiateImageCodec(
+      widget.bytes,
+      targetWidth: targetWidth,
+      targetHeight: targetHeight,
+    );
     final frame = await codec.getNextFrame();
-    if (mounted) setState(() => _image = frame.image);
+    codec.dispose();
+    if (!mounted) {
+      frame.image.dispose();
+      return;
+    }
+    setState(() => _image = frame.image);
+  }
+
+  @override
+  void dispose() {
+    _image?.dispose();
+    super.dispose();
   }
 
   Offset _clampPoint(Offset p) {
@@ -8602,6 +9687,7 @@ class _AnchorLoupeDialogState extends State<_AnchorLoupeDialog> {
                     : CustomPaint(
                         painter: _AnchorLoupePainter(
                           image: image,
+                          originalImageSize: widget.imageSize,
                           source: source,
                           roughPoint: widget.roughPoint,
                           selectedPoint: _selectedPoint,
@@ -8688,12 +9774,14 @@ class _LoupeZoomBtn extends StatelessWidget {
 
 class _AnchorLoupePainter extends CustomPainter {
   final ui.Image image;
+  final Size originalImageSize;
   final Rect source;
   final Offset roughPoint;
   final Offset? selectedPoint;
 
   const _AnchorLoupePainter({
     required this.image,
+    required this.originalImageSize,
     required this.source,
     required this.roughPoint,
     required this.selectedPoint,
@@ -8703,7 +9791,15 @@ class _AnchorLoupePainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final dest = Offset.zero & size;
     final paint = Paint()..filterQuality = FilterQuality.none;
-    canvas.drawImageRect(image, source, dest, paint);
+    final sourceScaleX = image.width / originalImageSize.width;
+    final sourceScaleY = image.height / originalImageSize.height;
+    final previewSource = Rect.fromLTRB(
+      source.left * sourceScaleX,
+      source.top * sourceScaleY,
+      source.right * sourceScaleX,
+      source.bottom * sourceScaleY,
+    );
+    canvas.drawImageRect(image, previewSource, dest, paint);
 
     final gridPaint = Paint()
       ..color = Colors.white.withOpacity(0.14)
@@ -8780,6 +9876,7 @@ class _AnchorLoupePainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _AnchorLoupePainter oldDelegate) {
     return oldDelegate.image != image ||
+        oldDelegate.originalImageSize != originalImageSize ||
         oldDelegate.source != source ||
         oldDelegate.roughPoint != roughPoint ||
         oldDelegate.selectedPoint != selectedPoint;
@@ -8895,6 +9992,36 @@ class _LoupeSelectionPainter extends CustomPainter {
         oldDelegate.imageSize != imageSize ||
         oldDelegate.active != active;
   }
+}
+
+class _HudLoupePainter extends CustomPainter {
+  final Color color;
+
+  const _HudLoupePainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill
+      ..isAntiAlias = false;
+    const pixel = 2.0;
+    canvas.drawRect(const Rect.fromLTWH(6, 2, 10, pixel), paint);
+    canvas.drawRect(const Rect.fromLTWH(4, 4, 2, 2), paint);
+    canvas.drawRect(const Rect.fromLTWH(16, 4, 2, 2), paint);
+    canvas.drawRect(const Rect.fromLTWH(2, 6, pixel, 10), paint);
+    canvas.drawRect(const Rect.fromLTWH(18, 6, pixel, 10), paint);
+    canvas.drawRect(const Rect.fromLTWH(4, 16, 2, 2), paint);
+    canvas.drawRect(const Rect.fromLTWH(16, 16, 2, 2), paint);
+    canvas.drawRect(const Rect.fromLTWH(6, 18, 10, pixel), paint);
+    canvas.drawRect(const Rect.fromLTWH(17, 17, 3, 3), paint);
+    canvas.drawRect(const Rect.fromLTWH(19, 19, 3, 3), paint);
+    canvas.drawRect(const Rect.fromLTWH(21, 21, 3, 3), paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _HudLoupePainter oldDelegate) =>
+      oldDelegate.color != color;
 }
 
 class _ZoomBtn extends StatelessWidget {
