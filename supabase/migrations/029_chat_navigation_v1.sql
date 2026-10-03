@@ -60,7 +60,6 @@ RETURNS TABLE(
   unread_count BIGINT
 )
 LANGUAGE plpgsql
-STABLE
 SECURITY DEFINER
 SET search_path = public
 AS $$
@@ -68,6 +67,15 @@ BEGIN
   IF auth.uid() IS NULL THEN
     RAISE EXCEPTION 'Authentication required';
   END IF;
+
+  -- Existing history predates read receipts. The first thread listing becomes
+  -- the user's baseline so old messages do not turn into false unread badges.
+  INSERT INTO chat_thread_reads(group_id, user_id, last_read_at)
+  SELECT chat.id, auth.uid(), now()
+  FROM chat_groups AS chat
+  WHERE can_access_chat_group_v1(chat.id)
+    AND NOT chat.is_deleted
+  ON CONFLICT (group_id, user_id) DO NOTHING;
 
   RETURN QUERY
   SELECT

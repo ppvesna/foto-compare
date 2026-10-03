@@ -69,6 +69,10 @@ void main() {
     expect(sql, contains('can_access_chat_group_v1(target_thread)'));
     expect(
       sql,
+      contains('ON CONFLICT (group_id, user_id) DO NOTHING'),
+    );
+    expect(
+      sql,
       contains('REVOKE ALL ON TABLE chat_thread_reads FROM authenticated'),
     );
   });
