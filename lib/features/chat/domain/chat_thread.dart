@@ -1,7 +1,8 @@
 enum ChatThreadKind {
   personal,
   organization,
-  job,
+  jobCustomer,
+  jobInternal,
   direct,
   service,
 }
@@ -34,7 +35,8 @@ class ChatThread {
   });
 
   bool get isArchivedJob =>
-      kind == ChatThreadKind.job &&
+      (kind == ChatThreadKind.jobCustomer ||
+          kind == ChatThreadKind.jobInternal) &&
       (jobStatus == 'completed' || jobStatus == 'archived');
 
   ChatThread copyWith({

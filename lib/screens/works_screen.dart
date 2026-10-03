@@ -12,7 +12,7 @@ class WorksScreen extends StatefulWidget {
   final ProductionWorkflowService workflowService;
   final CustomerDirectoryService? customerDirectoryService;
   final ProductionJobService? productionJobService;
-  final ValueChanged<ProductionWorkSummary> onOpenComparison;
+  final ValueChanged<ProductionComparisonTarget> onOpenComparison;
   final ValueChanged<ProductionWorkSummary> onOpenChat;
 
   const WorksScreen({
@@ -264,7 +264,7 @@ class _WorksScreenState extends State<WorksScreen> {
                 const SizedBox(width: 8),
                 const Expanded(
                   child: Text(
-                    'Работы',
+                    'Работа',
                     style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.w900,
@@ -464,13 +464,15 @@ class _WorksScreenState extends State<WorksScreen> {
                   ),
                   const SizedBox(height: 3),
                   Text(
-                    blocked
-                        ? '${work.stage.label} · блокировок ${work.activeBlockCount}'
-                        : work.stage.label,
+                    work.isCustomerView
+                        ? work.customerStatus
+                        : blocked
+                            ? '${work.stage.label} · блокировок ${work.activeBlockCount}'
+                            : work.stage.label,
                     style: TextStyle(
                       fontSize: 10.5,
                       fontWeight: FontWeight.w700,
-                      color: blocked
+                      color: !work.isCustomerView && blocked
                           ? const Color(0xFFA22D25)
                           : const Color(0xFF32727A),
                     ),
@@ -502,11 +504,11 @@ class _WorksScreenState extends State<WorksScreen> {
       );
     }
     final work = detail.summary;
+    if (work.isCustomerView) {
+      return _detailFrame(_customerDetail(detail, showBack: showBack));
+    }
     final activeBlocks =
         detail.blocks.where((block) => block.isActive).toList();
-    final canOpenComparison =
-        widget.organizationAccess.role == OrganizationRole.admin ||
-            widget.organizationAccess.role == OrganizationRole.employee;
     return _detailFrame(
       SingleChildScrollView(
         padding: const EdgeInsets.all(14),
@@ -554,12 +556,6 @@ class _WorksScreenState extends State<WorksScreen> {
               spacing: 7,
               runSpacing: 7,
               children: [
-                if (canOpenComparison)
-                  FilledButton.icon(
-                    onPressed: () => widget.onOpenComparison(work),
-                    icon: const Icon(Icons.compare_outlined, size: 18),
-                    label: const Text('Открыть сравнение'),
-                  ),
                 OutlinedButton.icon(
                   onPressed: () => widget.onOpenChat(work),
                   icon: const Icon(Icons.chat_bubble_outline, size: 18),
@@ -572,22 +568,36 @@ class _WorksScreenState extends State<WorksScreen> {
                     icon: const Icon(Icons.arrow_forward_rounded, size: 18),
                     label: const Text('Следующий этап'),
                   ),
-                if (work.canBlock)
+                if (work.canCreateBatch)
                   OutlinedButton.icon(
-                    key: const ValueKey('block-work'),
-                    onPressed: _createBlock,
-                    icon: const Icon(Icons.block_rounded, size: 18),
-                    label: const Text('Зафиксировать дефект'),
+                    key: const ValueKey('create-production-batch'),
+                    onPressed: _createBatch,
+                    icon: const Icon(Icons.playlist_add_rounded, size: 18),
+                    label: const Text('Новая партия'),
                   ),
-                if (work.canAssignControllers)
+                if (work.canComplete && work.jobStatus == 'active')
                   OutlinedButton.icon(
-                    key: const ValueKey('manage-work-controllers'),
-                    onPressed: _manageControllers,
-                    icon: const Icon(Icons.verified_user_outlined, size: 18),
-                    label: const Text('Контролёры'),
+                    key: const ValueKey('complete-production-work'),
+                    onPressed: activeBlocks.isEmpty ? _completeWork : null,
+                    icon: const Icon(Icons.task_alt_rounded, size: 18),
+                    label: const Text('Завершить работу'),
+                  ),
+                if (work.canRestore && work.jobStatus != 'active')
+                  OutlinedButton.icon(
+                    key: const ValueKey('restore-production-work'),
+                    onPressed: _restoreWork,
+                    icon: const Icon(Icons.unarchive_outlined, size: 18),
+                    label: const Text('Вернуть в работу'),
                   ),
               ],
             ),
+            const SizedBox(height: 18),
+            _sectionTitle('Партии и проверки', Icons.inventory_2_outlined),
+            const SizedBox(height: 8),
+            if (detail.batches.isEmpty)
+              const Text('Партии ещё не созданы.')
+            else
+              ...detail.batches.map((batch) => _batchCard(batch, work)),
             if (activeBlocks.isNotEmpty) ...[
               const SizedBox(height: 18),
               _sectionTitle(
@@ -605,6 +615,186 @@ class _WorksScreenState extends State<WorksScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _customerDetail(ProductionWorkDetail detail,
+      {required bool showBack}) {
+    final work = detail.summary;
+    return Padding(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(children: [
+            if (showBack)
+              IconButton(
+                tooltip: 'К списку',
+                onPressed: () => setState(() {
+                  _selectedJobId = null;
+                  _detail = null;
+                }),
+                icon: const Icon(Icons.arrow_back_rounded),
+              ),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(work.jobNumber,
+                      style: const TextStyle(
+                          fontSize: 20, fontWeight: FontWeight.w900)),
+                  if (work.customerName.isNotEmpty)
+                    Text(work.customerName,
+                        style: const TextStyle(color: AppTheme.graphiteSoft)),
+                ],
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+              decoration: BoxDecoration(
+                color: work.customerStatus == 'Выполнен'
+                    ? const Color(0xFFE1EEE2)
+                    : const Color(0xFFDCEBED),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Text(work.customerStatus,
+                  style: const TextStyle(fontWeight: FontWeight.w900)),
+            ),
+          ]),
+          const SizedBox(height: 18),
+          const Text(
+            'Производственные детали, внутренние проверки и '
+            'блокировки ведёт команда исполнителя. Всё, что требует '
+            'вашего внимания, ответственный сотрудник отправит в чат.',
+            style: TextStyle(color: AppTheme.graphiteSoft, height: 1.45),
+          ),
+          const SizedBox(height: 16),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton.icon(
+              onPressed: () => widget.onOpenChat(work),
+              icon: const Icon(Icons.chat_bubble_outline, size: 18),
+              label: const Text('Открыть чат'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _batchCard(ProductionBatch batch, ProductionWorkSummary work) {
+    final details = [
+      if (batch.employeeName.isNotEmpty) batch.employeeName,
+      if (batch.material.isNotEmpty) batch.material,
+      if (batch.format.isNotEmpty) batch.format,
+      if (batch.machine.isNotEmpty) batch.machine,
+      if (batch.inks.isNotEmpty) batch.inks,
+    ];
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Material(
+        color: const Color(0xFFF7F9FA),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: const BorderSide(color: AppTheme.line),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: ExpansionTile(
+          initiallyExpanded: batch == _detail?.batches.first,
+          title: Text(batch.label,
+              style: const TextStyle(fontWeight: FontWeight.w900)),
+          subtitle: Text(
+            details.isEmpty ? batch.reason : details.join(' · '),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 10.5),
+          ),
+          childrenPadding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+          children: [
+            if (batch.units.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: Text('Добавьте стопу или рулон для проверки.'),
+              )
+            else
+              ...batch.units.map((unit) => _unitRow(unit, work)),
+            if (work.canCreateBatch &&
+                work.jobStatus == 'active' &&
+                batch.id == _detail?.batches.first.id)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: () => _addUnit(batch),
+                  icon: const Icon(Icons.add_rounded, size: 18),
+                  label: const Text('Добавить стопу или рулон'),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _unitRow(ProductionWorkUnit unit, ProductionWorkSummary work) {
+    final blocked = unit.state == ProductionUnitState.blocked;
+    final approved = unit.state == ProductionUnitState.approved;
+    return Container(
+      key: ValueKey('production-unit-${unit.id}'),
+      margin: const EdgeInsets.only(top: 7),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: blocked
+            ? const Color(0xFFFFF3F1)
+            : approved
+                ? const Color(0xFFF0F7F1)
+                : Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: blocked
+              ? const Color(0xFFE4AAA5)
+              : approved
+                  ? const Color(0xFFB8D2BA)
+                  : AppTheme.line,
+        ),
+      ),
+      child: Row(children: [
+        Icon(unit.type == ProductionUnitType.stack
+            ? Icons.layers_outlined
+            : Icons.rotate_90_degrees_ccw_outlined),
+        const SizedBox(width: 9),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(unit.label,
+                  style: const TextStyle(fontWeight: FontWeight.w900)),
+              Text(
+                '${unit.state.label}'
+                '${unit.attemptCount == 0 ? '' : ' · сравнений ${unit.attemptCount}'}'
+                '${unit.latestScore == null ? '' : ' · ${unit.latestScore!.toStringAsFixed(1)}%'}',
+                style: const TextStyle(
+                    fontSize: 10.5, color: AppTheme.graphiteSoft),
+              ),
+            ],
+          ),
+        ),
+        if (work.jobStatus == 'active' && work.canBlock) ...[
+          TextButton.icon(
+            key: ValueKey('open-unit-comparison-${unit.id}'),
+            onPressed: () => widget.onOpenComparison(
+              ProductionComparisonTarget(work: work, unit: unit),
+            ),
+            icon: const Icon(Icons.compare_outlined, size: 17),
+            label: Text(unit.attemptCount == 0 ? 'Проверить' : 'Повторить'),
+          ),
+          if (work.canBlock && !blocked)
+            IconButton(
+              tooltip: 'Заблокировать',
+              onPressed: () => _blockUnit(unit),
+              icon: const Icon(Icons.block_rounded, size: 19),
+            ),
+        ],
+      ]),
     );
   }
 
@@ -814,6 +1004,7 @@ class _WorksScreenState extends State<WorksScreen> {
         'blocked' => 'Производство заблокировано',
         'unblocked' => 'Блокировка снята',
         'completed' => 'Работа завершена',
+        'restored' => 'Работа возвращена из архива',
         _ => event.toStage.label,
       };
 
@@ -994,74 +1185,181 @@ class _WorksScreenState extends State<WorksScreen> {
     }
   }
 
-  Future<void> _createBlock() async {
+  Future<void> _createBatch() async {
     final detail = _detail;
     if (detail == null) return;
-    final scopeController = TextEditingController(text: 'Вся работа');
-    final reasonController = TextEditingController();
-    var customerVisible = false;
+    List<ProductionWorker> workers;
+    try {
+      workers = await widget.workflowService.listWorkers(detail.summary.jobId);
+    } catch (error) {
+      if (mounted) {
+        setState(() => _error = 'Не удалось загрузить сотрудников: $error');
+      }
+      return;
+    }
+    if (!mounted) return;
+    ProductionWorker? employee = workers.isEmpty ? null : workers.first;
+    final reason = TextEditingController(text: 'Новая партия');
+    final machine = TextEditingController();
+    final material = TextEditingController();
+    final format = TextEditingController();
+    final inks = TextEditingController();
     String? validation;
     final submitted = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Зафиксировать дефект'),
+          title: const Text('Новая партия'),
           content: SizedBox(
-            width: 500,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
+            width: 560,
+            child: SingleChildScrollView(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                if (workers.isNotEmpty)
+                  DropdownButtonFormField<ProductionWorker>(
+                    initialValue: employee,
+                    decoration: const InputDecoration(labelText: 'Исполнитель'),
+                    items: workers
+                        .map((worker) => DropdownMenuItem(
+                              value: worker,
+                              child: Text(worker.label),
+                            ))
+                        .toList(),
+                    onChanged: (value) => employee = value,
+                  ),
+                const SizedBox(height: 9),
                 TextField(
-                  controller: scopeController,
+                  controller: reason,
                   decoration: const InputDecoration(
-                    labelText: 'Что остановлено',
-                    hintText: 'Вся работа, тираж, листы 120–180…',
+                    labelText: 'Причина новой партии',
+                    hintText: 'Смена сотрудника, материала, формата…',
                   ),
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 9),
                 TextField(
-                  controller: reasonController,
-                  minLines: 3,
-                  maxLines: 6,
-                  decoration: const InputDecoration(
-                    labelText: 'Причина блокировки',
-                  ),
-                ),
-                CheckboxListTile(
-                  contentPadding: EdgeInsets.zero,
-                  value: customerVisible,
-                  onChanged: (value) =>
-                      setDialogState(() => customerVisible = value == true),
-                  title:
-                      const Text('Показывать причину представителю заказчика'),
-                  subtitle: const Text(
-                    'Сам статус «заблокирована» виден всегда.',
-                    style: TextStyle(fontSize: 10),
-                  ),
-                ),
-                if (validation != null)
+                    controller: machine,
+                    decoration: const InputDecoration(
+                        labelText: 'Машина (необязательно)')),
+                const SizedBox(height: 9),
+                TextField(
+                    controller: material,
+                    decoration: const InputDecoration(
+                        labelText: 'Материал (необязательно)')),
+                const SizedBox(height: 9),
+                TextField(
+                    controller: format,
+                    decoration: const InputDecoration(
+                        labelText: 'Формат или ширина рулона')),
+                const SizedBox(height: 9),
+                TextField(
+                    controller: inks,
+                    decoration: const InputDecoration(
+                        labelText: 'Краски (необязательно)')),
+                if (validation != null) ...[
+                  const SizedBox(height: 8),
                   Align(
                     alignment: Alignment.centerLeft,
-                    child: Text(
-                      validation!,
-                      style: const TextStyle(color: Color(0xFFA82820)),
-                    ),
+                    child: Text(validation!,
+                        style: const TextStyle(color: Color(0xFFA82820))),
                   ),
-              ],
+                ],
+              ]),
             ),
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Отмена'),
-            ),
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Отмена')),
             FilledButton(
               onPressed: () {
-                if (scopeController.text.trim().length < 2 ||
-                    reasonController.text.trim().length < 3) {
+                if (reason.text.trim().length < 2) {
                   setDialogState(
-                    () => validation = 'Укажите участок и причину дефекта.',
-                  );
+                      () => validation = 'Укажите причину новой партии.');
+                  return;
+                }
+                Navigator.pop(dialogContext, true);
+              },
+              child: const Text('Создать'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (submitted != true) return;
+    await _runAction(() => widget.workflowService.createBatch(
+          jobId: detail.summary.jobId,
+          employeeUserId: employee?.userId,
+          reason: reason.text,
+          machine: machine.text,
+          material: material.text,
+          format: format.text,
+          inks: inks.text,
+        ));
+  }
+
+  Future<void> _addUnit(ProductionBatch batch) async {
+    final type = await showDialog<ProductionUnitType>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('${batch.label}: что добавить?'),
+        content: const Text(
+            'Проверка и её окончательный статус будут привязаны к этому объекту.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Отмена')),
+          OutlinedButton.icon(
+            onPressed: () =>
+                Navigator.pop(dialogContext, ProductionUnitType.stack),
+            icon: const Icon(Icons.layers_outlined),
+            label: const Text('Стопа'),
+          ),
+          FilledButton.icon(
+            onPressed: () =>
+                Navigator.pop(dialogContext, ProductionUnitType.roll),
+            icon: const Icon(Icons.rotate_90_degrees_ccw_outlined),
+            label: const Text('Рулон'),
+          ),
+        ],
+      ),
+    );
+    if (type == null) return;
+    await _runAction(
+        () => widget.workflowService.createUnit(batchId: batch.id, type: type));
+  }
+
+  Future<void> _blockUnit(ProductionWorkUnit unit) async {
+    final reason = TextEditingController();
+    String? validation;
+    final submitted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text('Заблокировать ${unit.fullLabel}?'),
+          content: SizedBox(
+            width: 480,
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              TextField(
+                controller: reason,
+                autofocus: true,
+                minLines: 2,
+                maxLines: 5,
+                decoration: const InputDecoration(labelText: 'Причина'),
+              ),
+              if (validation != null)
+                Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(validation!,
+                        style: const TextStyle(color: Color(0xFFA82820)))),
+            ]),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Отмена')),
+            FilledButton(
+              onPressed: () {
+                if (reason.text.trim().length < 3) {
+                  setDialogState(() => validation = 'Кратко укажите причину.');
                   return;
                 }
                 Navigator.pop(dialogContext, true);
@@ -1072,18 +1370,40 @@ class _WorksScreenState extends State<WorksScreen> {
         ),
       ),
     );
-    if (submitted == true) {
-      await _runAction(
-        () => widget.workflowService.blockWork(
-          jobId: detail.summary.jobId,
-          scopeLabel: scopeController.text,
-          reason: reasonController.text,
-          customerVisible: customerVisible,
-        ),
-      );
-    }
-    scopeController.dispose();
-    reasonController.dispose();
+    if (submitted != true) return;
+    await _runAction(() =>
+        widget.workflowService.blockUnit(unitId: unit.id, reason: reason.text));
+  }
+
+  Future<void> _completeWork() async {
+    final detail = _detail;
+    if (detail == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Завершить работу?'),
+        content:
+            const Text('Заказ получит статус «Выполнен» и перейдёт в архив.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Отмена')),
+          FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Завершить')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await _runAction(
+        () => widget.workflowService.completeWork(detail.summary.jobId));
+  }
+
+  Future<void> _restoreWork() async {
+    final detail = _detail;
+    if (detail == null) return;
+    await _runAction(
+        () => widget.workflowService.restoreWork(detail.summary.jobId));
   }
 
   Future<void> _resolveBlock(ProductionJobBlock block) async {
@@ -1125,124 +1445,6 @@ class _WorksScreenState extends State<WorksScreen> {
     }
     controller.dispose();
   }
-
-  Future<void> _manageControllers() async {
-    final detail = _detail;
-    if (detail == null) return;
-    try {
-      final original = await widget.workflowService
-          .listControllerCandidates(detail.summary.jobId);
-      if (!mounted) return;
-      final edited = [...original];
-      final save = await showDialog<bool>(
-        context: context,
-        builder: (dialogContext) => StatefulBuilder(
-          builder: (context, setDialogState) => AlertDialog(
-            title: const Text('Контролёры дефектов'),
-            content: SizedBox(
-              width: 560,
-              child: original.isEmpty
-                  ? const Text(
-                      'В организации нет сотрудников с функцией «Специалист проверки». '
-                      'Сначала назначьте эту функцию в разделе «Команда».',
-                    )
-                  : ListView.builder(
-                      shrinkWrap: true,
-                      itemCount: edited.length,
-                      itemBuilder: (context, index) {
-                        final candidate = edited[index];
-                        return Container(
-                          margin: const EdgeInsets.only(bottom: 7),
-                          padding: const EdgeInsets.all(9),
-                          decoration: BoxDecoration(
-                            color: AppTheme.surfaceMuted,
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  candidate.nickname.isEmpty
-                                      ? candidate.label
-                                      : '${candidate.label} · ${candidate.nickname}',
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.w800),
-                                ),
-                              ),
-                              _permissionCheck(
-                                'Блокировать',
-                                candidate.canBlock,
-                                (value) => setDialogState(() {
-                                  edited[index] =
-                                      candidate.copyWith(canBlock: value);
-                                }),
-                              ),
-                              _permissionCheck(
-                                'Снимать',
-                                candidate.canUnblock,
-                                (value) => setDialogState(() {
-                                  edited[index] =
-                                      candidate.copyWith(canUnblock: value);
-                                }),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext, false),
-                child: const Text('Отмена'),
-              ),
-              if (original.isNotEmpty)
-                FilledButton(
-                  onPressed: () => Navigator.pop(dialogContext, true),
-                  child: const Text('Сохранить'),
-                ),
-            ],
-          ),
-        ),
-      );
-      if (save != true) return;
-      await _runAction(() async {
-        for (final candidate in edited) {
-          final before =
-              original.firstWhere((item) => item.userId == candidate.userId);
-          if (before.canBlock == candidate.canBlock &&
-              before.canUnblock == candidate.canUnblock) {
-            continue;
-          }
-          await widget.workflowService.setController(
-            jobId: detail.summary.jobId,
-            userId: candidate.userId,
-            canBlock: candidate.canBlock,
-            canUnblock: candidate.canUnblock,
-          );
-        }
-      });
-    } catch (error) {
-      if (!mounted) return;
-      setState(() => _error = 'Не удалось открыть контролёров: $error');
-    }
-  }
-
-  Widget _permissionCheck(
-    String label,
-    bool value,
-    ValueChanged<bool> onChanged,
-  ) =>
-      Column(
-        children: [
-          Text(label, style: const TextStyle(fontSize: 9)),
-          Checkbox(
-            value: value,
-            visualDensity: VisualDensity.compact,
-            onChanged: (checked) => onChanged(checked == true),
-          ),
-        ],
-      );
 
   Future<void> _runAction<T>(Future<T> Function() action) async {
     setState(() => _detailLoading = true);

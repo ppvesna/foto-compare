@@ -118,7 +118,7 @@ void main() {
         ChatThread(
           id: 'job-chat-2',
           title: 'Работа № VESNA-ISOLATION-TEST-002',
-          kind: ChatThreadKind.job,
+          kind: ChatThreadKind.jobCustomer,
           organizationId: 'organization-1',
           jobId: 'job-2',
           updatedAt: DateTime.utc(2026, 9, 12),
@@ -228,7 +228,7 @@ void main() {
         ChatThread(
           id: 'job-active',
           title: 'Работа № VESNA-ACTIVE-001',
-          kind: ChatThreadKind.job,
+          kind: ChatThreadKind.jobCustomer,
           organizationId: 'organization-1',
           jobId: 'job-active',
           jobStatus: 'active',
@@ -238,7 +238,7 @@ void main() {
         ChatThread(
           id: 'job-unread',
           title: 'Работа № VESNA-UNREAD-002',
-          kind: ChatThreadKind.job,
+          kind: ChatThreadKind.jobCustomer,
           organizationId: 'organization-1',
           jobId: 'job-unread',
           jobStatus: 'active',
@@ -249,7 +249,7 @@ void main() {
         ChatThread(
           id: 'job-archive',
           title: 'Работа № VESNA-ARCHIVE-003',
-          kind: ChatThreadKind.job,
+          kind: ChatThreadKind.jobCustomer,
           organizationId: 'organization-1',
           jobId: 'job-archive',
           jobStatus: 'completed',
@@ -346,7 +346,7 @@ void main() {
       ChatThread(
         id: 'job-live',
         title: 'Работа № VESNA-LIVE-004',
-        kind: ChatThreadKind.job,
+        kind: ChatThreadKind.jobCustomer,
         organizationId: 'organization-1',
         jobId: 'job-live',
         jobStatus: 'active',

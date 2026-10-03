@@ -192,16 +192,24 @@ class SupabaseChatRepository implements ChatRepository {
         .single();
     final organizationId = thread['organization_id'] as String? ?? '';
     final jobId = thread['job_id'] as String? ?? '';
-    if (thread['kind'] != 'job' || organizationId.isEmpty || jobId.isEmpty) {
+    final internal = thread['kind'] == 'job_internal';
+    if ((thread['kind'] != 'job' && thread['kind'] != 'job_internal') ||
+        organizationId.isEmpty ||
+        jobId.isEmpty) {
       throw StateError(
           'Attachments are available only in production job chats');
     }
 
     final assetId = 'chat-${const Uuid().v4()}';
-    final scope = CloudAssetScope.organizationJobChat(
-      organizationId: organizationId,
-      jobId: jobId,
-    );
+    final scope = internal
+        ? CloudAssetScope.organizationJobInternalChat(
+            organizationId: organizationId,
+            jobId: jobId,
+          )
+        : CloudAssetScope.organizationJobChat(
+            organizationId: organizationId,
+            jobId: jobId,
+          );
     final attachment = ChatAttachment(
       assetId: assetId,
       fileName: fileName,
@@ -211,6 +219,7 @@ class SupabaseChatRepository implements ChatRepository {
       sizeBytes: upload.bytes.length,
       organizationId: organizationId,
       jobId: jobId,
+      internal: internal,
     );
     await storage.upload(
       CloudAssetUpload(
@@ -252,10 +261,15 @@ class SupabaseChatRepository implements ChatRepository {
   Future<Uint8List> loadAttachment(ChatAttachment attachment) {
     return storage.download(
       attachment.assetId,
-      scope: CloudAssetScope.organizationJobChat(
-        organizationId: attachment.organizationId,
-        jobId: attachment.jobId,
-      ),
+      scope: attachment.internal
+          ? CloudAssetScope.organizationJobInternalChat(
+              organizationId: attachment.organizationId,
+              jobId: attachment.jobId,
+            )
+          : CloudAssetScope.organizationJobChat(
+              organizationId: attachment.organizationId,
+              jobId: attachment.jobId,
+            ),
     );
   }
 
@@ -344,7 +358,9 @@ class SupabaseChatRepository implements ChatRepository {
       case 'organization':
         return ChatThreadKind.organization;
       case 'job':
-        return ChatThreadKind.job;
+        return ChatThreadKind.jobCustomer;
+      case 'job_internal':
+        return ChatThreadKind.jobInternal;
       case 'direct':
         return ChatThreadKind.direct;
       case 'service':

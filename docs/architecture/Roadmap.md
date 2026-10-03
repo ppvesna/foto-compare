@@ -58,6 +58,12 @@ Rule: every step must preserve the working application and be independently reve
   blocks, appointed inspection controllers and transition history prevent a blocked
   work from advancing and keep owner, administrator, manager, specialist and customer
   responsibilities separate.
+- Migration `031` adds numbered production batches, inspected stacks/rolls and
+  repeatable comparison attempts. The employee finishes a unit with «Допустить» or
+  «Заблокировать»; any assigned employee may block, only an administrator may unblock,
+  and an active block prevents work completion. Customers receive only the coarse
+  `В работе / Выполнен` state. Internal and customer work chats and their Storage paths
+  are separated.
 - The `vesna-test` employee and customer job sharing/revocation gate has passed. The
   remote ledger is still empty because historical migrations were applied pointwise;
   the next release task is to repair/audit that ledger before production deployment.
@@ -235,8 +241,13 @@ migration ledger remains intentionally untouched pending its separate audit.
 Migration `030` is applied pointwise to the test environment. It adds cursor-paginated
 work search, production stages, ready/blocked/completed state, partial-scope defect
 blocks, explicit block/unblock controller assignments and immutable transition history.
-The database rejects stage advancement while any defect block remains active. Client
-role testing of the new controls is the next checkpoint.
+The database rejects stage advancement while any defect block remains active.
+
+Migration `031` is applied pointwise to the test environment. It adds batches, physical
+units, inspection sessions and repeatable attempts, guarded approval/block decisions,
+work completion/archive, and separate internal work chats. Twelve existing works were
+backfilled with initial batches and internal chats. The server RPCs and schema lint are
+verified; the next checkpoint is a complete manual multi-role pass of the new controls.
 
 ## Phase 4: Inspection boundary
 

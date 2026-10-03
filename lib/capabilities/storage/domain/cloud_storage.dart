@@ -4,7 +4,12 @@ import 'storage_settings.dart';
 
 enum CloudConnectionState { disconnected, connected, error }
 
-enum CloudAssetScopeType { personal, organizationJob, organizationJobChat }
+enum CloudAssetScopeType {
+  personal,
+  organizationJob,
+  organizationJobChat,
+  organizationJobInternalChat,
+}
 
 class CloudAssetScope {
   final CloudAssetScopeType type;
@@ -25,6 +30,11 @@ class CloudAssetScope {
     required this.organizationId,
     required this.jobId,
   }) : type = CloudAssetScopeType.organizationJobChat;
+
+  const CloudAssetScope.organizationJobInternalChat({
+    required this.organizationId,
+    required this.jobId,
+  }) : type = CloudAssetScopeType.organizationJobInternalChat;
 }
 
 class CloudConnection {

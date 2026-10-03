@@ -80,11 +80,37 @@ class _ChatScreenState extends State<ChatScreen> {
 
   List<int> get _visibleChatIndexes {
     final itemCount = _usesServerChat ? _serverThreads.length : _chats.length;
-    return [
+    final indexes = [
       for (var index = 0; index < itemCount; index++)
         if (_chatMatchesNavigation(index)) index,
     ];
+    if (_usesServerChat) {
+      indexes.sort((left, right) {
+        final leftThread = _serverThreads[left];
+        final rightThread = _serverThreads[right];
+        final section = _chatSectionOrder(leftThread.kind)
+            .compareTo(_chatSectionOrder(rightThread.kind));
+        return section != 0
+            ? section
+            : rightThread.updatedAt.compareTo(leftThread.updatedAt);
+      });
+    }
+    return indexes;
   }
+
+  int _chatSectionOrder(ChatThreadKind kind) => switch (kind) {
+        ChatThreadKind.personal || ChatThreadKind.direct => 0,
+        ChatThreadKind.organization => 1,
+        ChatThreadKind.jobCustomer || ChatThreadKind.jobInternal => 2,
+        ChatThreadKind.service => 3,
+      };
+
+  String _chatSectionLabel(ChatThreadKind kind) => switch (kind) {
+        ChatThreadKind.personal || ChatThreadKind.direct => 'Личные',
+        ChatThreadKind.organization => 'Команды',
+        ChatThreadKind.jobCustomer || ChatThreadKind.jobInternal => 'Работы',
+        ChatThreadKind.service => 'Служебные',
+      };
 
   bool _chatMatchesNavigation(int index) {
     final query = _chatSearchQuery.trim().toLowerCase();
@@ -365,9 +391,15 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted) return;
       setState(() {
         _serverThreads = threads;
-        final preferredIndex = preferredJobId == null
+        var preferredIndex = preferredJobId == null
             ? -1
-            : threads.indexWhere((thread) => thread.jobId == preferredJobId);
+            : threads.indexWhere((thread) =>
+                thread.jobId == preferredJobId &&
+                thread.kind == ChatThreadKind.jobInternal);
+        if (preferredIndex < 0 && preferredJobId != null) {
+          preferredIndex =
+              threads.indexWhere((thread) => thread.jobId == preferredJobId);
+        }
         final preservedIndex = activeThreadId == null
             ? -1
             : threads.indexWhere((thread) => thread.id == activeThreadId);
@@ -558,7 +590,9 @@ class _ChatScreenState extends State<ChatScreen> {
       return _serverChatEmptyState();
     }
     return LayoutBuilder(builder: (_, constraints) {
-      final compact = constraints.maxWidth < 760;
+      // A persistent vertical list remains usable with hundreds of works.
+      // Keep the horizontal strip only for genuinely narrow phone layouts.
+      final compact = constraints.maxWidth < 680;
       final visibleIndexes = _visibleChatIndexes;
       final hasVisibleSelection = visibleIndexes.contains(_activeChat);
       if (compact) {
@@ -636,7 +670,34 @@ class _ChatScreenState extends State<ChatScreen> {
               : ListView.builder(
                   padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
                   itemCount: visibleIndexes.length,
-                  itemBuilder: (_, i) => _chatTile(visibleIndexes[i]),
+                  itemBuilder: (_, i) {
+                    final index = visibleIndexes[i];
+                    if (!_usesServerChat) return _chatTile(index);
+                    final thread = _serverThreads[index];
+                    final showHeader = i == 0 ||
+                        _chatSectionOrder(
+                                _serverThreads[visibleIndexes[i - 1]].kind) !=
+                            _chatSectionOrder(thread.kind);
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (showHeader)
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(5, 7, 5, 5),
+                            child: Text(
+                              _chatSectionLabel(thread.kind).toUpperCase(),
+                              style: const TextStyle(
+                                fontSize: 9,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 0.8,
+                                color: AppTheme.graphiteSoft,
+                              ),
+                            ),
+                          ),
+                        _chatTile(index),
+                      ],
+                    );
+                  },
                 ),
         ),
       ]),
@@ -971,12 +1032,17 @@ class _ChatScreenState extends State<ChatScreen> {
     switch (thread.kind) {
       case ChatThreadKind.organization:
         return 'общий чат команды';
-      case ChatThreadKind.job:
+      case ChatThreadKind.jobCustomer:
         final customer = thread.customerName.trim();
         final prefix = thread.isArchivedJob ? 'архив' : 'работа';
         return customer.isEmpty
-            ? '$prefix · обсуждение и протоколы'
-            : '$prefix · $customer';
+            ? '$prefix · канал заказчика'
+            : '$prefix · $customer · заказчик';
+      case ChatThreadKind.jobInternal:
+        final customer = thread.customerName.trim();
+        return customer.isEmpty
+            ? 'внутреннее производство'
+            : 'внутреннее производство · $customer';
       case ChatThreadKind.direct:
         return 'личный диалог';
       case ChatThreadKind.service:
@@ -990,8 +1056,10 @@ class _ChatScreenState extends State<ChatScreen> {
     switch (kind) {
       case ChatThreadKind.organization:
         return AppTheme.blue;
-      case ChatThreadKind.job:
+      case ChatThreadKind.jobCustomer:
         return const Color(0xFF0EA5A4);
+      case ChatThreadKind.jobInternal:
+        return const Color(0xFF536C78);
       case ChatThreadKind.direct:
         return const Color(0xFF16A34A);
       case ChatThreadKind.service:
@@ -1044,7 +1112,8 @@ class _ChatScreenState extends State<ChatScreen> {
           subtitle: _serverThreadSubtitle(thread),
           color: _serverThreadColor(thread.kind),
         ),
-        if (thread.kind == ChatThreadKind.job) _customerAccessBar(thread),
+        if (thread.kind == ChatThreadKind.jobCustomer)
+          _customerAccessBar(thread),
         if (_serverChatError != null) _serverChatErrorBanner(),
         Expanded(
           child: _serverMessagesLoading
@@ -1618,7 +1687,8 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       return;
     }
-    if (thread.kind != ChatThreadKind.job) {
+    if (thread.kind != ChatThreadKind.jobCustomer &&
+        thread.kind != ChatThreadKind.jobInternal) {
       await xpDlg(
         context,
         'Файл или изображение',

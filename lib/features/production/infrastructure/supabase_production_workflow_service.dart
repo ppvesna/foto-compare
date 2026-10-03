@@ -27,7 +27,7 @@ class SupabaseProductionWorkflowService implements ProductionWorkflowService {
     int pageSize = 50,
   }) async {
     final response = await client.rpc(
-      'list_production_works_v1',
+      'list_production_works_v2',
       params: {
         'target_organization': organizationId,
         'search_text': search.trim(),
@@ -48,7 +48,7 @@ class SupabaseProductionWorkflowService implements ProductionWorkflowService {
   @override
   Future<ProductionWorkDetail> loadWork(String jobId) async {
     final response = await client.rpc(
-      'get_production_work_v1',
+      'get_production_work_v2',
       params: {'target_job': jobId},
     );
     if (response is! Map) {
@@ -61,11 +61,15 @@ class SupabaseProductionWorkflowService implements ProductionWorkflowService {
     final history = (row['history'] as List? ?? const [])
         .map((item) => _event(Map<String, dynamic>.from(item as Map)))
         .toList(growable: false);
+    final batches = (row['batches'] as List? ?? const [])
+        .map((item) => _batch(Map<String, dynamic>.from(item as Map)))
+        .toList(growable: false);
     return ProductionWorkDetail(
       summary: _summary(row,
           activeBlockCount: blocks.where((b) => b.isActive).length),
       blocks: blocks,
       history: history,
+      batches: batches,
     );
   }
 
@@ -79,6 +83,125 @@ class SupabaseProductionWorkflowService implements ProductionWorkflowService {
       params: {'target_job': jobId, 'target_note': note.trim()},
     );
     return ProductionStage.fromWire(response as String?);
+  }
+
+  @override
+  Future<List<ProductionWorker>> listWorkers(String jobId) async {
+    final response = await client.rpc(
+      'list_production_workers_v1',
+      params: {'target_job': jobId},
+    );
+    return (response as List? ?? const []).map((item) {
+      final row = Map<String, dynamic>.from(item as Map);
+      return ProductionWorker(
+        userId: row['user_id'] as String,
+        displayName: row['display_name'] as String? ?? '',
+        nickname: row['nickname'] as String? ?? '',
+      );
+    }).toList(growable: false);
+  }
+
+  @override
+  Future<String> createBatch({
+    required String jobId,
+    String? employeeUserId,
+    required String reason,
+    String machine = '',
+    String material = '',
+    String format = '',
+    String inks = '',
+  }) async {
+    final response = await client.rpc(
+      'create_production_batch_v1',
+      params: {
+        'target_job': jobId,
+        'target_employee': employeeUserId,
+        'target_reason': reason.trim(),
+        'target_machine': machine.trim(),
+        'target_material': material.trim(),
+        'target_format': format.trim(),
+        'target_inks': inks.trim(),
+      },
+    );
+    return response as String;
+  }
+
+  @override
+  Future<String> createUnit({
+    required String batchId,
+    required ProductionUnitType type,
+  }) async {
+    final response = await client.rpc(
+      'create_production_unit_v1',
+      params: {
+        'target_batch': batchId,
+        'target_unit_type': type.wireValue,
+      },
+    );
+    return response as String;
+  }
+
+  @override
+  Future<String> recordInspectionAttempt({
+    required String unitId,
+    required String protocolId,
+    required double score,
+  }) async {
+    final response = await client.rpc(
+      'record_production_inspection_attempt_v1',
+      params: {
+        'target_unit': unitId,
+        'target_protocol_id': protocolId,
+        'target_score': score,
+      },
+    );
+    return response as String;
+  }
+
+  @override
+  Future<void> decideInspection({
+    required String unitId,
+    required ProductionInspectionDecision decision,
+    String note = '',
+  }) async {
+    await client.rpc(
+      'decide_production_inspection_v1',
+      params: {
+        'target_unit': unitId,
+        'requested_decision': decision.name,
+        'target_note': note.trim(),
+      },
+    );
+  }
+
+  @override
+  Future<void> blockUnit({
+    required String unitId,
+    required String reason,
+  }) async {
+    await client.rpc(
+      'block_production_unit_v1',
+      params: {
+        'target_unit': unitId,
+        'target_reason': reason.trim(),
+      },
+    );
+  }
+
+  @override
+  Future<void> completeWork(String jobId) async {
+    await client.rpc(
+      'complete_production_work_v1',
+      params: {'target_job': jobId},
+    );
+  }
+
+  @override
+  Future<void> restoreWork(String jobId) async {
+    await client.rpc(
+      'restore_production_work_v1',
+      params: {'target_job': jobId},
+    );
   }
 
   @override
@@ -169,8 +292,40 @@ class SupabaseProductionWorkflowService implements ProductionWorkflowService {
       canAssignControllers: row['can_assign_controllers'] == true,
       canBlock: row['can_block'] == true,
       canUnblock: row['can_unblock'] == true,
+      isCustomerView: row['is_customer'] == true,
+      canCreateBatch: row['can_create_batch'] == true,
+      canComplete: row['can_complete'] == true,
+      canRestore: row['can_restore'] == true,
     );
   }
+
+  ProductionBatch _batch(Map<String, dynamic> row) => ProductionBatch(
+        id: row['id'] as String,
+        number: (row['sequence_no'] as num?)?.toInt() ?? 1,
+        employeeName: row['employee_name'] as String? ?? '',
+        reason: row['creation_reason'] as String? ?? '',
+        machine: row['machine_label'] as String? ?? '',
+        material: row['material_label'] as String? ?? '',
+        format: row['format_label'] as String? ?? '',
+        inks: row['inks_label'] as String? ?? '',
+        createdAt: DateTime.parse(row['created_at'] as String),
+        units: (row['units'] as List? ?? const [])
+            .map((item) => _unit(Map<String, dynamic>.from(item as Map)))
+            .toList(growable: false),
+      );
+
+  ProductionWorkUnit _unit(Map<String, dynamic> row) => ProductionWorkUnit(
+        id: row['id'] as String,
+        batchId: row['batch_id'] as String,
+        batchNumber: (row['batch_number'] as num?)?.toInt() ?? 1,
+        number: (row['sequence_no'] as num?)?.toInt() ?? 1,
+        type: ProductionUnitType.fromWire(row['unit_type'] as String?),
+        state: ProductionUnitState.fromWire(row['status'] as String?),
+        inspectionCount: (row['inspection_count'] as num?)?.toInt() ?? 0,
+        attemptCount: (row['attempt_count'] as num?)?.toInt() ?? 0,
+        latestScore: (row['latest_score'] as num?)?.toDouble(),
+        createdAt: DateTime.parse(row['created_at'] as String),
+      );
 
   ProductionJobBlock _block(Map<String, dynamic> row) => ProductionJobBlock(
         id: row['id'] as String,

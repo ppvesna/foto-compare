@@ -315,6 +315,7 @@ class _MainShellState extends State<MainShell> {
   CheckUsageService? _checkUsageService;
   late final ProductionWorkflowService _workflowService;
   ProductionWorkSummary? _comparisonWork;
+  ProductionWorkUnit? _comparisonUnit;
   bool _showComparison = false;
   String? _requestedChatJobId;
   int _checkUsageRevision = 0;
@@ -474,9 +475,10 @@ class _MainShellState extends State<MainShell> {
     });
   }
 
-  void _openWorkComparison(ProductionWorkSummary work) {
+  void _openWorkComparison(ProductionComparisonTarget target) {
     setState(() {
-      _comparisonWork = work;
+      _comparisonWork = target.work;
+      _comparisonUnit = target.unit;
       _showComparison = true;
       _tab = 1;
     });
@@ -611,6 +613,8 @@ class _MainShellState extends State<MainShell> {
           onBackToWorks: _backToWorks,
           protocolCloudRepository: _protocolCloudRepository,
           checkUsageService: _checkUsageService,
+          productionWorkflowService: _workflowService,
+          inspectionUnit: _comparisonUnit,
           onNavigate: _onTab,
           onCheckUsageChanged: () {
             if (mounted) setState(() => _checkUsageRevision++);
@@ -787,7 +791,7 @@ class _MainShellState extends State<MainShell> {
             child: Row(
               children: [
                 _navBtn(0, 'Главная', Icons.home_outlined),
-                _navBtn(1, 'Работы', Icons.work_outline_rounded),
+                _navBtn(1, 'Работа', Icons.work_outline_rounded),
                 _navBtn(2, 'Чат', Icons.chat_bubble_outline),
                 _navBtn(3, 'Настройки', Icons.tune_outlined),
               ],

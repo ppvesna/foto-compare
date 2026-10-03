@@ -283,17 +283,27 @@ unconfirmed customer request. Migration `012` persists jobs and participants. Ow
 admin can access all organization jobs; employees and customers require an explicit
 participant record.
 
-Migration `030` adds the production workflow boundary. `ProductionWorkflowService`
-lists accessible works with server-side search and cursor pagination, loads a work's
-stage, active defect blocks and audit history, and performs guarded transitions. The
-stage sequence is preparation, prepress, printing, quality control, completed. An
-administrator or the job's assigned manager advances the stage. They appoint defect
-controllers only from active employees who hold the inspection-specialist function;
-each controller separately receives block and/or unblock authority. Owner is read-only
-for this internal production process. Any unresolved whole-work or partial-scope block
-prevents the next stage. A customer sees the blocked state but only reasons explicitly
-marked customer-visible. Sample persistence and remote protocol synchronization remain
-pending.
+Migration `030` introduced the production workflow boundary and scalable work register.
+Migration `031` replaces its controller-centric UI with the physical hierarchy
+`work → batch → stack/roll → inspection → attempt`. `ProductionWorkflowService`
+lists accessible works, loads batches and units, creates the next numbered batch,
+records comparison attempts, and finalizes a unit as approved or blocked. Any assigned
+internal employee may block a unit; only an administrator may remove an active block.
+An unresolved block prevents work completion. The responsible manager or an
+administrator completes a work, and an administrator may restore it from the archive.
+Owner remains read-only for the internal production process. A customer sees only
+`В работе / Выполнен`, without batches, blocks, attempt history, or internal chat.
+
+Relevant files:
+
+- `lib/features/production/domain/production_workflow.dart`
+- `lib/features/production/infrastructure/supabase_production_workflow_service.dart`
+- `lib/screens/works_screen.dart`
+- `supabase/migrations/031_production_batches_inspections_v1.sql`
+
+The job has separate internal and customer chat channels. Their attachments use
+different private Storage scopes so customer access cannot cross into production
+discussion. Full remote protocol synchronization remains pending.
 
 ### protocols
 

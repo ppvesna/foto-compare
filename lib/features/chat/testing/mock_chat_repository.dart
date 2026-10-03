@@ -100,7 +100,7 @@ class MockChatRepository implements ChatRepository {
     final thread = ChatThread(
       id: 'mock-job-thread-$jobId',
       title: 'Работа № ${candidate.jobNumber}',
-      kind: ChatThreadKind.job,
+      kind: ChatThreadKind.jobCustomer,
       jobId: jobId,
       updatedAt: DateTime.now().toUtc(),
       customerShared: true,
@@ -172,7 +172,8 @@ class MockChatRepository implements ChatRepository {
   }) async {
     final thread = threads.where((item) => item.id == threadId).firstOrNull;
     if (thread == null ||
-        thread.kind != ChatThreadKind.job ||
+        (thread.kind != ChatThreadKind.jobCustomer &&
+            thread.kind != ChatThreadKind.jobInternal) ||
         thread.organizationId == null ||
         thread.jobId == null) {
       throw StateError('Attachments are available only in job chats');

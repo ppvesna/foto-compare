@@ -133,8 +133,10 @@ The organization role model is intentionally small:
 Manager, designer, and inspection specialist are job functions, not organization
 roles. One employee may have several functions in one job and different functions in
 another. Owner and admin can see all jobs in their organization. Employee and customer
-access requires a `JobParticipant` assignment. This same job boundary must later protect
-chat messages, protocols, and image assets through server-side RLS.
+access requires a `JobParticipant` assignment. The same job boundary protects chat
+messages, protocols, and image assets through server-side RLS. A customer sees only a
+coarse work status and the customer channel; production batches, inspected physical
+units, technical decisions, and the internal channel remain private.
 
 Legacy role values remain readable during migration: `operator`, `technologist`, and
 `member` map to employee; `viewer` maps to customer. The obsolete migration `005`
@@ -222,11 +224,16 @@ see the overall state and only defect explanations deliberately marked customer-
 The professional inspection record is modeled around:
 
 - `ProductionJob`: the operator's work or order number;
+- `ProductionBatch`: a consecutively numbered part of the order created when
+  production conditions or the responsible operator change;
+- `ProductionUnit`: the physical stack or roll being inspected;
 - `Reference`: a logical approved reference;
 - `ReferenceVersion`: a concrete reference image and its revision;
 - `CalibrationProfile`: anchors, crop, transform, and calibration settings;
 - `Sample`: one photographed or loaded print sample;
 - `Check`: an execution of the inspection pipeline;
+- `InspectionAttempt`: one comparison run for a physical unit; a unit may have
+  several attempts before a final production decision;
 - `CheckProtocol`: immutable stages, metrics, findings, and verdict;
 - `ImageAsset`: source image, preview, difference map, or report attachment.
 
@@ -235,12 +242,13 @@ protocol records the comparison engine version, thresholds, color settings,
 calibration data, source asset IDs, device context, operator, and timestamps. This
 makes old results interpretable after the algorithm evolves.
 
-Current implementation note: the first `production` domain foundation defines
-`ProductionJob`, stable job IDs, `JobParticipant`, job functions, and the effective job
-access policy. A narrow service now opens or updates the active server job from the
-legacy comparison screen without refactoring that screen. Customer identity is stored
-in new local protocols. Samples, remote protocol synchronization, and image assets
-remain separate future steps.
+Current implementation note: the `production` domain defines `ProductionJob`, stable
+job IDs, participants, job functions, numbered batches, physical stacks/rolls,
+inspection attempts, and the effective job access policy. The legacy comparison screen
+records attempts against the selected physical unit and asks the employee for a final
+`approved` or `blocked` decision. Customer identity is stored in local protocols.
+Samples, full remote protocol synchronization, and original image assets remain
+separate future steps.
 
 ### 7.1 Print proofing
 

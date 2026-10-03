@@ -67,7 +67,7 @@ void main() {
         ChatThread(
           id: 'job-chat-unread',
           title: 'Работа № 42',
-          kind: ChatThreadKind.job,
+          kind: ChatThreadKind.jobCustomer,
           jobId: 'job-42',
           updatedAt: DateTime.utc(2026, 10, 3),
           unreadCount: 7,
@@ -89,7 +89,7 @@ void main() {
         ChatThread(
           id: 'job-chat-2',
           title: 'Работа № VESNA-ISOLATION-TEST-002',
-          kind: ChatThreadKind.job,
+          kind: ChatThreadKind.jobCustomer,
           organizationId: 'organization-1',
           jobId: 'job-2',
           updatedAt: DateTime.utc(2026, 9, 12),

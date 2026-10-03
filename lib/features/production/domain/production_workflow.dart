@@ -50,19 +50,49 @@ enum ProductionFlowState {
 
 enum ProductionWorkView {
   active,
-  blocked,
-  completed,
   archived;
 
   String get wireValue => name;
 
   String get label => switch (this) {
-        ProductionWorkView.active => 'Активные',
-        ProductionWorkView.blocked => 'Заблокированные',
-        ProductionWorkView.completed => 'Завершённые',
+        ProductionWorkView.active => 'В работе',
         ProductionWorkView.archived => 'Архив',
       };
 }
+
+enum ProductionUnitType {
+  stack,
+  roll;
+
+  static ProductionUnitType fromWire(String? value) =>
+      value == 'roll' ? ProductionUnitType.roll : ProductionUnitType.stack;
+
+  String get wireValue => name;
+  String get label => this == ProductionUnitType.stack ? 'Стопа' : 'Рулон';
+}
+
+enum ProductionUnitState {
+  pending,
+  checking,
+  approved,
+  blocked;
+
+  static ProductionUnitState fromWire(String? value) => switch (value) {
+        'checking' => ProductionUnitState.checking,
+        'approved' => ProductionUnitState.approved,
+        'blocked' => ProductionUnitState.blocked,
+        _ => ProductionUnitState.pending,
+      };
+
+  String get label => switch (this) {
+        ProductionUnitState.pending => 'Ожидает проверки',
+        ProductionUnitState.checking => 'Проверяется',
+        ProductionUnitState.approved => 'Допущено',
+        ProductionUnitState.blocked => 'Заблокировано',
+      };
+}
+
+enum ProductionInspectionDecision { approved, blocked }
 
 class ProductionWorkSummary {
   final String jobId;
@@ -78,6 +108,10 @@ class ProductionWorkSummary {
   final bool canAssignControllers;
   final bool canBlock;
   final bool canUnblock;
+  final bool isCustomerView;
+  final bool canCreateBatch;
+  final bool canComplete;
+  final bool canRestore;
 
   const ProductionWorkSummary({
     required this.jobId,
@@ -93,7 +127,16 @@ class ProductionWorkSummary {
     required this.canAssignControllers,
     required this.canBlock,
     required this.canUnblock,
+    this.isCustomerView = false,
+    this.canCreateBatch = false,
+    this.canComplete = false,
+    this.canRestore = false,
   });
+
+  String get customerStatus =>
+      jobStatus == 'completed' || jobStatus == 'archived'
+          ? 'Выполнен'
+          : 'В работе';
 }
 
 class ProductionWorkPage {
@@ -153,12 +196,96 @@ class ProductionWorkDetail {
   final ProductionWorkSummary summary;
   final List<ProductionJobBlock> blocks;
   final List<ProductionStageEvent> history;
+  final List<ProductionBatch> batches;
 
   const ProductionWorkDetail({
     required this.summary,
     required this.blocks,
     required this.history,
+    this.batches = const [],
   });
+}
+
+class ProductionWorker {
+  final String userId;
+  final String displayName;
+  final String nickname;
+
+  const ProductionWorker({
+    required this.userId,
+    required this.displayName,
+    required this.nickname,
+  });
+
+  String get label => displayName.trim().isNotEmpty
+      ? displayName.trim()
+      : nickname.trim().isNotEmpty
+          ? nickname.trim()
+          : 'Сотрудник';
+}
+
+class ProductionBatch {
+  final String id;
+  final int number;
+  final String employeeName;
+  final String reason;
+  final String machine;
+  final String material;
+  final String format;
+  final String inks;
+  final DateTime createdAt;
+  final List<ProductionWorkUnit> units;
+
+  const ProductionBatch({
+    required this.id,
+    required this.number,
+    required this.employeeName,
+    required this.reason,
+    required this.machine,
+    required this.material,
+    required this.format,
+    required this.inks,
+    required this.createdAt,
+    this.units = const [],
+  });
+
+  String get label => 'Партия №$number';
+}
+
+class ProductionWorkUnit {
+  final String id;
+  final String batchId;
+  final int batchNumber;
+  final int number;
+  final ProductionUnitType type;
+  final ProductionUnitState state;
+  final int inspectionCount;
+  final int attemptCount;
+  final double? latestScore;
+  final DateTime createdAt;
+
+  const ProductionWorkUnit({
+    required this.id,
+    required this.batchId,
+    required this.batchNumber,
+    required this.number,
+    required this.type,
+    required this.state,
+    required this.inspectionCount,
+    required this.attemptCount,
+    required this.latestScore,
+    required this.createdAt,
+  });
+
+  String get label => '${type.label} №$number';
+  String get fullLabel => 'Партия №$batchNumber · $label';
+}
+
+class ProductionComparisonTarget {
+  final ProductionWorkSummary work;
+  final ProductionWorkUnit unit;
+
+  const ProductionComparisonTarget({required this.work, required this.unit});
 }
 
 class ProductionControllerCandidate {
@@ -210,6 +337,44 @@ abstract interface class ProductionWorkflowService {
   Future<ProductionWorkDetail> loadWork(String jobId);
 
   Future<ProductionStage> advanceStage(String jobId, {String note = ''});
+
+  Future<List<ProductionWorker>> listWorkers(String jobId);
+
+  Future<String> createBatch({
+    required String jobId,
+    String? employeeUserId,
+    required String reason,
+    String machine = '',
+    String material = '',
+    String format = '',
+    String inks = '',
+  });
+
+  Future<String> createUnit({
+    required String batchId,
+    required ProductionUnitType type,
+  });
+
+  Future<String> recordInspectionAttempt({
+    required String unitId,
+    required String protocolId,
+    required double score,
+  });
+
+  Future<void> decideInspection({
+    required String unitId,
+    required ProductionInspectionDecision decision,
+    String note = '',
+  });
+
+  Future<void> blockUnit({
+    required String unitId,
+    required String reason,
+  });
+
+  Future<void> completeWork(String jobId);
+
+  Future<void> restoreWork(String jobId);
 
   Future<String> blockWork({
     required String jobId,

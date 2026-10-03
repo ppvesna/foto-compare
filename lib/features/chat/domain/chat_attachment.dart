@@ -7,6 +7,7 @@ class ChatAttachment {
   final int sizeBytes;
   final String organizationId;
   final String jobId;
+  final bool internal;
 
   const ChatAttachment({
     required this.assetId,
@@ -15,6 +16,7 @@ class ChatAttachment {
     required this.sizeBytes,
     required this.organizationId,
     required this.jobId,
+    this.internal = false,
   });
 
   bool get isImage => mimeType.toLowerCase().startsWith('image/');
@@ -46,6 +48,7 @@ class ChatAttachment {
       sizeBytes: sizeBytes,
       organizationId: organizationId,
       jobId: jobId,
+      internal: metadata['internal'] == true,
     );
   }
 
@@ -56,6 +59,7 @@ class ChatAttachment {
         'size_bytes': sizeBytes,
         'organization_id': organizationId,
         'job_id': jobId,
+        'internal': internal,
       };
 }
 

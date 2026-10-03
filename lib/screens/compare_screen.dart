@@ -60,6 +60,8 @@ class CompareScreen extends StatefulWidget {
   final ProductionJobService? productionJobService;
   final ProtocolCloudRepository? protocolCloudRepository;
   final CheckUsageService? checkUsageService;
+  final ProductionWorkflowService? productionWorkflowService;
+  final ProductionWorkUnit? inspectionUnit;
   final VoidCallback? onCheckUsageChanged;
   final ProductionJobContext? initialJob;
   final VoidCallback? onBackToWorks;
@@ -75,6 +77,8 @@ class CompareScreen extends StatefulWidget {
     this.productionJobService,
     this.protocolCloudRepository,
     this.checkUsageService,
+    this.productionWorkflowService,
+    this.inspectionUnit,
     this.onCheckUsageChanged,
     this.initialJob,
     this.onBackToWorks,
@@ -104,6 +108,8 @@ class _CompareScreenState extends State<CompareScreen>
   Stopwatch? _stageWatch;
   bool _aiLoading = false;
   CompareResult? _result;
+  ProductionUnitState? _productionInspectionState;
+  bool _productionDecisionBusy = false;
   AiAnalysis? _aiResult;
   List<BarcodeResult> _refBarcodes = [];
   List<BarcodeResult> _cmpBarcodes = [];
@@ -327,6 +333,7 @@ class _CompareScreenState extends State<CompareScreen>
   @override
   void initState() {
     super.initState();
+    _productionInspectionState = widget.inspectionUnit?.state;
     _applyInitialJob(widget.initialJob);
     _tabs = TabController(length: 4, vsync: this);
     _loadSavedReference();
@@ -352,6 +359,9 @@ class _CompareScreenState extends State<CompareScreen>
     }
     if (oldWidget.initialJob?.jobId != widget.initialJob?.jobId) {
       setState(() => _applyInitialJob(widget.initialJob));
+    }
+    if (oldWidget.inspectionUnit?.id != widget.inspectionUnit?.id) {
+      setState(() => _productionInspectionState = widget.inspectionUnit?.state);
     }
   }
 
@@ -2024,7 +2034,10 @@ class _CompareScreenState extends State<CompareScreen>
 
   // ── Сохранить локальный протокол последней проверки ──
   Future<void> _saveCheckResult() async {
-    if (!_allows(ProductCapability.protocolHistory)) return;
+    if (!_allows(ProductCapability.protocolHistory) &&
+        widget.inspectionUnit == null) {
+      return;
+    }
     final r = _result;
     if (r == null) return;
     final replacingCurrent = _activeProtocolId != null &&
@@ -2092,6 +2105,20 @@ class _CompareScreenState extends State<CompareScreen>
         _activeProtocolSampleImageId = sampleImageId;
         _activeProtocolSampleNo = sampleNumber;
       });
+    }
+    final unit = widget.inspectionUnit;
+    final workflow = widget.productionWorkflowService;
+    if (unit != null && workflow != null) {
+      await workflow.recordInspectionAttempt(
+        unitId: unit.id,
+        protocolId: protocolId,
+        score: r.score,
+      );
+      if (mounted &&
+          _productionInspectionState != ProductionUnitState.blocked) {
+        setState(
+            () => _productionInspectionState = ProductionUnitState.checking);
+      }
     }
   }
 
@@ -3969,7 +3996,11 @@ class _CompareScreenState extends State<CompareScreen>
             : MediaQuery.sizeOf(context).width;
         final viewportHeight =
             constraints.minHeight.isFinite ? constraints.minHeight : 0.0;
-        final chromeHeight = r == null ? 0.0 : 70.0;
+        final chromeHeight = r == null
+            ? 0.0
+            : widget.inspectionUnit == null
+                ? 70.0
+                : 116.0;
         final naturalHeight = availableWidth * 9 / 16 + chromeHeight;
         final stageHeight = max(viewportHeight, naturalHeight);
 
@@ -4030,6 +4061,8 @@ class _CompareScreenState extends State<CompareScreen>
                       ),
                     ),
                     _resultModeHud(),
+                    if (widget.inspectionUnit != null)
+                      _productionInspectionDecisionBar(),
                   ] else if (_comparing)
                     const Expanded(
                       child: Center(
@@ -4069,6 +4102,137 @@ class _CompareScreenState extends State<CompareScreen>
         );
       },
     );
+  }
+
+  Widget _productionInspectionDecisionBar() {
+    final unit = widget.inspectionUnit!;
+    final blocked = _productionInspectionState == ProductionUnitState.blocked;
+    final approved = _productionInspectionState == ProductionUnitState.approved;
+    return Container(
+      height: 46,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: const BoxDecoration(
+        color: AppTheme.surface,
+        border: Border(top: BorderSide(color: AppTheme.line)),
+      ),
+      child: Row(children: [
+        Expanded(
+          child: Text(
+            '${unit.fullLabel} · ${(_productionInspectionState ?? unit.state).label}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 10.5,
+              fontWeight: FontWeight.w800,
+              color: blocked
+                  ? const Color(0xFFA22D25)
+                  : approved
+                      ? const Color(0xFF3A6E37)
+                      : AppTheme.graphite,
+            ),
+          ),
+        ),
+        const SizedBox(width: 7),
+        OutlinedButton.icon(
+          key: const ValueKey('repeat-production-comparison'),
+          onPressed: _productionDecisionBusy || _comparing ? null : _runCompare,
+          icon: const Icon(Icons.replay_rounded, size: 16),
+          label: const Text('Сравнить ещё раз'),
+        ),
+        const SizedBox(width: 6),
+        FilledButton.tonalIcon(
+          key: const ValueKey('approve-production-unit'),
+          onPressed: _productionDecisionBusy || blocked
+              ? null
+              : () => _decideProductionInspection(
+                    ProductionInspectionDecision.approved,
+                  ),
+          icon: const Icon(Icons.task_alt_rounded, size: 16),
+          label: const Text('Допустить'),
+        ),
+        const SizedBox(width: 6),
+        FilledButton.icon(
+          key: const ValueKey('block-production-unit'),
+          style: FilledButton.styleFrom(
+            backgroundColor: const Color(0xFFB53B33),
+          ),
+          onPressed: _productionDecisionBusy || blocked
+              ? null
+              : () => _decideProductionInspection(
+                    ProductionInspectionDecision.blocked,
+                  ),
+          icon: const Icon(Icons.block_rounded, size: 16),
+          label: const Text('Заблокировать'),
+        ),
+      ]),
+    );
+  }
+
+  Future<void> _decideProductionInspection(
+    ProductionInspectionDecision decision,
+  ) async {
+    final unit = widget.inspectionUnit;
+    final workflow = widget.productionWorkflowService;
+    if (unit == null || workflow == null || _result == null) return;
+    var note = '';
+    if (decision == ProductionInspectionDecision.blocked) {
+      final controller = TextEditingController();
+      final submitted = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text('Заблокировать ${unit.fullLabel}?'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            minLines: 2,
+            maxLines: 5,
+            decoration: const InputDecoration(
+              labelText: 'Причина (необязательно)',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Заблокировать'),
+            ),
+          ],
+        ),
+      );
+      if (submitted != true) return;
+      note = controller.text;
+    }
+    setState(() => _productionDecisionBusy = true);
+    try {
+      await workflow.decideInspection(
+        unitId: unit.id,
+        decision: decision,
+        note: note,
+      );
+      if (!mounted) return;
+      setState(() {
+        _productionInspectionState =
+            decision == ProductionInspectionDecision.approved
+                ? ProductionUnitState.approved
+                : ProductionUnitState.blocked;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(decision == ProductionInspectionDecision.approved
+              ? '${unit.fullLabel}: допущено.'
+              : '${unit.fullLabel}: заблокировано.'),
+        ),
+      );
+    } catch (error) {
+      if (mounted) {
+        await xpDlg(context, 'Решение не сохранено', error.toString());
+      }
+    } finally {
+      if (mounted) setState(() => _productionDecisionBusy = false);
+    }
   }
 
   Widget _compareProgressPanel({bool compact = false}) {
