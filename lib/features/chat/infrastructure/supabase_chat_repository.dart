@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../../capabilities/storage/storage.dart';
 import '../domain/chat_attachment.dart';
+import '../domain/chat_contact.dart';
 import '../domain/chat_message.dart';
 import '../domain/chat_repository.dart';
 import '../domain/chat_thread.dart';
@@ -30,7 +31,7 @@ class SupabaseChatRepository implements ChatRepository {
 
   @override
   Future<List<ChatThread>> listThreads() async {
-    final response = await client.rpc('list_accessible_chat_threads_v1');
+    final response = await client.rpc('list_accessible_chat_threads_v2');
     final rows = response is List ? response : const [];
     return rows
         .whereType<Map>()
@@ -54,6 +55,102 @@ class SupabaseChatRepository implements ChatRepository {
     await client.rpc(
       'mark_chat_thread_read_v1',
       params: {'target_thread': threadId},
+    );
+  }
+
+  @override
+  Future<List<ChatContact>> searchContacts(
+    String query, {
+    int limit = 30,
+  }) async {
+    final response = await client.rpc(
+      'search_chat_contacts_v1',
+      params: {
+        'search_text': query.trim(),
+        'result_limit': limit,
+      },
+    );
+    return (response as List? ?? const []).whereType<Map>().map((item) {
+      final row = Map<String, dynamic>.from(item);
+      return ChatContact(
+        userId: row['user_id'] as String,
+        displayName: row['display_name'] as String? ?? '',
+        nickname: row['nickname'] as String? ?? '',
+        roleLabel: row['role_label'] as String? ?? 'Пользователь',
+        canAddToTeam: row['can_add_to_team'] == true,
+      );
+    }).toList(growable: false);
+  }
+
+  @override
+  Future<String> openDirectThread(String userId) async {
+    final response = await client.rpc(
+      'open_direct_chat_v1',
+      params: {'target_user': userId},
+    );
+    return response as String;
+  }
+
+  @override
+  Future<List<ChatTeamMember>> listTeamMembers(String threadId) async {
+    final response = await client.rpc(
+      'list_chat_team_members_v1',
+      params: {'target_group': threadId},
+    );
+    return (response as List? ?? const []).whereType<Map>().map((item) {
+      final row = Map<String, dynamic>.from(item);
+      return ChatTeamMember(
+        userId: row['user_id'] as String,
+        displayName: row['display_name'] as String? ?? '',
+        nickname: row['nickname'] as String? ?? '',
+      );
+    }).toList(growable: false);
+  }
+
+  @override
+  Future<String> createTeam({
+    required String name,
+    required List<String> memberUserIds,
+  }) async {
+    final response = await client.rpc(
+      'create_chat_team_v1',
+      params: {
+        'team_name': name.trim(),
+        'member_user_ids': memberUserIds,
+      },
+    );
+    return response as String;
+  }
+
+  @override
+  Future<void> updateTeam({
+    required String threadId,
+    required String name,
+    required List<String> memberUserIds,
+  }) async {
+    await client.rpc(
+      'update_chat_team_v1',
+      params: {
+        'target_group': threadId,
+        'team_name': name.trim(),
+        'member_user_ids': memberUserIds,
+      },
+    );
+  }
+
+  @override
+  Future<void> archiveTeam(String threadId) async {
+    await client.rpc(
+      'archive_chat_team_v1',
+      params: {'target_group': threadId},
+    );
+  }
+
+  @override
+  Future<void> restoreTeam(String threadId) async {
+    await client.rpc(
+      'restore_chat_team_v1',
+      params: {'target_group': threadId},
     );
   }
 
@@ -311,6 +408,10 @@ class SupabaseChatRepository implements ChatRepository {
       jobStatus: row['job_status'] as String? ?? '',
       customerName: row['customer_name'] as String? ?? '',
       unreadCount: (row['unread_count'] as num?)?.toInt() ?? 0,
+      archivedAt: row['archived_at'] == null
+          ? null
+          : DateTime.parse(row['archived_at'] as String).toLocal(),
+      canManage: row['can_manage'] == true,
     );
   }
 
@@ -357,6 +458,8 @@ class SupabaseChatRepository implements ChatRepository {
     switch (value) {
       case 'organization':
         return ChatThreadKind.organization;
+      case 'group':
+        return ChatThreadKind.team;
       case 'job':
         return ChatThreadKind.jobCustomer;
       case 'job_internal':

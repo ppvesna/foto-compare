@@ -218,6 +218,14 @@ controllers; only an appointed employee with the inspection-specialist function 
 block or unblock. Owner observes but does not mutate this internal production flow.
 Unresolved blocks make advancement impossible at the database boundary. Customer users
 see the overall state and only defect explanations deliberately marked customer-visible.
+Migration `031` replaces the controller-only decision model with physical batches and
+stacks/rolls. Any assigned internal employee may block an inspected unit, only an
+administrator may remove that block, and the customer sees only `in progress / done`.
+Each work owns an internal production chat and a separately authorized customer chat.
+Migration `032` adds a role-scoped people directory for direct conversations and
+administrator-managed internal teams with reversible archive. Chat navigation groups
+those conversations by intent; one work row selects its internal or customer channel
+without merging their histories or permissions.
 
 ## 7. Inspection domain
 

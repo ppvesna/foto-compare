@@ -61,7 +61,8 @@ void main() {
     ).readAsString();
 
     expect(sql, contains('CREATE TABLE IF NOT EXISTS chat_thread_reads'));
-    expect(sql, contains('ALTER PUBLICATION supabase_realtime ADD TABLE chat_groups'));
+    expect(sql,
+        contains('ALTER PUBLICATION supabase_realtime ADD TABLE chat_groups'));
     expect(sql, contains('mark_chat_thread_read_v1'));
     expect(sql, contains('job_status TEXT'));
     expect(sql, contains('customer_name TEXT'));
@@ -76,5 +77,30 @@ void main() {
       sql,
       contains('REVOKE ALL ON TABLE chat_thread_reads FROM authenticated'),
     );
+  });
+
+  test('chat directory and managed teams keep role boundaries', () async {
+    final sql = await File(
+      'supabase/migrations/032_chat_directory_and_teams_v1.sql',
+    ).readAsString();
+
+    expect(sql, contains('search_chat_contacts_v1'));
+    expect(sql, contains('open_direct_chat_v1'));
+    expect(sql, contains("current.role = 'customer'"));
+    expect(sql, contains("participant_type IN ('operator', 'manager')"));
+    expect(sql, contains('can_view_production_job_v1(job.id)'));
+    expect(sql, contains("member.role = 'admin'"));
+    expect(sql, contains('create_chat_team_v1'));
+    expect(sql, contains('update_chat_team_v1'));
+    expect(sql, contains('archive_chat_team_v1'));
+    expect(sql, contains('restore_chat_team_v1'));
+    expect(sql, contains('archived_at TIMESTAMPTZ'));
+    expect(sql, contains('list_accessible_chat_threads_v2'));
+    expect(
+        sql,
+        contains(
+            'INSERT INTO chat_thread_reads(group_id, user_id, last_read_at)'));
+    expect(sql, contains("chat.kind <> 'service'"));
+    expect(sql, contains("chat.kind <> 'group' OR chat.archived_at IS NULL"));
   });
 }

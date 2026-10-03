@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'chat_attachment.dart';
+import 'chat_contact.dart';
 import 'chat_message.dart';
 import 'chat_thread.dart';
 import 'customer_share_candidate.dart';
@@ -13,6 +14,30 @@ abstract interface class ChatRepository {
   Stream<void> watchThreadChanges();
 
   Future<void> markThreadRead(String threadId);
+
+  Future<List<ChatContact>> searchContacts(
+    String query, {
+    int limit = 30,
+  });
+
+  Future<String> openDirectThread(String userId);
+
+  Future<List<ChatTeamMember>> listTeamMembers(String threadId);
+
+  Future<String> createTeam({
+    required String name,
+    required List<String> memberUserIds,
+  });
+
+  Future<void> updateTeam({
+    required String threadId,
+    required String name,
+    required List<String> memberUserIds,
+  });
+
+  Future<void> archiveTeam(String threadId);
+
+  Future<void> restoreTeam(String threadId);
 
   Future<List<CustomerShareCandidate>> listCustomerShareCandidates();
 

@@ -113,4 +113,78 @@ void main() {
     expect(sent.attachment?.jobId, 'job-2');
     expect(await repository.loadAttachment(sent.attachment!), [1, 2, 3]);
   });
+
+  test('mock chat opens a direct dialog from the contact directory', () async {
+    final repository = MockChatRepository(
+      currentUserId: 'admin-1',
+      contacts: const [
+        ChatContact(
+          userId: 'employee-1',
+          displayName: 'Маша',
+          nickname: 'masha_check',
+          roleLabel: 'Сотрудник',
+          canAddToTeam: true,
+        ),
+      ],
+    );
+
+    expect((await repository.searchContacts('маш')).single.nickname,
+        'masha_check');
+    final threadId = await repository.openDirectThread('employee-1');
+    final thread = (await repository.listThreads())
+        .singleWhere((item) => item.id == threadId);
+
+    expect(thread.kind, ChatThreadKind.direct);
+    expect(thread.title, 'Маша');
+  });
+
+  test('mock chat creates edits archives and restores a team', () async {
+    final repository = MockChatRepository(
+      currentUserId: 'admin-1',
+      contacts: const [
+        ChatContact(
+          userId: 'employee-1',
+          displayName: 'Маша',
+          nickname: 'masha_check',
+          roleLabel: 'Сотрудник',
+          canAddToTeam: true,
+        ),
+      ],
+    );
+
+    final threadId = await repository.createTeam(
+      name: 'Смена 1',
+      memberUserIds: const ['employee-1'],
+    );
+    expect((await repository.listTeamMembers(threadId)).single.nickname,
+        'masha_check');
+
+    await repository.updateTeam(
+      threadId: threadId,
+      name: 'Дневная смена',
+      memberUserIds: const ['employee-1'],
+    );
+    expect(
+      (await repository.listThreads())
+          .singleWhere((thread) => thread.id == threadId)
+          .title,
+      'Дневная смена',
+    );
+
+    await repository.archiveTeam(threadId);
+    expect(
+      (await repository.listThreads())
+          .singleWhere((thread) => thread.id == threadId)
+          .isArchivedTeam,
+      isTrue,
+    );
+
+    await repository.restoreTeam(threadId);
+    expect(
+      (await repository.listThreads())
+          .singleWhere((thread) => thread.id == threadId)
+          .isArchivedTeam,
+      isFalse,
+    );
+  });
 }

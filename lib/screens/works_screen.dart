@@ -13,7 +13,7 @@ class WorksScreen extends StatefulWidget {
   final CustomerDirectoryService? customerDirectoryService;
   final ProductionJobService? productionJobService;
   final ValueChanged<ProductionComparisonTarget> onOpenComparison;
-  final ValueChanged<ProductionWorkSummary> onOpenChat;
+  final ValueChanged<ProductionChatTarget> onOpenChat;
 
   const WorksScreen({
     super.key,
@@ -557,10 +557,22 @@ class _WorksScreenState extends State<WorksScreen> {
               runSpacing: 7,
               children: [
                 OutlinedButton.icon(
-                  onPressed: () => widget.onOpenChat(work),
+                  onPressed: () => widget.onOpenChat(ProductionChatTarget(
+                    work: work,
+                    channel: ProductionChatChannel.customer,
+                  )),
                   icon: const Icon(Icons.chat_bubble_outline, size: 18),
-                  label: const Text('Открыть чат'),
+                  label: const Text('Чат с заказчиком'),
                 ),
+                if (work.canBlock)
+                  OutlinedButton.icon(
+                    onPressed: () => widget.onOpenChat(ProductionChatTarget(
+                      work: work,
+                      channel: ProductionChatChannel.internal,
+                    )),
+                    icon: const Icon(Icons.engineering_outlined, size: 18),
+                    label: const Text('Внутренний чат'),
+                  ),
                 if (work.canAdvance && work.stage != ProductionStage.completed)
                   OutlinedButton.icon(
                     key: const ValueKey('advance-work-stage'),
@@ -672,7 +684,10 @@ class _WorksScreenState extends State<WorksScreen> {
           Align(
             alignment: Alignment.centerLeft,
             child: FilledButton.icon(
-              onPressed: () => widget.onOpenChat(work),
+              onPressed: () => widget.onOpenChat(ProductionChatTarget(
+                work: work,
+                channel: ProductionChatChannel.customer,
+              )),
               icon: const Icon(Icons.chat_bubble_outline, size: 18),
               label: const Text('Открыть чат'),
             ),

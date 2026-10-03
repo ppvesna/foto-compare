@@ -1,6 +1,7 @@
 enum ChatThreadKind {
   personal,
   organization,
+  team,
   jobCustomer,
   jobInternal,
   direct,
@@ -19,6 +20,8 @@ class ChatThread {
   final String jobStatus;
   final String customerName;
   final int unreadCount;
+  final DateTime? archivedAt;
+  final bool canManage;
 
   const ChatThread({
     required this.id,
@@ -32,12 +35,16 @@ class ChatThread {
     this.jobStatus = '',
     this.customerName = '',
     this.unreadCount = 0,
+    this.archivedAt,
+    this.canManage = false,
   });
 
   bool get isArchivedJob =>
       (kind == ChatThreadKind.jobCustomer ||
           kind == ChatThreadKind.jobInternal) &&
       (jobStatus == 'completed' || jobStatus == 'archived');
+
+  bool get isArchivedTeam => kind == ChatThreadKind.team && archivedAt != null;
 
   ChatThread copyWith({
     DateTime? updatedAt,
@@ -46,6 +53,9 @@ class ChatThread {
     String? jobStatus,
     String? customerName,
     int? unreadCount,
+    DateTime? archivedAt,
+    bool clearArchivedAt = false,
+    bool? canManage,
   }) {
     return ChatThread(
       id: id,
@@ -60,6 +70,8 @@ class ChatThread {
       jobStatus: jobStatus ?? this.jobStatus,
       customerName: customerName ?? this.customerName,
       unreadCount: unreadCount ?? this.unreadCount,
+      archivedAt: clearArchivedAt ? null : archivedAt ?? this.archivedAt,
+      canManage: canManage ?? this.canManage,
     );
   }
 }

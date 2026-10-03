@@ -288,6 +288,18 @@ class ProductionComparisonTarget {
   const ProductionComparisonTarget({required this.work, required this.unit});
 }
 
+enum ProductionChatChannel { internal, customer }
+
+class ProductionChatTarget {
+  final ProductionWorkSummary work;
+  final ProductionChatChannel channel;
+
+  const ProductionChatTarget({
+    required this.work,
+    required this.channel,
+  });
+}
+
 class ProductionControllerCandidate {
   final String userId;
   final String displayName;

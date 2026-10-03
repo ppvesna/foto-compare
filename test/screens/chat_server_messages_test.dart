@@ -275,7 +275,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Работа № VESNA-ACTIVE-001'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('chat-section-works')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.text('Работа № VESNA-ACTIVE-001'), findsWidgets);
     expect(find.text('Работа № VESNA-UNREAD-002'), findsOneWidget);
     expect(find.text('Работа № VESNA-ARCHIVE-003'), findsNothing);
 
@@ -342,6 +346,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    await tester.tap(find.byKey(const ValueKey('chat-section-works')));
+    await tester.pumpAndSettle();
+
     repository.threads.add(
       ChatThread(
         id: 'job-live',
@@ -360,5 +367,177 @@ void main() {
 
     expect(find.text('Работа № VESNA-LIVE-004'), findsOneWidget);
     expect(find.text('Непрочитанные · 1'), findsOneWidget);
+  });
+
+  testWidgets('personal search opens a direct dialog', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1024, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final repository = MockChatRepository(
+      currentUserId: 'admin-1',
+      contacts: const [
+        ChatContact(
+          userId: 'employee-1',
+          displayName: 'Маша',
+          nickname: 'masha_check',
+          roleLabel: 'Сотрудник',
+          canAddToTeam: true,
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChatScreen(
+            currentUserId: 'admin-1',
+            email: 'anna@example.com',
+            displayName: 'Анна',
+            nickname: 'admin_anna',
+            organizationName: 'Vesna',
+            chatRepository: repository,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const ValueKey('chat-search')),
+      'Маша',
+    );
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('chat-contact-employee-1')),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.text('Маша'), findsWidgets);
+    expect(
+      (await repository.listThreads())
+          .singleWhere((thread) => thread.kind == ChatThreadKind.direct)
+          .title,
+      'Маша',
+    );
+  });
+
+  testWidgets('work list groups internal and customer channels',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1024, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final repository = MockChatRepository(
+      currentUserId: 'admin-1',
+      threads: [
+        ChatThread(
+          id: 'personal-1',
+          title: 'Личные заметки',
+          kind: ChatThreadKind.personal,
+          updatedAt: DateTime.utc(2026, 10, 3, 12),
+        ),
+        ChatThread(
+          id: 'job-customer-1',
+          title: 'Работа № VESNA-001',
+          kind: ChatThreadKind.jobCustomer,
+          organizationId: 'organization-1',
+          jobId: 'job-1',
+          customerName: 'Альфа',
+          updatedAt: DateTime.utc(2026, 10, 3, 11),
+        ),
+        ChatThread(
+          id: 'job-internal-1',
+          title: 'Работа № VESNA-001 · производство',
+          kind: ChatThreadKind.jobInternal,
+          organizationId: 'organization-1',
+          jobId: 'job-1',
+          customerName: 'Альфа',
+          updatedAt: DateTime.utc(2026, 10, 3, 10),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChatScreen(
+            currentUserId: 'admin-1',
+            email: 'anna@example.com',
+            displayName: 'Анна',
+            nickname: 'admin_anna',
+            organizationName: 'Vesna',
+            chatRepository: repository,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('chat-section-works')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(
+      find.byKey(const ValueKey('work-chat-group-job-1')),
+      findsOneWidget,
+    );
+    expect(find.text('Производство'), findsOneWidget);
+    expect(find.text('Заказчик'), findsOneWidget);
+  });
+
+  testWidgets('administrator creates a team from internal contacts',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1024, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final repository = MockChatRepository(
+      currentUserId: 'admin-1',
+      contacts: const [
+        ChatContact(
+          userId: 'employee-1',
+          displayName: 'Маша',
+          nickname: 'masha_check',
+          roleLabel: 'Сотрудник',
+          canAddToTeam: true,
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChatScreen(
+            currentUserId: 'admin-1',
+            email: 'anna@example.com',
+            displayName: 'Анна',
+            nickname: 'admin_anna',
+            organizationName: 'Vesna',
+            chatRepository: repository,
+            canManageTeams: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('chat-section-teams')));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.byKey(const ValueKey('create-chat-team')));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const ValueKey('chat-team-name')),
+      'Смена тест',
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('chat-team-member-employee-1')),
+    );
+    await tester.tap(find.byKey(const ValueKey('save-chat-team')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.text('Смена тест'), findsWidgets);
+    expect(
+      (await repository.listThreads())
+          .singleWhere((thread) => thread.kind == ChatThreadKind.team)
+          .canManage,
+      isTrue,
+    );
   });
 }

@@ -64,6 +64,9 @@ Rule: every step must preserve the working application and be independently reve
   and an active block prevents work completion. Customers receive only the coarse
   `В работе / Выполнен` state. Internal and customer work chats and their Storage paths
   are separated.
+- Migration `032` adds role-scoped direct-chat discovery and administrator-managed
+  internal teams with reversible archive. The client groups personal, team, work, and
+  service conversations; one work row selects its internal or customer channel.
 - The `vesna-test` employee and customer job sharing/revocation gate has passed. The
   remote ledger is still empty because historical migrations were applied pointwise;
   the next release task is to repair/audit that ledger before production deployment.
@@ -248,6 +251,12 @@ units, inspection sessions and repeatable attempts, guarded approval/block decis
 work completion/archive, and separate internal work chats. Twelve existing works were
 backfilled with initial batches and internal chats. The server RPCs and schema lint are
 verified; the next checkpoint is a complete manual multi-role pass of the new controls.
+
+Migration `032` is applied pointwise to the test environment. It adds the protected
+contact directory, direct chats, managed teams, archive state, and enriched thread
+listing. RPC/catalog checks and remote schema lint pass; the next checkpoint is the
+multi-role manual pass for direct dialogs, team lifecycle, and nested work channels,
+followed by the pending migration `031` production pass.
 
 ## Phase 4: Inspection boundary
 

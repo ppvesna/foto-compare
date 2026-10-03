@@ -318,6 +318,7 @@ class _MainShellState extends State<MainShell> {
   ProductionWorkUnit? _comparisonUnit;
   bool _showComparison = false;
   String? _requestedChatJobId;
+  ChatThreadKind? _requestedChatKind;
   int _checkUsageRevision = 0;
   String? _handledInvitationId;
 
@@ -488,9 +489,12 @@ class _MainShellState extends State<MainShell> {
     setState(() => _showComparison = false);
   }
 
-  void _openWorkChat(ProductionWorkSummary work) {
+  void _openWorkChat(ProductionChatTarget target) {
     setState(() {
-      _requestedChatJobId = work.jobId;
+      _requestedChatJobId = target.work.jobId;
+      _requestedChatKind = target.channel == ProductionChatChannel.internal
+          ? ChatThreadKind.jobInternal
+          : ChatThreadKind.jobCustomer;
       _tab = 2;
     });
   }
@@ -641,6 +645,8 @@ class _MainShellState extends State<MainShell> {
         nickname: nickname,
         organizationName: organizationName,
         initialJobId: _requestedChatJobId,
+        initialThreadKind: _requestedChatKind,
+        canManageTeams: _organizationAccess.role == OrganizationRole.admin,
         protocolCloudRepository: _protocolCloudRepository,
         chatRepository: _chatRepository,
       ),

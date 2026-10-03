@@ -387,6 +387,19 @@ Migration `029` adds a protected per-user read cursor. Thread summaries now incl
 job status, customer name, and unread count, allowing the same chat screen to search
 all accessible work and separate active, unread, and archived conversations without
 creating another work-directory page.
+Migration `032` extends the contract with a role-scoped contact directory, direct
+conversation opening, team membership management, and reversible team archive.
+Administrators manage internal teams; customers never enter them and can discover only
+employees attached to their visible jobs. The presentation groups personal dialogs,
+teams, works, and service events. A work is rendered once with separate internal and
+customer-channel selectors; the server keeps both membership boundaries independent.
+
+Relevant files:
+
+- `lib/features/chat/domain/chat_repository.dart`
+- `lib/features/chat/infrastructure/supabase_chat_repository.dart`
+- `lib/screens/chat_screen.dart`
+- `supabase/migrations/032_chat_directory_and_teams_v1.sql`
 
 ### settings
 
