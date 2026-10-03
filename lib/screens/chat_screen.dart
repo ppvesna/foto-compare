@@ -10,6 +10,8 @@ import '../widgets/xp_widgets.dart';
 
 enum _ChatKind { internal, approval }
 
+enum _ChatListFilter { active, unread, archive }
+
 typedef ChatAttachmentPicker = Future<ChatAttachmentUpload?> Function();
 
 class ChatScreen extends StatefulWidget {
@@ -43,6 +45,10 @@ class _ChatScreenState extends State<ChatScreen> {
   String _approvalStatus = 'Ожидает согласования';
   final _msgCtrl = TextEditingController();
   final _scrollCtrl = ScrollController();
+  final _chatSearchCtrl = TextEditingController();
+  _ChatListFilter _chatListFilter = _ChatListFilter.active;
+  String _chatSearchQuery = '';
+  String? _openedUnreadThreadId;
   List<CloudProtocolRecord> _cloudProtocols = const [];
   CloudProtocolRecord? _selectedCloudProtocol;
   Uint8List? _selectedCloudPreview;
@@ -67,6 +73,56 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     return _serverThreads[_activeChat];
   }
+
+  List<int> get _visibleChatIndexes {
+    final itemCount = _usesServerChat ? _serverThreads.length : _chats.length;
+    return [
+      for (var index = 0; index < itemCount; index++)
+        if (_chatMatchesNavigation(index)) index,
+    ];
+  }
+
+  bool _chatMatchesNavigation(int index) {
+    final query = _chatSearchQuery.trim().toLowerCase();
+    if (_usesServerChat) {
+      final thread = _serverThreads[index];
+      if (query.isNotEmpty) {
+        return '${thread.title} ${thread.customerName} ${thread.jobId ?? ''}'
+            .toLowerCase()
+            .contains(query);
+      }
+      return switch (_chatListFilter) {
+        _ChatListFilter.active => !thread.isArchivedJob,
+        _ChatListFilter.unread =>
+          thread.unreadCount > 0 || thread.id == _openedUnreadThreadId,
+        _ChatListFilter.archive => thread.isArchivedJob,
+      };
+    }
+
+    final chat = _chats[index];
+    if (query.isNotEmpty) {
+      return '${_chatTitle(chat)} ${_chatSubtitle(chat)}'
+          .toLowerCase()
+          .contains(query);
+    }
+    return switch (_chatListFilter) {
+      _ChatListFilter.active => true,
+      _ChatListFilter.unread => chat.unread > 0,
+      _ChatListFilter.archive => false,
+    };
+  }
+
+  int get _activeThreadCount => _usesServerChat
+      ? _serverThreads.where((thread) => !thread.isArchivedJob).length
+      : _chats.length;
+
+  int get _unreadThreadCount => _usesServerChat
+      ? _serverThreads.where((thread) => thread.unreadCount > 0).length
+      : _chats.where((chat) => chat.unread > 0).length;
+
+  int get _archivedThreadCount => _usesServerChat
+      ? _serverThreads.where((thread) => thread.isArchivedJob).length
+      : 0;
 
   String get _userName {
     if (widget.displayName.trim().isNotEmpty) return widget.displayName.trim();
@@ -217,6 +273,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void dispose() {
     _msgCtrl.dispose();
     _scrollCtrl.dispose();
+    _chatSearchCtrl.dispose();
     _messageSubscription?.cancel();
     super.dispose();
   }
@@ -335,6 +392,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted || _activeServerThread?.id != thread.id) return;
       setState(() => _serverMessages = messages);
       await _watchServerMessages(thread.id);
+      await _markServerThreadRead(thread.id);
       _scrollMessagesToEnd();
     } catch (_) {
       if (!mounted || _activeServerThread?.id != thread.id) return;
@@ -358,6 +416,7 @@ class _ChatScreenState extends State<ChatScreen> {
           _serverMessages = messages;
           _serverChatError = null;
         });
+        unawaited(_markServerThreadRead(threadId));
         _scrollMessagesToEnd();
       },
       onError: (_) {
@@ -373,6 +432,11 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _selectChat(int index) async {
     if (index == _activeChat) return;
     setState(() {
+      if (_usesServerChat &&
+          _chatSearchQuery.isEmpty &&
+          _chatListFilter == _ChatListFilter.unread) {
+        _openedUnreadThreadId = _serverThreads[index].id;
+      }
       _activeChat = index;
       if (_usesServerChat) {
         _serverMessages = const [];
@@ -380,6 +444,50 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     });
     if (_usesServerChat) await _loadServerMessages();
+  }
+
+  Future<void> _markServerThreadRead(String threadId) async {
+    final repository = widget.chatRepository;
+    if (repository == null) return;
+    try {
+      await repository.markThreadRead(threadId);
+      if (!mounted) return;
+      final index =
+          _serverThreads.indexWhere((thread) => thread.id == threadId);
+      if (index < 0 || _serverThreads[index].unreadCount == 0) return;
+      setState(() {
+        final updated = List<ChatThread>.of(_serverThreads);
+        updated[index] = updated[index].copyWith(unreadCount: 0);
+        _serverThreads = updated;
+      });
+    } catch (_) {
+      // Old deployments without migration 029 still keep chat usable.
+    }
+  }
+
+  Future<void> _setChatFilter(_ChatListFilter filter) async {
+    if (_chatListFilter == filter && _chatSearchQuery.isEmpty) return;
+    setState(() {
+      _chatListFilter = filter;
+      _chatSearchQuery = '';
+      _openedUnreadThreadId = null;
+      _chatSearchCtrl.clear();
+    });
+    await _selectFirstVisibleChatIfNeeded();
+  }
+
+  Future<void> _setChatSearch(String value) async {
+    setState(() {
+      _chatSearchQuery = value;
+      _openedUnreadThreadId = null;
+    });
+    await _selectFirstVisibleChatIfNeeded();
+  }
+
+  Future<void> _selectFirstVisibleChatIfNeeded() async {
+    final visible = _visibleChatIndexes;
+    if (visible.isEmpty || visible.contains(_activeChat)) return;
+    await _selectChat(visible.first);
   }
 
   void _scrollMessagesToEnd() {
@@ -403,15 +511,22 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     return LayoutBuilder(builder: (_, constraints) {
       final compact = constraints.maxWidth < 760;
+      final visibleIndexes = _visibleChatIndexes;
+      final hasVisibleSelection = visibleIndexes.contains(_activeChat);
       if (compact) {
         return Column(children: [
-          SizedBox(height: 122, child: _chatStrip()),
-          Expanded(child: _chatPane()),
+          SizedBox(height: 204, child: _chatStrip()),
+          Expanded(
+            child:
+                hasVisibleSelection ? _chatPane() : _filteredChatsEmptyState(),
+          ),
         ]);
       }
       return Row(children: [
         SizedBox(width: 286, child: _chatList()),
-        Expanded(child: _chatPane()),
+        Expanded(
+          child: hasVisibleSelection ? _chatPane() : _filteredChatsEmptyState(),
+        ),
       ]);
     });
   }
@@ -458,6 +573,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _chatList() {
+    final visibleIndexes = _visibleChatIndexes;
     return Container(
       decoration: const BoxDecoration(
         color: AppTheme.surfaceMuted,
@@ -465,35 +581,223 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         _listHeader(),
-        const Padding(
-          padding: EdgeInsets.fromLTRB(10, 0, 10, 8),
-          child: XpInput(placeholder: 'Поиск'),
-        ),
+        _chatNavigationControls(),
         Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-            itemCount: _usesServerChat ? _serverThreads.length : _chats.length,
-            itemBuilder: (_, i) => _chatTile(i),
-          ),
+          child: visibleIndexes.isEmpty
+              ? _emptyChatList()
+              : ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+                  itemCount: visibleIndexes.length,
+                  itemBuilder: (_, i) => _chatTile(visibleIndexes[i]),
+                ),
         ),
       ]),
     );
   }
 
   Widget _chatStrip() {
+    final visibleIndexes = _visibleChatIndexes;
     return Container(
       color: AppTheme.surfaceMuted,
       child: Column(children: [
         _listHeader(compact: true),
+        _chatNavigationControls(compact: true),
         Expanded(
-          child: ListView.builder(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-            itemCount: _usesServerChat ? _serverThreads.length : _chats.length,
-            itemBuilder: (_, i) => SizedBox(width: 218, child: _chatTile(i)),
-          ),
+          child: visibleIndexes.isEmpty
+              ? _emptyChatList(compact: true)
+              : ListView.builder(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+                  itemCount: visibleIndexes.length,
+                  itemBuilder: (_, i) => SizedBox(
+                    width: 218,
+                    child: _chatTile(visibleIndexes[i]),
+                  ),
+                ),
         ),
       ]),
+    );
+  }
+
+  Widget _chatNavigationControls({bool compact = false}) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(10, 0, 10, compact ? 5 : 8),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        SizedBox(
+          height: 36,
+          child: TextField(
+            key: const ValueKey('chat-search'),
+            controller: _chatSearchCtrl,
+            onChanged: _setChatSearch,
+            style: const TextStyle(fontSize: 12),
+            decoration: InputDecoration(
+              hintText: 'Код работы или заказчик',
+              hintStyle: const TextStyle(fontSize: 11),
+              prefixIcon: const Icon(Icons.search, size: 18),
+              suffixIcon: _chatSearchQuery.isEmpty
+                  ? null
+                  : IconButton(
+                      key: const ValueKey('chat-search-clear'),
+                      tooltip: 'Очистить поиск',
+                      onPressed: () {
+                        _chatSearchCtrl.clear();
+                        _setChatSearch('');
+                      },
+                      icon: const Icon(Icons.close, size: 17),
+                    ),
+              filled: true,
+              fillColor: Colors.white,
+              contentPadding: const EdgeInsets.symmetric(vertical: 7),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(color: AppTheme.line),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(color: AppTheme.line),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(color: AppTheme.blue),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Row(children: [
+          Expanded(
+            child: _chatFilterChip(
+              filter: _ChatListFilter.active,
+              label: 'Активные',
+              count: _activeThreadCount,
+              key: const ValueKey('chat-filter-active'),
+            ),
+          ),
+          const SizedBox(width: 5),
+          Expanded(
+            child: _chatFilterChip(
+              filter: _ChatListFilter.unread,
+              label: 'Непрочитанные',
+              count: _unreadThreadCount,
+              key: const ValueKey('chat-filter-unread'),
+            ),
+          ),
+          const SizedBox(width: 5),
+          Expanded(
+            child: _chatFilterChip(
+              filter: _ChatListFilter.archive,
+              label: 'Архив',
+              count: _archivedThreadCount,
+              key: const ValueKey('chat-filter-archive'),
+            ),
+          ),
+        ]),
+      ]),
+    );
+  }
+
+  Widget _chatFilterChip({
+    required _ChatListFilter filter,
+    required String label,
+    required int count,
+    required Key key,
+  }) {
+    final selected = _chatSearchQuery.isEmpty && _chatListFilter == filter;
+    return Material(
+      key: key,
+      color: selected ? const Color(0xFFDDEFF0) : Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+        side: BorderSide(color: selected ? AppTheme.blue : AppTheme.line),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: () => _setChatFilter(filter),
+        child: SizedBox(
+          height: 28,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 5),
+            child: Center(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  '$label · $count',
+                  maxLines: 1,
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                    color: selected ? AppTheme.blueDark : Colors.black54,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _emptyChatList({bool compact = false}) {
+    final text = _chatSearchQuery.isNotEmpty
+        ? 'Ничего не найдено'
+        : switch (_chatListFilter) {
+            _ChatListFilter.active => 'Нет активных чатов',
+            _ChatListFilter.unread => 'Нет непрочитанных',
+            _ChatListFilter.archive => 'Архив пуст',
+          };
+    return Center(
+      child: Padding(
+        padding:
+            EdgeInsets.symmetric(horizontal: 12, vertical: compact ? 4 : 20),
+        child: Text(
+          text,
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 11, color: Colors.black45),
+        ),
+      ),
+    );
+  }
+
+  Widget _filteredChatsEmptyState() {
+    final searching = _chatSearchQuery.isNotEmpty;
+    return ColoredBox(
+      color: AppTheme.appBackground,
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 360),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Icon(
+                searching ? Icons.search_off : Icons.mark_chat_read_outlined,
+                size: 38,
+                color: AppTheme.blue,
+              ),
+              const SizedBox(height: 10),
+              Text(
+                searching
+                    ? 'Работа или заказчик не найдены'
+                    : switch (_chatListFilter) {
+                        _ChatListFilter.active => 'Нет активных чатов',
+                        _ChatListFilter.unread => 'Все сообщения прочитаны',
+                        _ChatListFilter.archive => 'Архив пока пуст',
+                      },
+                textAlign: TextAlign.center,
+                style:
+                    const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 5),
+              Text(
+                searching
+                    ? 'Поиск выполняется по всем доступным чатам, включая архив.'
+                    : 'Выберите другой раздел списка.',
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 11, color: Colors.black54),
+              ),
+            ]),
+          ),
+        ),
+      ),
     );
   }
 
@@ -556,7 +860,8 @@ class _ChatScreenState extends State<ChatScreen> {
     final time = serverThread == null
         ? chat!.time
         : _shortDateTime(serverThread.updatedAt);
-    final unread = serverThread == null ? chat!.unread : 0;
+    final unread =
+        serverThread == null ? chat!.unread : serverThread.unreadCount;
     final color = serverThread == null
         ? chat!.color
         : _serverThreadColor(serverThread.kind);
@@ -619,7 +924,11 @@ class _ChatScreenState extends State<ChatScreen> {
       case ChatThreadKind.organization:
         return 'общий чат команды';
       case ChatThreadKind.job:
-        return 'обсуждение работы и протоколов';
+        final customer = thread.customerName.trim();
+        final prefix = thread.isArchivedJob ? 'архив' : 'работа';
+        return customer.isEmpty
+            ? '$prefix · обсуждение и протоколы'
+            : '$prefix · $customer';
       case ChatThreadKind.direct:
         return 'личный диалог';
       case ChatThreadKind.service:
@@ -2026,7 +2335,7 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       child: Center(
         child: Text(
-          '$count',
+          count > 99 ? '99+' : '$count',
           style: const TextStyle(
             color: Colors.white,
             fontSize: 10,

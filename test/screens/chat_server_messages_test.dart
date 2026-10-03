@@ -209,4 +209,104 @@ void main() {
     expect(find.byKey(const ValueKey('chat-message-input')), findsNothing);
     expect(find.text('служебный журнал администратора'), findsWidgets);
   });
+
+  testWidgets('chat filters active unread archive and searches all jobs',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1024, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final repository = MockChatRepository(
+      currentUserId: 'admin-1',
+      currentNickname: 'admin_anna',
+      currentDisplayName: 'Анна',
+      threads: [
+        ChatThread(
+          id: 'personal-1',
+          title: 'Личные заметки',
+          kind: ChatThreadKind.personal,
+          updatedAt: DateTime.utc(2026, 10, 3, 12),
+        ),
+        ChatThread(
+          id: 'job-active',
+          title: 'Работа № VESNA-ACTIVE-001',
+          kind: ChatThreadKind.job,
+          organizationId: 'organization-1',
+          jobId: 'job-active',
+          jobStatus: 'active',
+          customerName: 'Альфа',
+          updatedAt: DateTime.utc(2026, 10, 3, 11),
+        ),
+        ChatThread(
+          id: 'job-unread',
+          title: 'Работа № VESNA-UNREAD-002',
+          kind: ChatThreadKind.job,
+          organizationId: 'organization-1',
+          jobId: 'job-unread',
+          jobStatus: 'active',
+          customerName: 'Бета',
+          unreadCount: 4,
+          updatedAt: DateTime.utc(2026, 10, 3, 10),
+        ),
+        ChatThread(
+          id: 'job-archive',
+          title: 'Работа № VESNA-ARCHIVE-003',
+          kind: ChatThreadKind.job,
+          organizationId: 'organization-1',
+          jobId: 'job-archive',
+          jobStatus: 'completed',
+          customerName: 'Гамма',
+          updatedAt: DateTime.utc(2026, 10, 2),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChatScreen(
+            currentUserId: 'admin-1',
+            email: 'anna@example.com',
+            displayName: 'Анна',
+            nickname: 'admin_anna',
+            organizationName: 'Vesna',
+            chatRepository: repository,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Работа № VESNA-ACTIVE-001'), findsOneWidget);
+    expect(find.text('Работа № VESNA-UNREAD-002'), findsOneWidget);
+    expect(find.text('Работа № VESNA-ARCHIVE-003'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('chat-filter-unread')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.text('Работа № VESNA-UNREAD-002'), findsWidgets);
+    expect(find.text('Работа № VESNA-ACTIVE-001'), findsNothing);
+    expect(find.text('Работа № VESNA-ARCHIVE-003'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('chat-filter-archive')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.text('Работа № VESNA-ARCHIVE-003'), findsWidgets);
+    expect(find.textContaining('архив · Гамма'), findsWidgets);
+
+    await tester.enterText(
+      find.byKey(const ValueKey('chat-search')),
+      'Альфа',
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.text('Работа № VESNA-ACTIVE-001'), findsWidgets);
+    expect(find.text('Работа № VESNA-ARCHIVE-003'), findsNothing);
+
+    await tester.enterText(
+      find.byKey(const ValueKey('chat-search')),
+      'VESNA-ARCHIVE-003',
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.text('Работа № VESNA-ARCHIVE-003'), findsWidgets);
+  });
 }

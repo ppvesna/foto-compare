@@ -10,6 +10,8 @@ abstract interface class ChatRepository {
 
   Future<List<ChatThread>> listThreads();
 
+  Future<void> markThreadRead(String threadId);
+
   Future<List<CustomerShareCandidate>> listCustomerShareCandidates();
 
   Future<void> setCustomerAccess({

@@ -362,6 +362,10 @@ vertical slice loads personal and organization threads, sends text, and receives
 updates through Supabase Realtime. Protocol attachments remain references to the
 protocols module. Ordinary job-chat attachments use typed metadata in the message and
 private bytes in storage; binaries are never duplicated in the chat table.
+Migration `029` adds a protected per-user read cursor. Thread summaries now include
+job status, customer name, and unread count, allowing the same chat screen to search
+all accessible work and separate active, unread, and archived conversations without
+creating another work-directory page.
 
 ### settings
 

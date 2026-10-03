@@ -50,6 +50,9 @@ Rule: every step must preserve the working application and be independently reve
   inspection specialist changes profile state, the administrator receives a private
   service-chat audit event and may permanently delete only never-used archive entries,
   and the owner remains outside this production process.
+- Migration `029` adds server-backed per-user chat read state and searchable job
+  metadata. Active, unread, and archived threads now remain usable when an
+  organization has hundreds of works.
 - The `vesna-test` employee and customer job sharing/revocation gate has passed. The
   remote ledger is still empty because historical migrations were applied pointwise;
   the next release task is to repair/audit that ledger before production deployment.
@@ -218,6 +221,11 @@ Migration `028` is also applied pointwise to the test environment. It adds rever
 archive/restore state, immutable usage history, administrator-only permanent cleanup,
 and a service chat visible only to administrators. Manual multi-role verification is the
 next step.
+
+Migration `029` is applied pointwise to the test environment. It adds protected
+per-user read cursors and extends accessible thread summaries with job status,
+customer name, and unread count. The remote schema lint passes; the historical remote
+migration ledger remains intentionally untouched pending its separate audit.
 
 ## Phase 4: Inspection boundary
 

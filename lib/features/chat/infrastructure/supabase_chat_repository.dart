@@ -41,6 +41,14 @@ class SupabaseChatRepository implements ChatRepository {
   }
 
   @override
+  Future<void> markThreadRead(String threadId) async {
+    await client.rpc(
+      'mark_chat_thread_read_v1',
+      params: {'target_thread': threadId},
+    );
+  }
+
+  @override
   Future<List<CustomerShareCandidate>> listCustomerShareCandidates() async {
     final response = await client.rpc('list_customer_share_candidates_v1');
     final rows = response is List ? response : const [];
@@ -277,6 +285,9 @@ class SupabaseChatRepository implements ChatRepository {
       customerShared: row['customer_shared'] as bool? ?? false,
       canManageCustomerAccess:
           row['can_manage_customer_access'] as bool? ?? false,
+      jobStatus: row['job_status'] as String? ?? '',
+      customerName: row['customer_name'] as String? ?? '',
+      unreadCount: (row['unread_count'] as num?)?.toInt() ?? 0,
     );
   }
 

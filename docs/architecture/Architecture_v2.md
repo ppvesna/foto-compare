@@ -203,6 +203,10 @@ Migration `028` adds archive-first lifecycle rules. The specialist archives and 
 an administrator receives an admin-only service-chat event and may permanently delete
 only an archived condition that has never been assigned. The owner is intentionally
 outside this production workflow, while assignment history prevents destructive cleanup.
+Migration `029` adds per-user chat read cursors and enriches accessible thread rows with
+job status, customer name, and unread count. The client keeps the ordinary team and
+personal threads visible with active work, moves completed/archived jobs to a separate
+view, and searches every accessible thread without broadening its RLS boundary.
 
 ## 7. Inspection domain
 

@@ -61,6 +61,25 @@ void main() {
     expect(jobThread.customerShared, isFalse);
   });
 
+  test('mock chat persists thread read state', () async {
+    final repository = MockChatRepository(
+      threads: [
+        ChatThread(
+          id: 'job-chat-unread',
+          title: 'Работа № 42',
+          kind: ChatThreadKind.job,
+          jobId: 'job-42',
+          updatedAt: DateTime.utc(2026, 10, 3),
+          unreadCount: 7,
+        ),
+      ],
+    );
+
+    await repository.markThreadRead('job-chat-unread');
+
+    expect((await repository.listThreads()).single.unreadCount, 0);
+  });
+
   test('mock job chat sends and loads a private attachment', () async {
     final repository = MockChatRepository(
       currentUserId: 'customer-1',

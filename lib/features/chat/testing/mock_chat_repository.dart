@@ -50,6 +50,13 @@ class MockChatRepository implements ChatRepository {
   }
 
   @override
+  Future<void> markThreadRead(String threadId) async {
+    final index = threads.indexWhere((thread) => thread.id == threadId);
+    if (index < 0) throw StateError('Chat thread not found');
+    threads[index] = threads[index].copyWith(unreadCount: 0);
+  }
+
+  @override
   Future<List<CustomerShareCandidate>> listCustomerShareCandidates() async {
     return List.unmodifiable(customerShareCandidates);
   }
@@ -73,12 +80,7 @@ class MockChatRepository implements ChatRepository {
     final threadIndex = threads.indexWhere((thread) => thread.jobId == jobId);
     if (threadIndex >= 0) {
       final thread = threads[threadIndex];
-      threads[threadIndex] = ChatThread(
-        id: thread.id,
-        title: thread.title,
-        kind: thread.kind,
-        organizationId: thread.organizationId,
-        jobId: thread.jobId,
+      threads[threadIndex] = thread.copyWith(
         updatedAt: DateTime.now().toUtc(),
         customerShared: shared,
         canManageCustomerAccess: true,
@@ -144,15 +146,9 @@ class MockChatRepository implements ChatRepository {
     final index = threads.indexWhere((thread) => thread.id == threadId);
     if (index >= 0) {
       final thread = threads[index];
-      threads[index] = ChatThread(
-        id: thread.id,
-        title: thread.title,
-        kind: thread.kind,
-        organizationId: thread.organizationId,
-        jobId: thread.jobId,
+      threads[index] = thread.copyWith(
         updatedAt: message.createdAt,
-        customerShared: thread.customerShared,
-        canManageCustomerAccess: thread.canManageCustomerAccess,
+        unreadCount: 0,
       );
     }
     return message;

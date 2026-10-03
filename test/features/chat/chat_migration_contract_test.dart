@@ -53,4 +53,23 @@ void main() {
     expect(sql, contains('can_view_production_job_asset_v1'));
     expect(sql, contains('owner_id = auth.uid()::TEXT'));
   });
+
+  test('chat navigation persists reads and returns searchable job metadata',
+      () async {
+    final sql = await File(
+      'supabase/migrations/029_chat_navigation_v1.sql',
+    ).readAsString();
+
+    expect(sql, contains('CREATE TABLE IF NOT EXISTS chat_thread_reads'));
+    expect(sql, contains('mark_chat_thread_read_v1'));
+    expect(sql, contains('job_status TEXT'));
+    expect(sql, contains('customer_name TEXT'));
+    expect(sql, contains('unread_count BIGINT'));
+    expect(sql, contains('message.sender_id IS DISTINCT FROM auth.uid()'));
+    expect(sql, contains('can_access_chat_group_v1(target_thread)'));
+    expect(
+      sql,
+      contains('REVOKE ALL ON TABLE chat_thread_reads FROM authenticated'),
+    );
+  });
 }
