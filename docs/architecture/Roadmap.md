@@ -66,7 +66,10 @@ Rule: every step must preserve the working application and be independently reve
   are separated.
 - Migration `032` adds role-scoped direct-chat discovery and administrator-managed
   internal teams with reversible archive. The client groups personal, team, work, and
-  service conversations; one work row selects its internal or customer channel.
+  service conversations.
+- Migration `033` keeps internal and customer work channels protected independently
+  while presenting one chronological timeline to staff. The sender explicitly selects
+  the audience, and only an administrator may connect the external customer.
 - The `vesna-test` employee and customer job sharing/revocation gate has passed. The
   remote ledger is still empty because historical migrations were applied pointwise;
   the next release task is to repair/audit that ledger before production deployment.
@@ -255,8 +258,21 @@ verified; the next checkpoint is a complete manual multi-role pass of the new co
 Migration `032` is applied pointwise to the test environment. It adds the protected
 contact directory, direct chats, managed teams, archive state, and enriched thread
 listing. RPC/catalog checks and remote schema lint pass; the next checkpoint is the
-multi-role manual pass for direct dialogs, team lifecycle, and nested work channels,
-followed by the pending migration `031` production pass.
+multi-role manual pass for direct dialogs and team lifecycle.
+
+Migration `033` is applied pointwise to the test environment. It narrows customer-access
+management to administrators, preserves internal access for historical job participants,
+and combines both protected audiences only in the staff presentation. Contract checks,
+remote schema lint, 153 Flutter tests, and the release web build pass; the next checkpoint
+is the multi-role audience-isolation pass followed by the pending migration `031` production pass.
+
+Migration `034` is applied pointwise to the test environment. It
+turns the work register into the route card, adds responsible-employee selection and
+cross-work inspection history, protects the immutable employee-to-batch boundary,
+makes the organization service thread writable, moves team administration to settings,
+and limits chat `+` actions by thread context and member function. Eight RPCs and four
+Storage policies are present in the remote catalog, and the public schema lint is clean.
+The next checkpoint is the manual multi-role pass.
 
 ## Phase 4: Inspection boundary
 
@@ -305,8 +321,9 @@ Customer visibility, revocation, preserved history, Realtime messaging, and
 job-scoped cloud-protocol isolation have passed the dedicated multi-account manual
 test with two customers. The chat action now refreshes its protocol list before
 opening, including protocols created after the screen was opened.
-Migration `024` adds the next bounded storage slice: ordinary files and images up to
-10 MB in job chats, backed by private Storage and the existing job-access boundary.
+Migration `024` adds the next bounded storage slice: ordinary files and images in job
+chats, backed by private Storage and the existing job-access boundary. The current
+client has no artificial file-size ceiling; provider and plan constraints still apply.
 Google OAuth and Drive remain a separate provider connection.
 
 ### Step 20. Add an outbox

@@ -1,3 +1,5 @@
+import 'organization_member.dart';
+
 enum OrganizationRole {
   owner,
   admin,
@@ -23,6 +25,7 @@ class OrganizationAccess {
   final String? organizationName;
   final OrganizationRole role;
   final Set<OrganizationPermission> permissions;
+  final Set<OrganizationMemberFunction>? _functions;
   final bool legacyFallback;
 
   const OrganizationAccess({
@@ -30,19 +33,24 @@ class OrganizationAccess {
     this.organizationName,
     required this.role,
     required this.permissions,
+    Set<OrganizationMemberFunction> functions = const {},
     this.legacyFallback = false,
-  });
+  }) : _functions = functions;
+
+  Set<OrganizationMemberFunction> get functions => _functions ?? const {};
 
   factory OrganizationAccess.forRole({
     required String? organizationId,
     String? organizationName,
     required OrganizationRole role,
+    Set<OrganizationMemberFunction> functions = const {},
   }) {
     return OrganizationAccess(
       organizationId: organizationId,
       organizationName: organizationName,
       role: role,
       permissions: _permissionsForRole(role),
+      functions: functions,
     );
   }
 
@@ -62,6 +70,7 @@ class OrganizationAccess {
         OrganizationPermission.manageBilling,
         OrganizationPermission.manageOrganization,
       },
+      functions: {},
       legacyFallback: true,
     );
   }
@@ -136,7 +145,7 @@ extension OrganizationRoleLabel on OrganizationRole {
       case OrganizationRole.employee:
         return 'Сотрудник';
       case OrganizationRole.customer:
-        return 'Представитель заказчика';
+        return 'Заказчик';
       case OrganizationRole.personal:
         return 'Личный профиль';
     }

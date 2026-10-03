@@ -10,7 +10,7 @@ extension OrganizationMemberFunctionLabel on OrganizationMemberFunction {
   String get label {
     switch (this) {
       case OrganizationMemberFunction.manager:
-        return 'Менеджер';
+        return 'Представитель заказчика';
       case OrganizationMemberFunction.designer:
         return 'Дизайнер';
       case OrganizationMemberFunction.inspectionSpecialist:

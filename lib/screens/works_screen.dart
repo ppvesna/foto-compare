@@ -6,8 +6,13 @@ import '../config/app_theme.dart';
 import '../features/organization/organization.dart';
 import '../features/production/production.dart';
 
+enum _WorkHubSection { continueWork, create, completed, history }
+
+enum _WorkQueueFilter { all, inspection, blocked }
+
 class WorksScreen extends StatefulWidget {
   final String? organizationId;
+  final String currentUserId;
   final OrganizationAccess organizationAccess;
   final ProductionWorkflowService workflowService;
   final CustomerDirectoryService? customerDirectoryService;
@@ -18,6 +23,7 @@ class WorksScreen extends StatefulWidget {
   const WorksScreen({
     super.key,
     required this.organizationId,
+    this.currentUserId = '',
     required this.organizationAccess,
     required this.workflowService,
     this.customerDirectoryService,
@@ -36,12 +42,16 @@ class _WorksScreenState extends State<WorksScreen> {
   Timer? _realtimeDebounce;
   StreamSubscription<void>? _workChanges;
   ProductionWorkView _view = ProductionWorkView.active;
+  _WorkHubSection _section = _WorkHubSection.continueWork;
+  _WorkQueueFilter _queueFilter = _WorkQueueFilter.all;
   List<ProductionWorkSummary> _items = const [];
+  List<ProductionInspectionHistoryItem> _inspectionHistory = const [];
   ProductionWorkDetail? _detail;
   String? _selectedJobId;
   bool _loading = false;
   bool _loadingMore = false;
   bool _detailLoading = false;
+  bool _historyLoading = false;
   bool _hasMore = false;
   String? _error;
 
@@ -191,8 +201,73 @@ class _WorksScreenState extends State<WorksScreen> {
     _searchDebounce?.cancel();
     _searchDebounce = Timer(
       const Duration(milliseconds: 350),
-      _loadFirstPage,
+      _section == _WorkHubSection.history
+          ? _loadInspectionHistory
+          : _loadFirstPage,
     );
+  }
+
+  bool get _canCreateWork =>
+      widget.customerDirectoryService != null &&
+      widget.productionJobService != null &&
+      (widget.organizationAccess.role == OrganizationRole.owner ||
+          widget.organizationAccess.role == OrganizationRole.admin ||
+          (widget.organizationAccess.role == OrganizationRole.employee &&
+              widget.organizationAccess.functions
+                  .contains(OrganizationMemberFunction.manager)));
+
+  List<ProductionWorkSummary> get _visibleItems => _items.where((work) {
+        return switch (_queueFilter) {
+          _WorkQueueFilter.all => true,
+          _WorkQueueFilter.inspection =>
+            work.stage == ProductionStage.qualityControl,
+          _WorkQueueFilter.blocked =>
+            work.flowState == ProductionFlowState.blocked,
+        };
+      }).toList(growable: false);
+
+  Future<void> _selectSection(_WorkHubSection section) async {
+    if (_section == section) return;
+    setState(() {
+      _section = section;
+      _selectedJobId = null;
+      _detail = null;
+      _queueFilter = _WorkQueueFilter.all;
+      _view = section == _WorkHubSection.completed
+          ? ProductionWorkView.archived
+          : ProductionWorkView.active;
+    });
+    if (section == _WorkHubSection.history) {
+      await _loadInspectionHistory();
+    } else if (section != _WorkHubSection.create) {
+      await _loadFirstPage();
+    }
+  }
+
+  Future<void> _loadInspectionHistory() async {
+    final organizationId = widget.organizationId;
+    if (organizationId == null) return;
+    setState(() {
+      _historyLoading = true;
+      _error = null;
+    });
+    try {
+      final history = await widget.workflowService.listInspectionHistory(
+        organizationId: organizationId,
+        search: _searchController.text,
+      );
+      if (!mounted) return;
+      setState(() {
+        _inspectionHistory = history;
+        _historyLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _historyLoading = false;
+        _error = 'Не удалось загрузить историю проверок: $error';
+      });
+    }
   }
 
   @override
@@ -215,39 +290,43 @@ class _WorksScreenState extends State<WorksScreen> {
               _errorBanner(),
             ],
             const SizedBox(height: 8),
-            Expanded(
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  if (constraints.maxWidth < 820) {
-                    return _selectedJobId == null
-                        ? _workList()
-                        : _detailPane(showBack: true);
-                  }
-                  return Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      SizedBox(
-                        width: constraints.maxWidth * .42,
-                        child: _workList(),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(child: _detailPane()),
-                    ],
-                  );
-                },
-              ),
-            ),
+            Expanded(child: _sectionBody()),
           ],
         ),
       ),
     );
   }
 
+  Widget _sectionBody() {
+    if (_section == _WorkHubSection.create) return _createWorkPane();
+    if (_section == _WorkHubSection.history) return _inspectionHistoryPane();
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 820) {
+          return _selectedJobId == null
+              ? _workList()
+              : _detailPane(showBack: true);
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizedBox(width: constraints.maxWidth * .42, child: _workList()),
+            const SizedBox(width: 10),
+            Expanded(child: _detailPane()),
+          ],
+        );
+      },
+    );
+  }
+
   Widget _header() {
-    final canCreate = widget.customerDirectoryService != null &&
-        widget.productionJobService != null &&
-        (widget.organizationAccess.role == OrganizationRole.admin ||
-            widget.organizationAccess.role == OrganizationRole.employee);
+    final sections = <_WorkHubSection>[
+      _WorkHubSection.continueWork,
+      if (_canCreateWork) _WorkHubSection.create,
+      _WorkHubSection.completed,
+      if (widget.organizationAccess.role != OrganizationRole.customer)
+        _WorkHubSection.history,
+    ];
     return DecoratedBox(
       decoration: BoxDecoration(
         color: AppTheme.surface,
@@ -272,73 +351,130 @@ class _WorksScreenState extends State<WorksScreen> {
                     ),
                   ),
                 ),
-                if (canCreate)
-                  FilledButton.icon(
-                    key: const ValueKey('create-production-work'),
-                    onPressed: _createWork,
-                    icon: const Icon(Icons.add_rounded, size: 18),
-                    label: const Text('Новая работа'),
-                  ),
-                if (canCreate) const SizedBox(width: 4),
                 IconButton(
                   tooltip: 'Обновить',
-                  onPressed: _loading ? null : _reloadSelected,
+                  onPressed: _loading || _historyLoading
+                      ? null
+                      : _section == _WorkHubSection.history
+                          ? _loadInspectionHistory
+                          : _section == _WorkHubSection.create
+                              ? null
+                              : _reloadSelected,
                   icon: const Icon(Icons.refresh_rounded),
                 ),
               ],
             ),
             const SizedBox(height: 8),
-            TextField(
-              key: const ValueKey('works-search'),
-              controller: _searchController,
-              onChanged: _onSearchChanged,
-              decoration: InputDecoration(
-                hintText: 'Номер работы или заказчик',
-                prefixIcon: const Icon(Icons.search_rounded),
-                suffixIcon: _searchController.text.isEmpty
-                    ? null
-                    : IconButton(
-                        tooltip: 'Очистить',
-                        onPressed: () {
-                          _searchController.clear();
-                          _loadFirstPage();
-                        },
-                        icon: const Icon(Icons.close_rounded),
-                      ),
-                isDense: true,
-              ),
-            ),
-            const SizedBox(height: 8),
             SizedBox(
-              height: 36,
+              height: 38,
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
-                itemCount: ProductionWorkView.values.length,
+                itemCount: sections.length,
                 separatorBuilder: (_, __) => const SizedBox(width: 6),
                 itemBuilder: (context, index) {
-                  final value = ProductionWorkView.values[index];
+                  final value = sections[index];
                   return ChoiceChip(
-                    key: ValueKey('work-view-${value.name}'),
-                    label: Text(value.label),
-                    selected: _view == value,
-                    onSelected: (_) {
-                      if (_view == value) return;
-                      setState(() {
-                        _view = value;
-                        _selectedJobId = null;
-                        _detail = null;
-                      });
-                      _loadFirstPage();
-                    },
+                    key: ValueKey('work-section-${value.name}'),
+                    avatar: Icon(_sectionIcon(value), size: 17),
+                    label: Text(_sectionLabel(value)),
+                    selected: _section == value,
+                    onSelected: (_) => _selectSection(value),
                   );
                 },
               ),
             ),
+            if (_section != _WorkHubSection.create) ...[
+              const SizedBox(height: 8),
+              Row(children: [
+                Expanded(
+                  child: TextField(
+                    key: const ValueKey('works-search'),
+                    controller: _searchController,
+                    onChanged: _onSearchChanged,
+                    decoration: InputDecoration(
+                      hintText: _section == _WorkHubSection.history
+                          ? 'Работа, заказчик или сотрудник'
+                          : 'Номер работы или заказчик',
+                      prefixIcon: const Icon(Icons.search_rounded),
+                      suffixIcon: _searchController.text.isEmpty
+                          ? null
+                          : IconButton(
+                              tooltip: 'Очистить',
+                              onPressed: () {
+                                _searchController.clear();
+                                _section == _WorkHubSection.history
+                                    ? _loadInspectionHistory()
+                                    : _loadFirstPage();
+                              },
+                              icon: const Icon(Icons.close_rounded),
+                            ),
+                      isDense: true,
+                    ),
+                  ),
+                ),
+                if (_section == _WorkHubSection.continueWork &&
+                    widget.organizationAccess.role !=
+                        OrganizationRole.customer) ...[
+                  const SizedBox(width: 8),
+                  _queueFilterButton(),
+                ],
+              ]),
+            ],
           ],
         ),
       ),
     );
   }
+
+  String _sectionLabel(_WorkHubSection section) => switch (section) {
+        _WorkHubSection.continueWork => 'Продолжить',
+        _WorkHubSection.create => 'Новая работа',
+        _WorkHubSection.completed => 'Выполненные',
+        _WorkHubSection.history => 'История проверок',
+      };
+
+  IconData _sectionIcon(_WorkHubSection section) => switch (section) {
+        _WorkHubSection.continueWork => Icons.play_arrow_rounded,
+        _WorkHubSection.create => Icons.add_rounded,
+        _WorkHubSection.completed => Icons.task_alt_rounded,
+        _WorkHubSection.history => Icons.history_rounded,
+      };
+
+  Widget _queueFilterButton() => PopupMenuButton<_WorkQueueFilter>(
+        tooltip: 'Очередь работ',
+        initialValue: _queueFilter,
+        onSelected: (value) => setState(() => _queueFilter = value),
+        itemBuilder: (_) => const [
+          PopupMenuItem(
+              value: _WorkQueueFilter.all, child: Text('Все в работе')),
+          PopupMenuItem(
+            value: _WorkQueueFilter.inspection,
+            child: Text('На проверке'),
+          ),
+          PopupMenuItem(
+            value: _WorkQueueFilter.blocked,
+            child: Text('Остановлены'),
+          ),
+        ],
+        child: Container(
+          height: 42,
+          padding: const EdgeInsets.symmetric(horizontal: 11),
+          decoration: BoxDecoration(
+            border: Border.all(color: AppTheme.line),
+            borderRadius: BorderRadius.circular(12),
+            color: AppTheme.surface,
+          ),
+          child: Row(children: [
+            const Icon(Icons.filter_list_rounded, size: 18),
+            const SizedBox(width: 6),
+            Text(switch (_queueFilter) {
+              _WorkQueueFilter.all => 'Все',
+              _WorkQueueFilter.inspection => 'На проверке',
+              _WorkQueueFilter.blocked => 'Стоп',
+            }),
+          ]),
+        ),
+      );
 
   Widget _errorBanner() => Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -362,6 +498,7 @@ class _WorksScreenState extends State<WorksScreen> {
       );
 
   Widget _workList() {
+    final items = _visibleItems;
     return DecoratedBox(
       decoration: BoxDecoration(
         color: AppTheme.surface,
@@ -370,7 +507,7 @@ class _WorksScreenState extends State<WorksScreen> {
       ),
       child: _loading
           ? const Center(child: CircularProgressIndicator())
-          : _items.isEmpty
+          : items.isEmpty
               ? Center(
                   child: Padding(
                     padding: const EdgeInsets.all(24),
@@ -384,9 +521,9 @@ class _WorksScreenState extends State<WorksScreen> {
                   ),
                 )
               : ListView.builder(
-                  itemCount: _items.length + (_hasMore ? 1 : 0),
+                  itemCount: items.length + (_hasMore ? 1 : 0),
                   itemBuilder: (context, index) {
-                    if (index == _items.length) {
+                    if (index == items.length) {
                       return Padding(
                         padding: const EdgeInsets.all(10),
                         child: OutlinedButton.icon(
@@ -402,11 +539,114 @@ class _WorksScreenState extends State<WorksScreen> {
                         ),
                       );
                     }
-                    return _workRow(_items[index]);
+                    return _workRow(items[index]);
                   },
                 ),
     );
   }
+
+  Widget _createWorkPane() => _detailFrame(
+        Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 620),
+            child: Padding(
+              padding: const EdgeInsets.all(28),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.add_business_rounded,
+                      size: 42, color: AppTheme.blue),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Откройте новую работу',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w900,
+                      color: AppTheme.graphite,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Укажите номер, заказчика и ответственного. '
+                    'Первая партия будет создана автоматически. '
+                    'Любая смена сотрудника или условий — это новая партия.',
+                    textAlign: TextAlign.center,
+                    style:
+                        TextStyle(color: AppTheme.graphiteSoft, height: 1.45),
+                  ),
+                  const SizedBox(height: 18),
+                  FilledButton.icon(
+                    key: const ValueKey('create-production-work'),
+                    onPressed: _createWork,
+                    icon: const Icon(Icons.add_rounded),
+                    label: const Text('Заполнить карточку работы'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+
+  Widget _inspectionHistoryPane() => _detailFrame(
+        _historyLoading
+            ? const Center(child: CircularProgressIndicator())
+            : _inspectionHistory.isEmpty
+                ? const Center(
+                    child: Text(
+                      'Проверок по этому запросу пока нет.',
+                      style: TextStyle(color: AppTheme.graphiteSoft),
+                    ),
+                  )
+                : ListView.separated(
+                    padding: const EdgeInsets.all(12),
+                    itemCount: _inspectionHistory.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder: (_, index) {
+                      final item = _inspectionHistory[index];
+                      final stopped = item.decisionStatus == 'blocked';
+                      return Material(
+                        color: stopped
+                            ? const Color(0xFFFFF3F1)
+                            : const Color(0xFFF7F9FA),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          side: BorderSide(
+                            color: stopped
+                                ? const Color(0xFFE4AAA5)
+                                : AppTheme.line,
+                          ),
+                        ),
+                        child: ListTile(
+                          onTap: () async {
+                            await _selectSection(_WorkHubSection.continueWork);
+                            if (mounted) await _openWork(item.jobId);
+                          },
+                          leading: Icon(
+                            stopped
+                                ? Icons.block_rounded
+                                : Icons.fact_check_outlined,
+                            color: stopped
+                                ? const Color(0xFFA82820)
+                                : const Color(0xFF417C50),
+                          ),
+                          title: Text(
+                            '${item.jobNumber} · Партия №${item.batchNumber} · ${item.unitLabel}',
+                            style: const TextStyle(fontWeight: FontWeight.w900),
+                          ),
+                          subtitle: Text(
+                            '${item.customerName} · проверка ${item.inspectionNumber}, '
+                            'сравнение ${item.attemptNumber} · '
+                            '${item.score.toStringAsFixed(1)}%'
+                            '${item.attemptedByName.isEmpty ? '' : ' · ${item.attemptedByName}'} '
+                            '· ${_formatDate(item.attemptedAt)}',
+                          ),
+                          trailing: const Icon(Icons.chevron_right_rounded),
+                        ),
+                      );
+                    },
+                  ),
+      );
 
   Widget _workRow(ProductionWorkSummary work) {
     final selected = work.jobId == _selectedJobId;
@@ -550,7 +790,7 @@ class _WorksScreenState extends State<WorksScreen> {
               ],
             ),
             const SizedBox(height: 14),
-            _stageRail(work.stage, work.flowState),
+            _routeActionCard(detail, activeBlocks),
             const SizedBox(height: 14),
             Wrap(
               spacing: 7,
@@ -698,6 +938,7 @@ class _WorksScreenState extends State<WorksScreen> {
   }
 
   Widget _batchCard(ProductionBatch batch, ProductionWorkSummary work) {
+    final requiresNewBatch = _requiresNewBatch(batch);
     final details = [
       if (batch.employeeName.isNotEmpty) batch.employeeName,
       if (batch.material.isNotEmpty) batch.material,
@@ -733,7 +974,24 @@ class _WorksScreenState extends State<WorksScreen> {
               )
             else
               ...batch.units.map((unit) => _unitRow(unit, work)),
+            if (requiresNewBatch &&
+                work.jobStatus == 'active' &&
+                batch.id == _detail?.batches.first.id)
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: Text(
+                    'Исполнитель изменился — создайте новую партию.',
+                    style: TextStyle(
+                      color: Color(0xFFA82820),
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ),
             if (work.canCreateBatch &&
+                !requiresNewBatch &&
                 work.jobStatus == 'active' &&
                 batch.id == _detail?.batches.first.id)
               Align(
@@ -857,54 +1115,95 @@ class _WorksScreenState extends State<WorksScreen> {
     );
   }
 
-  Widget _stageRail(ProductionStage current, ProductionFlowState state) {
-    const stages = ProductionStage.values;
-    return Semantics(
-      label: 'Текущий этап: ${current.label}',
-      child: Row(
-        children: [
-          for (var index = 0; index < stages.length; index++) ...[
-            Expanded(
-              child: Column(
-                children: [
-                  Container(
-                    height: 7,
-                    decoration: BoxDecoration(
-                      color: index < current.index
-                          ? const Color(0xFF5D9672)
-                          : index == current.index
-                              ? state == ProductionFlowState.blocked
-                                  ? const Color(0xFFC8463B)
-                                  : AppTheme.blue
-                              : AppTheme.line,
-                      borderRadius: BorderRadius.circular(5),
-                    ),
-                  ),
-                  const SizedBox(height: 5),
-                  Text(
-                    stages[index].label,
-                    maxLines: 2,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 9,
-                      height: 1.1,
-                      fontWeight: index == current.index
-                          ? FontWeight.w900
-                          : FontWeight.w600,
-                      color: index <= current.index
-                          ? AppTheme.graphite
-                          : AppTheme.graphiteSoft,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (index != stages.length - 1) const SizedBox(width: 4),
-          ],
-        ],
+  Widget _routeActionCard(
+    ProductionWorkDetail detail,
+    List<ProductionJobBlock> activeBlocks,
+  ) {
+    final work = detail.summary;
+    final latestBatch = detail.batches.isEmpty ? null : detail.batches.first;
+    final latestUnit =
+        latestBatch?.units.isEmpty ?? true ? null : latestBatch!.units.first;
+    final (icon, title, text, color) = activeBlocks.isNotEmpty
+        ? (
+            Icons.block_rounded,
+            'Работа остановлена',
+            'Сначала снимите активную блокировку. До этого работу нельзя завершить.',
+            const Color(0xFFA82820),
+          )
+        : latestBatch == null
+            ? (
+                Icons.playlist_add_rounded,
+                'Создайте партию',
+                'Назначьте сотрудника и зафиксируйте условия производства.',
+                AppTheme.blue,
+              )
+            : _requiresNewBatch(latestBatch)
+                ? (
+                    Icons.playlist_add_rounded,
+                    'Создайте новую партию',
+                    'Вы не были исполнителем партии №${latestBatch.number}. '
+                        'Смена сотрудника всегда начинает новую партию.',
+                    const Color(0xFFA82820),
+                  )
+                : latestUnit == null
+                    ? (
+                        Icons.layers_outlined,
+                        'Добавьте стопу или рулон',
+                        'Партия №${latestBatch.number} готова. Добавьте объект контроля.',
+                        AppTheme.blue,
+                      )
+                    : latestUnit.state == ProductionUnitState.blocked
+                        ? (
+                            Icons.block_rounded,
+                            '${latestUnit.fullLabel} остановлен',
+                            'Устраните причину и начните новую партию, если сменились сотрудник или условия.',
+                            const Color(0xFFA82820),
+                          )
+                        : latestUnit.state == ProductionUnitState.approved
+                            ? (
+                                Icons.check_circle_outline_rounded,
+                                '${latestUnit.fullLabel} допущен',
+                                'Продолжайте текущую партию или создайте новую при любом изменении.',
+                                const Color(0xFF417C50),
+                              )
+                            : (
+                                Icons.compare_outlined,
+                                'Проверьте ${latestUnit.fullLabel.toLowerCase()}',
+                                'Откройте сравнение, повторите его при необходимости, затем допустите или заблокируйте.',
+                                AppTheme.blue,
+                              );
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: .08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: .35)),
       ),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Icon(icon, color: color),
+        const SizedBox(width: 10),
+        Expanded(
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(title, style: const TextStyle(fontWeight: FontWeight.w900)),
+            const SizedBox(height: 3),
+            Text(text,
+                style: const TextStyle(
+                    fontSize: 11, color: AppTheme.graphiteSoft, height: 1.35)),
+          ]),
+        ),
+        Text(work.stage.label,
+            style: TextStyle(
+                fontSize: 10, fontWeight: FontWeight.w800, color: color)),
+      ]),
     );
   }
+
+  bool _requiresNewBatch(ProductionBatch batch) =>
+      widget.organizationAccess.role == OrganizationRole.employee &&
+      widget.currentUserId.isNotEmpty &&
+      batch.employeeUserId.isNotEmpty &&
+      batch.employeeUserId != widget.currentUserId;
 
   Widget _sectionTitle(String text, IconData icon) => Row(
         children: [
@@ -1068,23 +1367,23 @@ class _WorksScreenState extends State<WorksScreen> {
     }
 
     List<OrganizationCustomer> customers;
+    List<ProductionWorker> workers;
     try {
       customers = await customerService.listCustomers(organizationId);
+      workers =
+          await widget.workflowService.listOrganizationWorkers(organizationId);
     } catch (error) {
       if (!mounted) return;
       setState(() => _error = 'Не удалось загрузить заказчиков: $error');
       return;
     }
     if (!mounted) return;
-    if (customers.isEmpty) {
-      setState(() {
-        _error = 'Сначала добавьте заказчика в настройках организации.';
-      });
-      return;
-    }
 
     var number = '';
     OrganizationCustomer? selectedCustomer;
+    ProductionWorker? responsible = workers.isEmpty ? null : workers.first;
+    var createCustomer = customers.isEmpty;
+    var newCustomerName = '';
     String? validation;
     final submitted = await showDialog<bool>(
       context: context,
@@ -1093,9 +1392,8 @@ class _WorksScreenState extends State<WorksScreen> {
           title: const Text('Новая работа'),
           content: SizedBox(
             width: 520,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
+            child: SingleChildScrollView(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
                 TextField(
                   autofocus: true,
                   decoration: const InputDecoration(
@@ -1104,41 +1402,87 @@ class _WorksScreenState extends State<WorksScreen> {
                   onChanged: (value) => number = value,
                 ),
                 const SizedBox(height: 10),
-                Autocomplete<OrganizationCustomer>(
-                  displayStringForOption: (customer) => customer.displayLabel,
-                  optionsBuilder: (value) {
-                    final query = value.text.trim().toLowerCase();
-                    return customers.where(
-                      (customer) =>
-                          query.isEmpty ||
-                          customer.code.toLowerCase().contains(query) ||
-                          customer.name.toLowerCase().contains(query),
-                    );
-                  },
-                  onSelected: (customer) {
-                    selectedCustomer = customer;
-                    setDialogState(() => validation = null);
-                  },
-                  fieldViewBuilder: (
-                    context,
-                    controller,
-                    focusNode,
-                    onSubmitted,
-                  ) =>
-                      TextField(
-                    controller: controller,
-                    focusNode: focusNode,
-                    decoration: const InputDecoration(
-                      labelText: 'Заказчик: код или название',
+                SegmentedButton<bool>(
+                  segments: const [
+                    ButtonSegment(
+                      value: false,
+                      icon: Icon(Icons.business_outlined),
+                      label: Text('Из списка'),
                     ),
-                    onChanged: (value) {
-                      if (selectedCustomer?.displayLabel != value) {
-                        selectedCustomer = null;
-                      }
-                    },
-                    onSubmitted: (_) => onSubmitted(),
-                  ),
+                    ButtonSegment(
+                      value: true,
+                      icon: Icon(Icons.add_business_outlined),
+                      label: Text('Новый заказчик'),
+                    ),
+                  ],
+                  selected: {createCustomer},
+                  onSelectionChanged: (values) => setDialogState(() {
+                    createCustomer = values.first;
+                    selectedCustomer = null;
+                    validation = null;
+                  }),
                 ),
+                const SizedBox(height: 10),
+                if (createCustomer)
+                  TextField(
+                    key: const ValueKey('new-work-customer-name'),
+                    decoration: const InputDecoration(
+                      labelText: 'Название заказчика',
+                    ),
+                    onChanged: (value) => newCustomerName = value,
+                  )
+                else
+                  Autocomplete<OrganizationCustomer>(
+                    displayStringForOption: (customer) => customer.displayLabel,
+                    optionsBuilder: (value) {
+                      final query = value.text.trim().toLowerCase();
+                      return customers.where(
+                        (customer) =>
+                            query.isEmpty ||
+                            customer.code.toLowerCase().contains(query) ||
+                            customer.name.toLowerCase().contains(query),
+                      );
+                    },
+                    onSelected: (customer) {
+                      selectedCustomer = customer;
+                      setDialogState(() => validation = null);
+                    },
+                    fieldViewBuilder: (
+                      context,
+                      controller,
+                      focusNode,
+                      onSubmitted,
+                    ) =>
+                        TextField(
+                      controller: controller,
+                      focusNode: focusNode,
+                      decoration: const InputDecoration(
+                        labelText: 'Заказчик: код или название',
+                      ),
+                      onChanged: (value) {
+                        if (selectedCustomer?.displayLabel != value) {
+                          selectedCustomer = null;
+                        }
+                      },
+                      onSubmitted: (_) => onSubmitted(),
+                    ),
+                  ),
+                if (workers.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  DropdownButtonFormField<ProductionWorker>(
+                    initialValue: responsible,
+                    decoration: const InputDecoration(
+                      labelText: 'Ответственный сотрудник',
+                    ),
+                    items: workers
+                        .map((worker) => DropdownMenuItem(
+                              value: worker,
+                              child: Text(worker.label),
+                            ))
+                        .toList(),
+                    onChanged: (value) => responsible = value,
+                  ),
+                ],
                 if (validation != null) ...[
                   const SizedBox(height: 8),
                   Align(
@@ -1149,7 +1493,7 @@ class _WorksScreenState extends State<WorksScreen> {
                     ),
                   ),
                 ],
-              ],
+              ]),
             ),
           ),
           actions: [
@@ -1163,7 +1507,13 @@ class _WorksScreenState extends State<WorksScreen> {
                   setDialogState(() => validation = 'Введите номер работы.');
                   return;
                 }
-                if (selectedCustomer == null) {
+                if (createCustomer && newCustomerName.trim().length < 2) {
+                  setDialogState(
+                    () => validation = 'Введите название нового заказчика.',
+                  );
+                  return;
+                }
+                if (!createCustomer && selectedCustomer == null) {
                   setDialogState(
                     () => validation = 'Выберите заказчика из списка.',
                   );
@@ -1177,18 +1527,29 @@ class _WorksScreenState extends State<WorksScreen> {
         ),
       ),
     );
-    if (submitted != true || selectedCustomer == null) return;
+    if (submitted != true) return;
 
     setState(() => _loading = true);
     try {
+      var customerId = selectedCustomer?.id;
+      if (createCustomer) {
+        customerId = await customerService.saveCustomer(
+          organizationId: organizationId,
+          code: '',
+          name: newCustomerName,
+          managerUserId: responsible?.userId,
+        );
+      }
       final job = await jobService.openJob(
         organizationId: organizationId,
         jobNumber: number,
-        customerId: selectedCustomer!.id,
+        customerId: customerId,
+        responsibleUserId: responsible?.userId,
       );
       if (!mounted) return;
       _searchController.clear();
       _view = ProductionWorkView.active;
+      _section = _WorkHubSection.continueWork;
       await _loadFirstPage(keepSelected: job.jobId);
       if (mounted) await _openWork(job.jobId);
     } catch (error) {

@@ -13,16 +13,31 @@ class SupabaseProductionJobService implements ProductionJobService {
     required String jobNumber,
     String? customerId,
     String? requestedCustomerName,
+    String? responsibleUserId,
   }) async {
-    final response = await client.rpc(
-      'open_production_job_v1',
-      params: {
-        'target_organization': organizationId,
-        'target_number': jobNumber.trim(),
-        'target_customer': customerId,
-        'target_requested_customer_name': requestedCustomerName?.trim(),
-      },
-    );
+    Object? response;
+    try {
+      response = await client.rpc(
+        'open_production_job_v2',
+        params: {
+          'target_organization': organizationId,
+          'target_number': jobNumber.trim(),
+          'target_customer': customerId,
+          'target_requested_customer_name': requestedCustomerName?.trim(),
+          'target_responsible_user': responsibleUserId,
+        },
+      );
+    } catch (_) {
+      response = await client.rpc(
+        'open_production_job_v1',
+        params: {
+          'target_organization': organizationId,
+          'target_number': jobNumber.trim(),
+          'target_customer': customerId,
+          'target_requested_customer_name': requestedCustomerName?.trim(),
+        },
+      );
+    }
     if (response is! Map) {
       throw StateError('Supabase did not return the production job');
     }

@@ -2,6 +2,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:photo_compare/features/organization/organization.dart';
 
 void main() {
+  test('customer role uses the customer-facing label', () {
+    expect(OrganizationRole.customer.label, 'Заказчик');
+    expect(
+      OrganizationMemberFunction.manager.label,
+      'Представитель заказчика',
+    );
+  });
+
   test('owner may perform every organization action', () {
     final access = OrganizationAccess.forRole(
       organizationId: 'organization-1',

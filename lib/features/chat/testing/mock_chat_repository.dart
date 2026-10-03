@@ -208,14 +208,20 @@ class MockChatRepository implements ChatRepository {
       customerShared: shared,
     );
 
-    final threadIndex = threads.indexWhere((thread) => thread.jobId == jobId);
-    if (threadIndex >= 0) {
-      final thread = threads[threadIndex];
-      threads[threadIndex] = thread.copyWith(
-        updatedAt: DateTime.now().toUtc(),
-        customerShared: shared,
-        canManageCustomerAccess: true,
-      );
+    final threadIndexes = <int>[
+      for (var index = 0; index < threads.length; index++)
+        if (threads[index].jobId == jobId) index,
+    ];
+    if (threadIndexes.isNotEmpty) {
+      final updatedAt = DateTime.now().toUtc();
+      for (final threadIndex in threadIndexes) {
+        final thread = threads[threadIndex];
+        threads[threadIndex] = thread.copyWith(
+          updatedAt: updatedAt,
+          customerShared: shared,
+          canManageCustomerAccess: true,
+        );
+      }
       notifyThreadChanged();
       return;
     }
@@ -295,12 +301,17 @@ class MockChatRepository implements ChatRepository {
     String text = '',
   }) async {
     final thread = threads.where((item) => item.id == threadId).firstOrNull;
+    final jobChat = thread?.kind == ChatThreadKind.jobCustomer ||
+        thread?.kind == ChatThreadKind.jobInternal;
+    final organizationChat = thread?.kind == ChatThreadKind.direct ||
+        thread?.kind == ChatThreadKind.team ||
+        thread?.kind == ChatThreadKind.organization ||
+        thread?.kind == ChatThreadKind.service;
     if (thread == null ||
-        (thread.kind != ChatThreadKind.jobCustomer &&
-            thread.kind != ChatThreadKind.jobInternal) ||
         thread.organizationId == null ||
-        thread.jobId == null) {
-      throw StateError('Attachments are available only in job chats');
+        (!jobChat && !organizationChat) ||
+        (jobChat && thread.jobId == null)) {
+      throw StateError('Attachments are unavailable in this conversation');
     }
     final assetId = 'mock-attachment-${++_messageSequence}';
     final attachment = ChatAttachment(
@@ -309,7 +320,9 @@ class MockChatRepository implements ChatRepository {
       mimeType: upload.mimeType,
       sizeBytes: upload.bytes.length,
       organizationId: thread.organizationId!,
-      jobId: thread.jobId!,
+      jobId: thread.jobId ?? '',
+      threadId: organizationChat ? thread.id : '',
+      internal: thread.kind == ChatThreadKind.jobInternal,
     );
     _attachmentBytes[assetId] = Uint8List.fromList(upload.bytes);
     final message = ChatMessage(

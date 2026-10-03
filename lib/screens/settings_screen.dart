@@ -6,6 +6,7 @@ import '../config/app_theme.dart';
 import '../features/auth/auth.dart';
 import '../features/billing/billing.dart';
 import '../features/capture/capture.dart';
+import '../features/chat/chat.dart';
 import '../features/color_analysis/color_analysis.dart';
 import '../features/organization/organization.dart';
 import '../features/production/production.dart';
@@ -40,7 +41,7 @@ enum _CustomerAction {
   restore,
 }
 
-enum _OrganizationWorkspace { team, customers }
+enum _OrganizationWorkspace { members, chatTeams, customers }
 
 enum _PrintConditionAction { archive, restore, deletePermanently }
 
@@ -56,6 +57,7 @@ class SettingsScreen extends StatefulWidget {
   final PaymentService? paymentService;
   final CheckUsageService? checkUsageService;
   final PrintConditionService? printConditionService;
+  final ChatRepository? chatRepository;
   final int checkUsageRevision;
 
   const SettingsScreen({
@@ -71,6 +73,7 @@ class SettingsScreen extends StatefulWidget {
     this.paymentService,
     this.checkUsageService,
     this.printConditionService,
+    this.chatRepository,
     this.checkUsageRevision = 0,
   });
 
@@ -121,12 +124,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _billingAddressCtrl = TextEditingController();
   List<OrganizationParticipant> _organizationParticipants = const [];
   List<OrganizationCustomer> _organizationCustomers = const [];
+  List<ChatThread> _organizationChatTeams = const [];
+  List<ChatContact> _organizationChatContacts = const [];
   List<OrganizationCustomerRequest> _customerRequests = const [];
   OrganizationRole _selectedMemberRole = OrganizationRole.employee;
   Set<OrganizationMemberFunction> _selectedMemberFunctions = {
     OrganizationMemberFunction.inspectionSpecialist,
   };
   bool _organizationBusy = false;
+  bool _chatTeamsBusy = false;
   bool _accountProfileLoading = false;
   bool _accountProfileSaving = false;
   bool _accountProfileLoaded = false;
@@ -141,7 +147,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String? _selectedCustomerManagerId;
   String? _selectedCustomerUserId;
   bool _showArchivedCustomers = false;
-  _OrganizationWorkspace _organizationWorkspace = _OrganizationWorkspace.team;
+  _OrganizationWorkspace _organizationWorkspace =
+      _OrganizationWorkspace.members;
   BillingScope _billingScope = BillingScope.personal;
   PlanTier _billingPlan = PlanTier.pro;
   BillingPeriod _billingPeriod = BillingPeriod.month;
@@ -579,6 +586,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         } else if (index == 3) {
           _loadOrganizationMembers();
           _loadCustomerDirectory();
+          _loadOrganizationChatTeams();
         } else if (index == 7) {
           _loadPrintConditions();
         }
@@ -1458,8 +1466,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       const SizedBox(height: 10),
       _organizationWorkspaceSelector(),
       const SizedBox(height: 10),
-      if (_organizationWorkspace == _OrganizationWorkspace.team)
+      if (_organizationWorkspace == _OrganizationWorkspace.members)
         _teamWorkspace(access)
+      else if (_organizationWorkspace == _OrganizationWorkspace.chatTeams)
+        _chatTeamsWorkspace()
       else
         _customersWorkspace(access),
     ]);
@@ -1468,13 +1478,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _organizationWorkspaceSelector() {
     return SegmentedButton<_OrganizationWorkspace>(
       key: const ValueKey('organization-workspace-selector'),
-      segments: const [
-        ButtonSegment(
-          value: _OrganizationWorkspace.team,
-          label: Text('Команда'),
+      segments: [
+        const ButtonSegment(
+          value: _OrganizationWorkspace.members,
+          icon: Icon(Icons.badge_outlined),
+          label: Text('Сотрудники'),
         ),
-        ButtonSegment(
+        if (widget.organizationAccess.role == OrganizationRole.admin)
+          const ButtonSegment(
+            value: _OrganizationWorkspace.chatTeams,
+            icon: Icon(Icons.groups_2_outlined),
+            label: Text('Команды чата'),
+          ),
+        const ButtonSegment(
           value: _OrganizationWorkspace.customers,
+          icon: Icon(Icons.business_outlined),
           label: Text('Заказчики'),
         ),
       ],
@@ -1513,6 +1531,227 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Widget _customersWorkspace(OrganizationAccess access) {
     return _customerDirectoryPanel();
+  }
+
+  Widget _chatTeamsWorkspace() {
+    return _settingsPanel(
+      title: 'Команды чата',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _notePanel(
+            'Здесь администратор создаёт команды и отмечает '
+            'сотрудников. В самом чате остаётся только общение.',
+          ),
+          const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton.icon(
+              key: const ValueKey('settings-create-chat-team'),
+              onPressed: _chatTeamsBusy ? null : () => _editChatTeam(),
+              icon: const Icon(Icons.group_add_outlined),
+              label: const Text('Создать команду'),
+            ),
+          ),
+          const SizedBox(height: 10),
+          if (_chatTeamsBusy && _organizationChatTeams.isEmpty)
+            const Center(child: CircularProgressIndicator())
+          else if (_organizationChatTeams.isEmpty)
+            const Text(
+              'Команд пока нет.',
+              style: TextStyle(color: AppTheme.graphiteSoft),
+            )
+          else
+            ..._organizationChatTeams.map(
+              (team) => Card(
+                margin: const EdgeInsets.only(bottom: 7),
+                child: ListTile(
+                  leading: Icon(
+                    team.isArchivedTeam
+                        ? Icons.inventory_2_outlined
+                        : Icons.groups_2_outlined,
+                  ),
+                  title: Text(team.title,
+                      style: const TextStyle(fontWeight: FontWeight.w800)),
+                  subtitle: Text(
+                      team.isArchivedTeam ? 'в архиве' : 'активная команда'),
+                  trailing: PopupMenuButton<String>(
+                    onSelected: (action) {
+                      if (action == 'edit') _editChatTeam(team: team);
+                      if (action == 'archive') _archiveChatTeam(team);
+                      if (action == 'restore') _restoreChatTeam(team);
+                    },
+                    itemBuilder: (_) => team.isArchivedTeam
+                        ? const [
+                            PopupMenuItem(
+                              value: 'restore',
+                              child: Text('Восстановить'),
+                            ),
+                          ]
+                        : const [
+                            PopupMenuItem(
+                              value: 'edit',
+                              child: Text('Изменить состав'),
+                            ),
+                            PopupMenuItem(
+                              value: 'archive',
+                              child: Text('Переместить в архив'),
+                            ),
+                          ],
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _loadOrganizationChatTeams() async {
+    final repository = widget.chatRepository;
+    if (repository == null ||
+        widget.organizationAccess.role != OrganizationRole.admin ||
+        _chatTeamsBusy) {
+      return;
+    }
+    setState(() => _chatTeamsBusy = true);
+    try {
+      final results = await Future.wait<Object>([
+        repository.listThreads(),
+        repository.searchContacts('', limit: 100),
+      ]);
+      if (!mounted) return;
+      final threads = results[0] as List<ChatThread>;
+      setState(() {
+        _organizationChatTeams = threads
+            .where((thread) => thread.kind == ChatThreadKind.team)
+            .toList();
+        _organizationChatContacts = results[1] as List<ChatContact>;
+      });
+    } catch (error) {
+      if (mounted) {
+        xpDlg(context, 'Команды недоступны', '$error');
+      }
+    } finally {
+      if (mounted) setState(() => _chatTeamsBusy = false);
+    }
+  }
+
+  Future<void> _editChatTeam({ChatThread? team}) async {
+    final repository = widget.chatRepository;
+    if (repository == null) return;
+    if (_organizationChatContacts.isEmpty) await _loadOrganizationChatTeams();
+    if (!mounted) return;
+    var name = team?.title ?? '';
+    final selected = <String>{};
+    if (team != null) {
+      final members = await repository.listTeamMembers(team.id);
+      selected.addAll(members.map((member) => member.userId));
+    }
+    if (!mounted) return;
+    String? validation;
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(team == null ? 'Новая команда' : 'Состав команды'),
+          content: SizedBox(
+            width: 520,
+            child: SingleChildScrollView(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                TextFormField(
+                  key: const ValueKey('settings-chat-team-name'),
+                  initialValue: name,
+                  autofocus: team == null,
+                  decoration: const InputDecoration(labelText: 'Название'),
+                  onChanged: (value) => name = value,
+                ),
+                const SizedBox(height: 8),
+                ..._organizationChatContacts
+                    .where((contact) => contact.canAddToTeam)
+                    .map(
+                      (contact) => CheckboxListTile(
+                        key: ValueKey(
+                            'settings-chat-team-member-${contact.userId}'),
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        value: selected.contains(contact.userId),
+                        title: Text(contact.label),
+                        subtitle: Text(contact.subtitle),
+                        onChanged: (checked) => setDialogState(() {
+                          checked == true
+                              ? selected.add(contact.userId)
+                              : selected.remove(contact.userId);
+                        }),
+                      ),
+                    ),
+                if (validation != null)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(validation!,
+                        style: const TextStyle(color: Color(0xFFA82820))),
+                  ),
+              ]),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              key: const ValueKey('settings-save-chat-team'),
+              onPressed: () {
+                if (name.trim().length < 2) {
+                  setDialogState(() => validation = 'Укажите название.');
+                  return;
+                }
+                if (selected.isEmpty) {
+                  setDialogState(
+                      () => validation = 'Отметьте хотя бы одного сотрудника.');
+                  return;
+                }
+                Navigator.pop(dialogContext, true);
+              },
+              child: const Text('Сохранить'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (saved != true) return;
+    setState(() => _chatTeamsBusy = true);
+    try {
+      if (team == null) {
+        await repository.createTeam(
+          name: name.trim(),
+          memberUserIds: selected.toList(),
+        );
+      } else {
+        await repository.updateTeam(
+          threadId: team.id,
+          name: name.trim(),
+          memberUserIds: selected.toList(),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _chatTeamsBusy = false);
+    }
+    await _loadOrganizationChatTeams();
+  }
+
+  Future<void> _archiveChatTeam(ChatThread team) async {
+    final repository = widget.chatRepository;
+    if (repository == null) return;
+    await repository.archiveTeam(team.id);
+    await _loadOrganizationChatTeams();
+  }
+
+  Future<void> _restoreChatTeam(ChatThread team) async {
+    final repository = widget.chatRepository;
+    if (repository == null) return;
+    await repository.restoreTeam(team.id);
+    await _loadOrganizationChatTeams();
   }
 
   Widget _teamTable(

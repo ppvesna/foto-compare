@@ -3,6 +3,10 @@ import 'package:photo_compare/features/organization/organization.dart';
 import 'package:photo_compare/features/production/production.dart';
 
 void main() {
+  test('manager function uses the internal representative label', () {
+    expect(JobFunction.manager.label, 'Представитель заказчика');
+  });
+
   final job = ProductionJob(
     id: 'job-125',
     organizationId: 'organization-1',

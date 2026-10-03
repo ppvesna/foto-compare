@@ -9,32 +9,44 @@ enum CloudAssetScopeType {
   organizationJob,
   organizationJobChat,
   organizationJobInternalChat,
+  organizationChat,
 }
 
 class CloudAssetScope {
   final CloudAssetScopeType type;
   final String? organizationId;
   final String? jobId;
+  final String? threadId;
 
   const CloudAssetScope.personal()
       : type = CloudAssetScopeType.personal,
         organizationId = null,
-        jobId = null;
+        jobId = null,
+        threadId = null;
 
   const CloudAssetScope.organizationJob({
     required this.organizationId,
     required this.jobId,
-  }) : type = CloudAssetScopeType.organizationJob;
+  })  : type = CloudAssetScopeType.organizationJob,
+        threadId = null;
 
   const CloudAssetScope.organizationJobChat({
     required this.organizationId,
     required this.jobId,
-  }) : type = CloudAssetScopeType.organizationJobChat;
+  })  : type = CloudAssetScopeType.organizationJobChat,
+        threadId = null;
 
   const CloudAssetScope.organizationJobInternalChat({
     required this.organizationId,
     required this.jobId,
-  }) : type = CloudAssetScopeType.organizationJobInternalChat;
+  })  : type = CloudAssetScopeType.organizationJobInternalChat,
+        threadId = null;
+
+  const CloudAssetScope.organizationChat({
+    required this.organizationId,
+    required this.threadId,
+  })  : type = CloudAssetScopeType.organizationChat,
+        jobId = null;
 }
 
 class CloudConnection {

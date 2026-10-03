@@ -103,4 +103,80 @@ void main() {
     expect(sql, contains("chat.kind <> 'service'"));
     expect(sql, contains("chat.kind <> 'group' OR chat.archived_at IS NULL"));
   });
+
+  test('unified work chat keeps audiences and administrator access separate',
+      () async {
+    final sql = await File(
+      'supabase/migrations/033_unified_work_chat_v1.sql',
+    ).readAsString();
+
+    expect(
+      sql,
+      contains("has_organization_role_v2(job.organization_id, ARRAY['admin'])"),
+    );
+    expect(sql, isNot(contains("ARRAY['owner', 'admin']")));
+    expect(sql, contains('production_job_participants AS participant'));
+    expect(sql, contains('production_job_batches AS batch'));
+    expect(sql, contains('production_inspection_attempts AS attempt'));
+    expect(sql, contains('attempt.attempted_by = auth.uid()'));
+    expect(sql, contains('production_job_blocks AS block'));
+  });
+
+  test('work hub exposes statuses and writable organization service chat',
+      () async {
+    final sql = await File(
+      'supabase/migrations/034_work_hub_and_contextual_chat_v1.sql',
+    ).readAsString();
+
+    expect(sql, contains('list_accessible_chat_threads_v3'));
+    expect(sql, contains('job_flow_state TEXT'));
+    expect(sql, contains("chat.kind IN ('organization', 'service')"));
+    expect(sql, contains('list_production_inspection_history_v1'));
+    expect(sql, contains('open_production_job_v2'));
+    expect(sql, contains('target_responsible_user'));
+    expect(sql, contains('save_organization_customer_v2'));
+    expect(sql, contains('list_organization_production_workers_v1'));
+    expect(sql, contains("function_name = 'manager'"));
+    expect(sql, contains("(storage.foldername(name))[3] = 'chats'"));
+  });
+
+  test('owner work creation and service chat defaults stay available',
+      () async {
+    final sql = await File(
+      'supabase/migrations/035_owner_work_and_service_chat_v1.sql',
+    ).readAsString();
+
+    expect(sql, contains("ARRAY['owner', 'admin']"));
+    expect(sql, contains('ensure_default_chat_threads_v1'));
+    expect(sql, contains("'Служебные', 'service'"));
+    expect(
+      sql,
+      contains(
+        "'organization:' || membership.organization_id::TEXT || ':service'",
+      ),
+    );
+    expect(sql, contains('is_deleted = FALSE'));
+  });
+
+  test('existing organizations receive a service chat backfill', () async {
+    final sql = await File(
+      'supabase/migrations/036_service_chat_backfill_v1.sql',
+    ).readAsString();
+
+    expect(sql, contains('FROM organizations AS organization'));
+    expect(sql, contains("'Служебные'"));
+    expect(sql, contains("':service'"));
+    expect(sql, contains('is_deleted = FALSE'));
+  });
+
+  test('owner can be responsible for the first organization work', () async {
+    final sql = await File(
+      'supabase/migrations/037_owner_work_responsible_v1.sql',
+    ).readAsString();
+
+    expect(sql, contains('open_production_job_v2'));
+    expect(sql, contains('list_organization_production_workers_v1'));
+    expect(sql, contains("member.role IN ('owner', 'admin', 'employee')"));
+    expect(sql, contains("ARRAY['owner', 'admin', 'employee']"));
+  });
 }

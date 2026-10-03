@@ -138,6 +138,10 @@ messages, protocols, and image assets through server-side RLS. A customer sees o
 coarse work status and the customer channel; production batches, inspected physical
 units, technical decisions, and the internal channel remain private.
 
+The stored codes remain stable. In the Russian UI, the external `customer` role is
+labelled «Заказчик», while the internal `manager` job function is labelled
+«Представитель заказчика».
+
 Legacy role values remain readable during migration: `operator`, `technologist`, and
 `member` map to employee; `viewer` maps to customer. The obsolete migration `005`
 retains the old role model and must not be applied.
@@ -224,8 +228,16 @@ administrator may remove that block, and the customer sees only `in progress / d
 Each work owns an internal production chat and a separately authorized customer chat.
 Migration `032` adds a role-scoped people directory for direct conversations and
 administrator-managed internal teams with reversible archive. Chat navigation groups
-those conversations by intent; one work row selects its internal or customer channel
-without merging their histories or permissions.
+those conversations by intent. Migration `033` renders the two work audiences as one
+chronological staff timeline with an explicit audience selector. Their histories,
+attachments and permissions remain separate; an external customer sees only customer
+messages, and only an administrator can connect or disconnect that customer.
+Migration `034` makes the production register the operator's route card: create and
+assign a work there, continue the next action, view completed work, and inspect attempt
+history. Team administration belongs to organization settings. Chat remains a
+communication surface whose filters, composer and `+` actions depend on the selected
+thread and the member's function. The organization service thread is writable by
+organization members and is never exposed to customer representatives.
 
 ## 7. Inspection domain
 
@@ -257,6 +269,14 @@ records attempts against the selected physical unit and asks the employee for a 
 `approved` or `blocked` decision. Customer identity is stored in local protocols.
 Samples, full remote protocol synchronization, and original image assets remain
 separate future steps.
+
+Batch identity is a production invariant, not a presentation preference. A batch fixes
+the responsible employee and its production conditions. Any change of employee, press,
+material, format or roll width, inks, or another production condition creates the next
+numbered batch before work continues. An existing batch is never reassigned or rewritten
+after such a change. A new stack/roll belongs to the current batch only while all fixed
+conditions and the employee remain unchanged. Rechecking the same physical unit creates
+a new inspection attempt, not a batch.
 
 ### 7.1 Print proofing
 

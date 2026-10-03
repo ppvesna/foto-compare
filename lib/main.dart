@@ -627,6 +627,7 @@ class _MainShellState extends State<MainShell> {
       else
         WorksScreen(
           organizationId: _organizationAccess.organizationId,
+          currentUserId: user?.id ?? '',
           organizationAccess: _organizationAccess,
           workflowService: _workflowService,
           customerDirectoryService: SupabaseCustomerDirectoryService(
@@ -646,7 +647,18 @@ class _MainShellState extends State<MainShell> {
         organizationName: organizationName,
         initialJobId: _requestedChatJobId,
         initialThreadKind: _requestedChatKind,
-        canManageTeams: _organizationAccess.role == OrganizationRole.admin,
+        canManageTeams: false,
+        canManageCustomerChatAccess:
+            _organizationAccess.role == OrganizationRole.admin,
+        showOrganizationService: _organizationAccess.organizationId != null &&
+            _organizationAccess.role != OrganizationRole.customer &&
+            _organizationAccess.role != OrganizationRole.personal,
+        canShareInspectionAssets:
+            _organizationAccess.role == OrganizationRole.owner ||
+                _organizationAccess.role == OrganizationRole.admin ||
+                _organizationAccess.functions.contains(
+                  OrganizationMemberFunction.inspectionSpecialist,
+                ),
         protocolCloudRepository: _protocolCloudRepository,
         chatRepository: _chatRepository,
       ),
@@ -659,6 +671,7 @@ class _MainShellState extends State<MainShell> {
         printConditionService: SupabasePrintConditionService(
           Supabase.instance.client,
         ),
+        chatRepository: _chatRepository,
         checkUsageService: _checkUsageService,
         checkUsageRevision: _checkUsageRevision,
         onAccessChanged: _loadAccess,

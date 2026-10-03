@@ -25,6 +25,9 @@ class ChatScreen extends StatefulWidget {
   final String? initialJobId;
   final ChatThreadKind? initialThreadKind;
   final bool canManageTeams;
+  final bool canManageCustomerChatAccess;
+  final bool showOrganizationService;
+  final bool canShareInspectionAssets;
   final ProtocolCloudRepository? protocolCloudRepository;
   final ChatRepository? chatRepository;
   final ChatAttachmentPicker? attachmentPicker;
@@ -39,6 +42,9 @@ class ChatScreen extends StatefulWidget {
     this.initialJobId,
     this.initialThreadKind,
     this.canManageTeams = false,
+    this.canManageCustomerChatAccess = false,
+    this.showOrganizationService = false,
+    this.canShareInspectionAssets = false,
     this.protocolCloudRepository,
     this.chatRepository,
     this.attachmentPicker,
@@ -57,6 +63,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Timer? _contactSearchDebounce;
   _ChatSection _chatSection = _ChatSection.personal;
   _ChatListFilter _chatListFilter = _ChatListFilter.active;
+  bool _onlyUnreadWorks = false;
   String _chatSearchQuery = '';
   List<ChatContact> _contactResults = const [];
   bool _contactsLoading = false;
@@ -76,9 +83,11 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _sendingMessage = false;
   bool _sendingAttachment = false;
   bool _customerAccessUpdating = false;
+  bool _sendWorkMessageToCustomer = false;
   String? _serverChatError;
-  StreamSubscription<List<ChatMessage>>? _messageSubscription;
+  final List<StreamSubscription<List<ChatMessage>>> _messageSubscriptions = [];
   StreamSubscription<void>? _threadSubscription;
+  final Map<String, List<ChatMessage>> _messagesByThread = {};
 
   bool get _usesServerChat => widget.chatRepository != null;
 
@@ -87,6 +96,57 @@ class _ChatScreenState extends State<ChatScreen> {
       return null;
     }
     return _serverThreads[_activeChat];
+  }
+
+  _WorkThreadGroup? get _activeWorkGroup {
+    final active = _activeServerThread;
+    if (active?.jobId == null ||
+        (active!.kind != ChatThreadKind.jobCustomer &&
+            active.kind != ChatThreadKind.jobInternal)) {
+      return null;
+    }
+    for (final group in _allWorkGroups) {
+      if (group.jobId == active.jobId) return group;
+    }
+    return null;
+  }
+
+  List<_IndexedChatThread> get _activeMessageChannels {
+    final group = _activeWorkGroup;
+    if (group != null) return group.channels;
+    final active = _activeServerThread;
+    if (active == null) return const [];
+    return [_IndexedChatThread(index: _activeChat, thread: active)];
+  }
+
+  String? get _activeMessageSelectionKey {
+    final group = _activeWorkGroup;
+    if (group != null) return 'job:${group.jobId}';
+    final active = _activeServerThread;
+    return active == null ? null : 'thread:${active.id}';
+  }
+
+  ChatThread? get _workMessageTarget {
+    final group = _activeWorkGroup;
+    if (group == null) return _activeServerThread;
+    final preferredKind = _sendWorkMessageToCustomer
+        ? ChatThreadKind.jobCustomer
+        : ChatThreadKind.jobInternal;
+    for (final entry in group.channels) {
+      if (entry.thread.kind == preferredKind) return entry.thread;
+    }
+    return group.channels.first.thread;
+  }
+
+  bool get _canChooseWorkAudience {
+    final group = _activeWorkGroup;
+    if (group == null) return false;
+    return group.channels.any(
+          (entry) => entry.thread.kind == ChatThreadKind.jobInternal,
+        ) &&
+        group.channels.any(
+          (entry) => entry.thread.kind == ChatThreadKind.jobCustomer,
+        );
   }
 
   List<int> get _visibleChatIndexes {
@@ -228,15 +288,19 @@ class _ChatScreenState extends State<ChatScreen> {
             .toLowerCase()
             .contains(query);
       }
-      return switch (_chatListFilter) {
-        _ChatListFilter.active => !group.isArchived,
-        _ChatListFilter.unread => !group.isArchived &&
-            (group.unreadCount > 0 ||
-                group.channels.any(
-                  (entry) => entry.thread.id == _openedUnreadThreadId,
-                )),
+      final matchesStatus = switch (_chatListFilter) {
+        _ChatListFilter.active =>
+          !group.isArchived && group.jobFlowState != 'blocked',
+        _ChatListFilter.unread =>
+          !group.isArchived && group.jobFlowState == 'blocked',
         _ChatListFilter.archive => group.isArchived,
       };
+      if (!matchesStatus) return false;
+      return !_onlyUnreadWorks ||
+          group.unreadCount > 0 ||
+          group.channels.any(
+            (entry) => entry.thread.id == _openedUnreadThreadId,
+          );
     }).toList(growable: false);
   }
 
@@ -304,7 +368,7 @@ class _ChatScreenState extends State<ChatScreen> {
     ),
     const _ChatMessage(
       author: 'Олег',
-      role: 'менеджер',
+      role: 'представитель заказчика',
       time: '10:57',
       text:
           'Прикрепил макет, протокол проверки и превью. Оригиналы производства заказчику не показываем, только согласовательные файлы.',
@@ -380,7 +444,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _loadCloudProtocols();
     }
     if (oldWidget.chatRepository != widget.chatRepository) {
-      _messageSubscription?.cancel();
+      _cancelMessageSubscriptions();
       _threadSubscription?.cancel();
       _loadServerChats(preferredJobId: widget.initialJobId);
     } else if ((oldWidget.initialJobId != widget.initialJobId ||
@@ -396,9 +460,19 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollCtrl.dispose();
     _chatSearchCtrl.dispose();
     _contactSearchDebounce?.cancel();
-    _messageSubscription?.cancel();
+    for (final subscription in _messageSubscriptions) {
+      subscription.cancel();
+    }
     _threadSubscription?.cancel();
     super.dispose();
+  }
+
+  Future<void> _cancelMessageSubscriptions() async {
+    final subscriptions = List.of(_messageSubscriptions);
+    _messageSubscriptions.clear();
+    for (final subscription in subscriptions) {
+      await subscription.cancel();
+    }
   }
 
   Future<void> _loadCloudProtocols() {
@@ -507,6 +581,8 @@ class _ChatScreenState extends State<ChatScreen> {
             : preferredIndex >= 0
                 ? _ChatSection.works
                 : _sectionForKind(threads[_activeChat].kind);
+        _sendWorkMessageToCustomer = false;
+        _messagesByThread.clear();
       });
       await _watchServerThreads();
       await _loadServerMessages();
@@ -551,7 +627,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _activeChat = preservedIndex >= 0 ? preservedIndex : 0;
       });
       if (activeThreadChanged) {
-        await _messageSubscription?.cancel();
+        await _cancelMessageSubscriptions();
         await _loadServerMessages();
       }
     } catch (_) {
@@ -564,52 +640,98 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _loadServerMessages() async {
     final repository = widget.chatRepository;
     final thread = _activeServerThread;
-    if (repository == null || thread == null || _serverMessagesLoading) return;
+    if (repository == null || thread == null) return;
+    final selectionKey = _activeMessageSelectionKey;
+    final channels = List<_IndexedChatThread>.of(_activeMessageChannels);
     setState(() => _serverMessagesLoading = true);
     try {
-      final messages = await repository.listMessages(thread.id);
-      if (!mounted || _activeServerThread?.id != thread.id) return;
-      setState(() => _serverMessages = messages);
-      await _watchServerMessages(thread.id);
-      await _markServerThreadRead(thread.id);
+      final loaded = await Future.wait(
+        channels.map((entry) async => MapEntry(
+              entry.thread.id,
+              await repository.listMessages(entry.thread.id),
+            )),
+      );
+      if (!mounted || _activeMessageSelectionKey != selectionKey) return;
+      setState(() {
+        _messagesByThread
+          ..clear()
+          ..addEntries(loaded);
+        _serverMessages = _mergedMessages(channels);
+      });
+      await _watchServerMessages(channels, selectionKey);
+      for (final entry in channels) {
+        await _markServerThreadRead(entry.thread.id);
+      }
       _scrollMessagesToEnd();
     } catch (_) {
-      if (!mounted || _activeServerThread?.id != thread.id) return;
+      if (!mounted || _activeMessageSelectionKey != selectionKey) return;
       setState(() {
         _serverMessages = const [];
         _serverChatError = 'Не удалось загрузить сообщения.';
       });
     } finally {
-      if (mounted) setState(() => _serverMessagesLoading = false);
+      if (mounted && _activeMessageSelectionKey == selectionKey) {
+        setState(() => _serverMessagesLoading = false);
+      }
     }
   }
 
-  Future<void> _watchServerMessages(String threadId) async {
-    await _messageSubscription?.cancel();
+  List<ChatMessage> _mergedMessages(
+    List<_IndexedChatThread> channels,
+  ) {
+    final merged = channels
+        .expand<ChatMessage>(
+          (entry) =>
+              _messagesByThread[entry.thread.id] ?? const <ChatMessage>[],
+        )
+        .toList(growable: false);
+    merged.sort((left, right) {
+      final byDate = left.createdAt.compareTo(right.createdAt);
+      return byDate != 0 ? byDate : left.id.compareTo(right.id);
+    });
+    return merged;
+  }
+
+  Future<void> _watchServerMessages(
+    List<_IndexedChatThread> channels,
+    String? selectionKey,
+  ) async {
+    await _cancelMessageSubscriptions();
     final repository = widget.chatRepository;
     if (repository == null || !mounted) return;
-    _messageSubscription = repository.watchMessages(threadId).listen(
-      (messages) {
-        if (!mounted || _activeServerThread?.id != threadId) return;
-        setState(() {
-          _serverMessages = messages;
-          _serverChatError = null;
-        });
-        unawaited(_markServerThreadRead(threadId));
-        _scrollMessagesToEnd();
-      },
-      onError: (_) {
-        if (!mounted || _activeServerThread?.id != threadId) return;
-        setState(() {
-          _serverChatError =
-              'Живое обновление недоступно. Сообщения обновятся при повторном входе.';
-        });
-      },
-    );
+    for (final entry in channels) {
+      final threadId = entry.thread.id;
+      final subscription = repository.watchMessages(threadId).listen(
+        (messages) {
+          if (!mounted || _activeMessageSelectionKey != selectionKey) return;
+          setState(() {
+            _messagesByThread[threadId] = messages;
+            _serverMessages = _mergedMessages(_activeMessageChannels);
+            _serverChatError = null;
+          });
+          unawaited(_markServerThreadRead(threadId));
+          _scrollMessagesToEnd();
+        },
+        onError: (_) {
+          if (!mounted || _activeMessageSelectionKey != selectionKey) return;
+          setState(() {
+            _serverChatError =
+                'Живое обновление недоступно. Сообщения обновятся при повторном входе.';
+          });
+        },
+      );
+      _messageSubscriptions.add(subscription);
+    }
   }
 
   Future<void> _selectChat(int index) async {
-    if (index == _activeChat) return;
+    if (index == _activeChat) {
+      if (_usesServerChat &&
+          (_serverMessages.isEmpty || _serverMessagesLoading)) {
+        await _loadServerMessages();
+      }
+      return;
+    }
     setState(() {
       if (_usesServerChat &&
           _chatSearchQuery.isEmpty &&
@@ -617,8 +739,10 @@ class _ChatScreenState extends State<ChatScreen> {
         _openedUnreadThreadId = _serverThreads[index].id;
       }
       _activeChat = index;
+      _sendWorkMessageToCustomer = false;
       if (_usesServerChat) {
         _serverMessages = const [];
+        _messagesByThread.clear();
         _serverChatError = null;
       }
     });
@@ -680,6 +804,7 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       _chatSection = section;
       _chatListFilter = _ChatListFilter.active;
+      _onlyUnreadWorks = false;
       _chatSearchQuery = '';
       _chatSearchCtrl.clear();
       _contactResults = const [];
@@ -730,6 +855,8 @@ class _ChatScreenState extends State<ChatScreen> {
         _contactResults = const [];
         _contactsLoading = false;
         _serverMessages = const [];
+        _messagesByThread.clear();
+        _sendWorkMessageToCustomer = false;
       });
       await _loadServerMessages();
     } catch (_) {
@@ -969,16 +1096,6 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
               ),
             ),
-            if (_chatSection == _ChatSection.teams &&
-                widget.canManageTeams) ...[
-              const SizedBox(width: 5),
-              IconButton.filledTonal(
-                key: const ValueKey('create-chat-team'),
-                tooltip: 'Создать команду',
-                onPressed: _teamActionBusy ? null : () => _showTeamDialog(),
-                icon: const Icon(Icons.group_add_outlined, size: 19),
-              ),
-            ],
           ]),
         ],
         if (_chatSection == _ChatSection.works ||
@@ -988,7 +1105,9 @@ class _ChatScreenState extends State<ChatScreen> {
             Expanded(
               child: _chatFilterChip(
                 filter: _ChatListFilter.active,
-                label: 'Активные',
+                label: _chatSection == _ChatSection.works
+                    ? 'В работе'
+                    : 'Активные',
                 count: _activeThreadCount,
                 key: const ValueKey('chat-filter-active'),
               ),
@@ -997,8 +1116,16 @@ class _ChatScreenState extends State<ChatScreen> {
             Expanded(
               child: _chatFilterChip(
                 filter: _ChatListFilter.unread,
-                label: 'Непрочитанные',
-                count: _unreadThreadCount,
+                label: _chatSection == _ChatSection.works
+                    ? 'Стоп'
+                    : 'Непрочитанные',
+                count: _chatSection == _ChatSection.works
+                    ? _allWorkGroups
+                        .where((group) =>
+                            !group.isArchived &&
+                            group.jobFlowState == 'blocked')
+                        .length
+                    : _unreadThreadCount,
                 key: const ValueKey('chat-filter-unread'),
               ),
             ),
@@ -1006,11 +1133,32 @@ class _ChatScreenState extends State<ChatScreen> {
             Expanded(
               child: _chatFilterChip(
                 filter: _ChatListFilter.archive,
-                label: 'Архив',
+                label:
+                    _chatSection == _ChatSection.works ? 'Выполнены' : 'Архив',
                 count: _archivedThreadCount,
                 key: const ValueKey('chat-filter-archive'),
               ),
             ),
+            if (_chatSection == _ChatSection.works) ...[
+              const SizedBox(width: 5),
+              IconButton.filledTonal(
+                key: const ValueKey('chat-only-unread'),
+                tooltip: 'Только непрочитанные',
+                onPressed: () =>
+                    setState(() => _onlyUnreadWorks = !_onlyUnreadWorks),
+                style: IconButton.styleFrom(
+                  backgroundColor:
+                      _onlyUnreadWorks ? AppTheme.blue : AppTheme.surfaceMuted,
+                  foregroundColor:
+                      _onlyUnreadWorks ? Colors.white : AppTheme.graphite,
+                ),
+                icon: Badge(
+                  isLabelVisible: _unreadThreadCount > 0,
+                  label: Text('$_unreadThreadCount'),
+                  child: const Icon(Icons.mark_email_unread_outlined, size: 18),
+                ),
+              ),
+            ],
           ]),
         ],
       ]),
@@ -1022,8 +1170,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _ChatSection.personal,
       _ChatSection.teams,
       _ChatSection.works,
-      if (_serverThreads.any((thread) => thread.kind == ChatThreadKind.service))
-        _ChatSection.service,
+      if (widget.showOrganizationService) _ChatSection.service,
     ];
     return Row(
       children: sections.map((section) {
@@ -1301,120 +1448,61 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _workChatTile(_WorkThreadGroup group) {
     final selected = group.channels.any((entry) => entry.index == _activeChat);
-    return Container(
+    final primary = group.channels.first;
+    return Material(
       key: ValueKey('work-chat-group-${group.jobId}'),
-      margin: const EdgeInsets.only(bottom: 7),
-      padding: const EdgeInsets.fromLTRB(10, 9, 10, 8),
-      decoration: BoxDecoration(
-        color: selected ? AppTheme.surface : const Color(0xFFF0F4F5),
-        border: Border.all(color: selected ? AppTheme.blue : AppTheme.line),
+      color: selected ? AppTheme.surface : const Color(0xFFF0F4F5),
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        boxShadow: selected ? AppTheme.shadowSubtle : null,
+        side: BorderSide(color: selected ? AppTheme.blue : AppTheme.line),
       ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Row(children: [
-          _avatar(group.title, const Color(0xFF0EA5A4), size: 36),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  group.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                Text(
-                  (group.customerName ?? '').isEmpty
-                      ? (group.isArchived ? 'архив' : 'работа')
-                      : '${group.isArchived ? 'архив' : 'работа'} · ${group.customerName}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 9.5, color: Colors.black54),
-                ),
-              ],
-            ),
-          ),
-          if (group.unreadCount > 0) _unread(group.unreadCount),
-        ]),
-        const SizedBox(height: 7),
-        Row(
-          children: group.channels.map((entry) {
-            final internal = entry.thread.kind == ChatThreadKind.jobInternal;
-            final active = entry.index == _activeChat;
-            return Expanded(
-              child: Padding(
-                padding: EdgeInsets.only(
-                  right: entry == group.channels.last ? 0 : 5,
-                ),
-                child: Material(
-                  color: active
-                      ? const Color(0xFFDDEFF0)
-                      : const Color(0xFFF8FAFA),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(9),
-                    side: BorderSide(
-                      color: active ? AppTheme.blue : AppTheme.line,
+      child: InkWell(
+        key: ValueKey('open-work-chat-${group.jobId}'),
+        borderRadius: BorderRadius.circular(16),
+        onTap: () => _selectChat(primary.index),
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 7),
+          padding: const EdgeInsets.fromLTRB(10, 9, 8, 9),
+          child: Row(children: [
+            _avatar(group.title, const Color(0xFF0EA5A4), size: 36),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    group.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w900,
                     ),
                   ),
-                  child: InkWell(
-                    key: ValueKey('work-chat-channel-${entry.thread.id}'),
-                    borderRadius: BorderRadius.circular(9),
-                    onTap: () => _selectChat(entry.index),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 5,
-                        vertical: 6,
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            internal
-                                ? Icons.engineering_outlined
-                                : Icons.handshake_outlined,
-                            size: 14,
-                            color: active
-                                ? AppTheme.blueDark
-                                : AppTheme.graphiteSoft,
-                          ),
-                          const SizedBox(width: 4),
-                          Flexible(
-                            child: Text(
-                              internal ? 'Производство' : 'Заказчик',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 9,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                          ),
-                          if (entry.thread.unreadCount > 0) ...[
-                            const SizedBox(width: 3),
-                            Text(
-                              '${entry.thread.unreadCount}',
-                              style: const TextStyle(
-                                fontSize: 8,
-                                fontWeight: FontWeight.w900,
-                                color: Color(0xFFB42318),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
+                  Text(
+                    (group.customerName ?? '').isEmpty
+                        ? group.statusLabel
+                        : '${group.statusLabel} · ${group.customerName}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style:
+                        const TextStyle(fontSize: 9.5, color: Colors.black54),
                   ),
-                ),
+                ],
               ),
-            );
-          }).toList(growable: false),
+            ),
+            if (group.unreadCount > 0) ...[
+              _unread(group.unreadCount),
+              const SizedBox(width: 5),
+            ],
+            const Icon(
+              Icons.chevron_right,
+              size: 19,
+              color: AppTheme.graphiteSoft,
+            ),
+          ]),
         ),
-      ]),
+      ),
     );
   }
 
@@ -1470,7 +1558,8 @@ class _ChatScreenState extends State<ChatScreen> {
                   style: const TextStyle(fontSize: 9, color: Colors.black45),
                 ),
                 if (serverThread?.kind == ChatThreadKind.team &&
-                    serverThread!.canManage)
+                    serverThread!.canManage &&
+                    widget.canManageTeams)
                   _teamMenu(serverThread),
               ]),
               const SizedBox(height: 3),
@@ -1533,7 +1622,7 @@ class _ChatScreenState extends State<ChatScreen> {
       case ChatThreadKind.direct:
         return 'личный диалог';
       case ChatThreadKind.service:
-        return 'служебный журнал администратора';
+        return 'служебный чат организации';
       case ChatThreadKind.personal:
         return 'видно только вам';
     }
@@ -1593,16 +1682,20 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _serverChatPane() {
     final thread = _activeServerThread!;
+    final workGroup = _activeWorkGroup;
     return Container(
       color: AppTheme.appBackground,
       child: Column(children: [
         _chatHeaderContent(
-          title: thread.title,
-          subtitle: _serverThreadSubtitle(thread),
+          title: workGroup?.title ?? thread.title,
+          subtitle: workGroup == null
+              ? _serverThreadSubtitle(thread)
+              : (workGroup.customerName ?? '').isEmpty
+                  ? 'чат работы'
+                  : workGroup.customerName!,
           color: _serverThreadColor(thread.kind),
         ),
-        if (thread.kind == ChatThreadKind.jobCustomer)
-          _customerAccessBar(thread),
+        if (workGroup != null) _customerAccessBar(thread),
         if (_serverChatError != null) _serverChatErrorBanner(),
         Expanded(
           child: _serverMessagesLoading
@@ -1623,9 +1716,9 @@ class _ChatScreenState extends State<ChatScreen> {
                       ),
                     ),
         ),
-        if (thread.kind == ChatThreadKind.service || thread.isArchivedTeam)
+        if (thread.isArchivedTeam)
           Container(
-            key: const ValueKey('service-chat-read-only'),
+            key: const ValueKey('archived-team-chat-read-only'),
             width: double.infinity,
             padding: const EdgeInsets.fromLTRB(14, 9, 14, 10),
             decoration: const BoxDecoration(
@@ -1633,9 +1726,7 @@ class _ChatScreenState extends State<ChatScreen> {
               border: Border(top: BorderSide(color: AppTheme.line)),
             ),
             child: Text(
-              thread.isArchivedTeam
-                  ? 'Команда в архиве · переписка сохранена'
-                  : 'Только служебные события · ответы не требуются',
+              'Команда в архиве · переписка сохранена',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 10, color: Colors.black54),
             ),
@@ -1692,9 +1783,7 @@ class _ChatScreenState extends State<ChatScreen> {
         const SizedBox(width: 7),
         Expanded(
           child: Text(
-            shared
-                ? 'Работа доступна назначенному заказчику'
-                : 'Внутренняя работа: заказчик ее не видит',
+            shared ? 'Заказчик подключён' : 'Заказчик не подключён',
             style: TextStyle(
               color: color,
               fontSize: 10,
@@ -1702,7 +1791,8 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
         ),
-        if (thread.canManageCustomerAccess)
+        if (widget.canManageCustomerChatAccess &&
+            thread.canManageCustomerAccess)
           FilledButton.tonalIcon(
             key: const ValueKey('current-customer-access-toggle'),
             onPressed: _customerAccessUpdating
@@ -1719,7 +1809,7 @@ class _ChatScreenState extends State<ChatScreen> {
               size: 17,
             ),
             label: Text(
-              shared ? 'Закрыть доступ' : 'Открыть заказчику',
+              shared ? 'Отключить' : 'Подключить',
               style: const TextStyle(fontSize: 11),
             ),
           ),
@@ -1773,6 +1863,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
   _ChatMessage _serverMessageView(ChatMessage message) {
     final nickname = message.senderNickname.trim();
+    final messageThread = _serverThreads
+        .where((thread) => thread.id == message.threadId)
+        .firstOrNull;
+    final customerAudience = _activeWorkGroup != null &&
+        messageThread?.kind == ChatThreadKind.jobCustomer &&
+        _canChooseWorkAudience;
     return _ChatMessage(
       author: message.senderLabel,
       role: nickname.isEmpty ? 'участник' : '@$nickname',
@@ -1780,6 +1876,7 @@ class _ChatScreenState extends State<ChatScreen> {
       text: message.text,
       isMine: message.senderId == widget.currentUserId,
       attachment: message.attachment,
+      audienceLabel: customerAudience ? 'Заказчику' : null,
     );
   }
 
@@ -1822,6 +1919,27 @@ class _ChatScreenState extends State<ChatScreen> {
                 style: const TextStyle(fontSize: 9, color: Colors.black45),
               ),
             ]),
+            if (message.audienceLabel != null) ...[
+              const SizedBox(height: 5),
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE8F7EE),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                  child: Text(
+                    message.audienceLabel!,
+                    style: const TextStyle(
+                      fontSize: 9,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF137A45),
+                    ),
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 7),
             if (message.text.isNotEmpty)
               Text(
@@ -2008,74 +2126,141 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _composer() {
     final isApproval =
         !_usesServerChat && _chats[_activeChat].kind == _ChatKind.approval;
+    final attachmentTarget = _workMessageTarget;
+    final showAttachmentButton = !_usesServerChat ||
+        (attachmentTarget?.organizationId != null &&
+            attachmentTarget!.kind != ChatThreadKind.personal);
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: const BoxDecoration(
         color: AppTheme.surface,
         border: Border(top: BorderSide(color: AppTheme.border)),
       ),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-        IconButton.filledTonal(
-          key: const ValueKey('chat-attach-button'),
-          tooltip: 'Прикрепить',
-          onPressed: _sendingAttachment ? null : _showAttachmentMenu,
-          icon: _sendingAttachment
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.add),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        if (_canChooseWorkAudience) ...[
+          Row(children: [
+            const Text(
+              'Кому:',
+              style: TextStyle(fontSize: 10, color: Colors.black54),
+            ),
+            const SizedBox(width: 7),
+            _workAudienceChoice(
+              customer: false,
+              label: 'Внутри команды',
+              icon: Icons.groups_2_outlined,
+            ),
+            const SizedBox(width: 5),
+            _workAudienceChoice(
+              customer: true,
+              label: 'Заказчику',
+              icon: Icons.handshake_outlined,
+            ),
+          ]),
+          const SizedBox(height: 7),
+        ],
+        Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+          if (showAttachmentButton) ...[
+            IconButton.filledTonal(
+              key: const ValueKey('chat-attach-button'),
+              tooltip: 'Прикрепить',
+              onPressed: _sendingAttachment ? null : _showAttachmentMenu,
+              icon: _sendingAttachment
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.add),
+            ),
+            const SizedBox(width: 8),
+          ],
+          Expanded(
+            child: TextField(
+              key: const ValueKey('chat-message-input'),
+              controller: _msgCtrl,
+              minLines: 1,
+              maxLines: 4,
+              style: const TextStyle(fontSize: 13),
+              decoration: InputDecoration(
+                hintText: isApproval
+                    ? 'Комментарий по согласованию макета'
+                    : _sendWorkMessageToCustomer && _canChooseWorkAudience
+                        ? 'Сообщение заказчику'
+                        : 'Сообщение',
+                filled: true,
+                fillColor: AppTheme.surfaceMuted,
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(18),
+                  borderSide: const BorderSide(color: AppTheme.border),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(18),
+                  borderSide: const BorderSide(color: AppTheme.border),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(18),
+                  borderSide: const BorderSide(color: AppTheme.blue),
+                ),
+              ),
+              onSubmitted: (_) => _send(),
+            ),
+          ),
+          const SizedBox(width: 8),
+          IconButton.filled(
+            key: const ValueKey('chat-send-button'),
+            tooltip: 'Отправить',
+            onPressed: _sendingMessage ? null : _send,
+            icon: _sendingMessage
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.send),
+          ),
+        ]),
+      ]),
+    );
+  }
+
+  Widget _workAudienceChoice({
+    required bool customer,
+    required String label,
+    required IconData icon,
+  }) {
+    final selected = _sendWorkMessageToCustomer == customer;
+    return Material(
+      color: selected ? const Color(0xFFDDEFF0) : AppTheme.surfaceMuted,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(9),
+        side: BorderSide(color: selected ? AppTheme.blue : AppTheme.line),
+      ),
+      child: InkWell(
+        key: ValueKey(
+          customer ? 'work-audience-customer' : 'work-audience-internal',
         ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: TextField(
-            key: const ValueKey('chat-message-input'),
-            controller: _msgCtrl,
-            minLines: 1,
-            maxLines: 4,
-            style: const TextStyle(fontSize: 13),
-            decoration: InputDecoration(
-              hintText: isApproval
-                  ? 'Комментарий по согласованию макета'
-                  : 'Сообщение',
-              filled: true,
-              fillColor: AppTheme.surfaceMuted,
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(18),
-                borderSide: const BorderSide(color: AppTheme.border),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(18),
-                borderSide: const BorderSide(color: AppTheme.border),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(18),
-                borderSide: const BorderSide(color: AppTheme.blue),
+        borderRadius: BorderRadius.circular(9),
+        onTap: () => setState(() => _sendWorkMessageToCustomer = customer),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(icon, size: 14, color: AppTheme.blueDark),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 9.5,
+                fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
               ),
             ),
-            onSubmitted: (_) => _send(),
-          ),
+          ]),
         ),
-        const SizedBox(width: 8),
-        IconButton.filled(
-          key: const ValueKey('chat-send-button'),
-          tooltip: 'Отправить',
-          onPressed: _sendingMessage ? null : _send,
-          icon: _sendingMessage
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: Colors.white,
-                  ),
-                )
-              : const Icon(Icons.send),
-        ),
-      ]),
+      ),
     );
   }
 
@@ -2288,15 +2473,25 @@ class _ChatScreenState extends State<ChatScreen> {
       _serverThreads = threads;
       _chatSection = section;
       _chatListFilter = _ChatListFilter.active;
+      _onlyUnreadWorks = false;
       _chatSearchQuery = '';
       _chatSearchCtrl.clear();
       if (index >= 0) _activeChat = index;
       _serverMessages = const [];
+      _messagesByThread.clear();
+      _sendWorkMessageToCustomer = false;
     });
     if (index >= 0) await _loadServerMessages();
   }
 
   Future<void> _showAttachmentMenu() {
+    final target = _workMessageTarget;
+    final technicalWork = target?.jobId != null &&
+        (target?.kind == ChatThreadKind.jobInternal ||
+            target?.kind == ChatThreadKind.jobCustomer) &&
+        widget.canShareInspectionAssets;
+    final canAttachFile = target?.organizationId != null &&
+        target!.kind != ChatThreadKind.personal;
     return showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -2314,67 +2509,38 @@ class _ChatScreenState extends State<ChatScreen> {
                 shrinkWrap: true,
                 padding: const EdgeInsets.fromLTRB(10, 0, 10, 14),
                 children: [
-                  if (_usesServerChat)
+                  if (technicalWork) ...[
                     _attachmentAction(
                       context: sheetContext,
-                      icon: Icons.person_search_outlined,
-                      title: 'Открыть работу заказчику',
-                      subtitle: 'выбрать работу и управлять доступом заказчика',
-                      key: const ValueKey('customer-access-menu-action'),
-                      onTap: _showCustomerWorkDialog,
+                      icon: Icons.description_outlined,
+                      title: 'Протокол проверки',
+                      subtitle: 'результаты, этапы и параметры',
+                      onTap: _showProtocolDetails,
                     ),
-                  _attachmentAction(
-                    context: sheetContext,
-                    icon: Icons.description_outlined,
-                    title: 'Протокол проверки',
-                    subtitle: 'результаты, этапы и параметры',
-                    onTap: _showProtocolDetails,
-                  ),
-                  _attachmentAction(
-                    context: sheetContext,
-                    icon: Icons.image_outlined,
-                    title: 'Превью',
-                    subtitle:
-                        'облегчённое изображение для удалённого просмотра',
-                    onTap: _openCloudPreview,
-                  ),
-                  _attachmentAction(
-                    context: sheetContext,
-                    icon: Icons.difference_outlined,
-                    title: 'Карта отличий',
-                    subtitle: 'цветовая карта выбранной проверки',
-                    onTap: _openCloudPreview,
-                  ),
-                  _attachmentAction(
-                    context: sheetContext,
-                    icon: Icons.fact_check_outlined,
-                    title: 'Макет на согласование',
-                    subtitle: 'версия макета и решение заказчика',
-                    onTap: () => xpDlg(
-                      context,
-                      'Согласование макета',
-                      'Выбор версии макета подключим следующим этапом чата.',
+                    _attachmentAction(
+                      context: sheetContext,
+                      icon: Icons.image_outlined,
+                      title: 'Превью',
+                      subtitle: 'облегчённое изображение проверки',
+                      onTap: _openCloudPreview,
                     ),
-                  ),
-                  _attachmentAction(
-                    context: sheetContext,
-                    icon: Icons.lock_clock_outlined,
-                    title: 'Запросить оригинал',
-                    subtitle: 'временный доступ у владельца проверки',
-                    onTap: () => xpDlg(
-                      context,
-                      'Доступ к оригиналу',
-                      'Оригинал остаётся на устройстве. Запрос доступа будет отправлен владельцу проверки.',
+                    _attachmentAction(
+                      context: sheetContext,
+                      icon: Icons.difference_outlined,
+                      title: 'Карта отличий',
+                      subtitle: 'цветовая карта выбранной проверки',
+                      onTap: _openCloudPreview,
                     ),
-                  ),
-                  _attachmentAction(
-                    context: sheetContext,
-                    icon: Icons.attach_file,
-                    title: 'Файл или изображение',
-                    subtitle: 'до 10 МБ · только для участников работы',
-                    key: const ValueKey('chat-file-attachment-action'),
-                    onTap: _pickAndSendAttachment,
-                  ),
+                  ],
+                  if (canAttachFile)
+                    _attachmentAction(
+                      context: sheetContext,
+                      icon: Icons.attach_file,
+                      title: 'Файл или изображение',
+                      subtitle: 'доступно участникам этого чата',
+                      key: const ValueKey('chat-file-attachment-action'),
+                      onTap: _pickAndSendAttachment,
+                    ),
                 ],
               ),
             ),
@@ -2386,7 +2552,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _pickAndSendAttachment() async {
     final repository = widget.chatRepository;
-    final thread = _activeServerThread;
+    final thread = _workMessageTarget;
     if (repository == null || thread == null) {
       await xpDlg(
         context,
@@ -2395,24 +2561,11 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       return;
     }
-    if (thread.kind != ChatThreadKind.jobCustomer &&
-        thread.kind != ChatThreadKind.jobInternal) {
-      await xpDlg(
-        context,
-        'Файл или изображение',
-        'Выберите чат конкретной работы. В командный чат и личные заметки вложения пока не отправляются.',
-      );
-      return;
-    }
-
     try {
       final upload = await (widget.attachmentPicker ?? _pickAttachment)();
       if (upload == null || !mounted) return;
       if (upload.bytes.isEmpty) {
         throw const FormatException('empty_attachment');
-      }
-      if (upload.bytes.length > SupabaseChatRepository.maxAttachmentBytes) {
-        throw const FormatException('attachment_too_large');
       }
       setState(() => _sendingAttachment = true);
       final message = await repository.sendAttachment(
@@ -2420,25 +2573,30 @@ class _ChatScreenState extends State<ChatScreen> {
         upload: upload,
         text: _msgCtrl.text,
       );
-      if (!mounted || _activeServerThread?.id != thread.id) return;
+      if (!mounted ||
+          !_activeMessageChannels.any(
+            (entry) => entry.thread.id == thread.id,
+          )) {
+        return;
+      }
       setState(() {
-        if (!_serverMessages.any((item) => item.id == message.id)) {
-          _serverMessages = [..._serverMessages, message];
+        final messages = List<ChatMessage>.of(
+          _messagesByThread[thread.id] ?? const [],
+        );
+        if (!messages.any((item) => item.id == message.id)) {
+          messages.add(message);
+          _messagesByThread[thread.id] = messages;
+          _serverMessages = _mergedMessages(_activeMessageChannels);
         }
         _msgCtrl.clear();
         _serverChatError = null;
       });
       _scrollMessagesToEnd();
-    } on FormatException catch (error) {
+    } on FormatException {
       if (!mounted) return;
-      final tooLarge = error.message == 'attachment_too_large';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            tooLarge
-                ? 'Файл больше 10 МБ. Выберите файл меньшего размера.'
-                : 'Выбранный файл пустой и не может быть отправлен.',
-          ),
+          content: Text('Выбранный файл пустой и не может быть отправлен.'),
         ),
       );
     } catch (_) {
@@ -2458,11 +2616,6 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<ChatAttachmentUpload?> _pickAttachment() async {
     final file = await FilePicker.pickFile(type: FileType.any);
     if (file == null) return null;
-    final knownLength = file.lengthSync();
-    final length = knownLength ?? await file.length();
-    if (length > SupabaseChatRepository.maxAttachmentBytes) {
-      throw const FormatException('attachment_too_large');
-    }
     final bytes = await file.readAsBytes();
     return ChatAttachmentUpload(
       fileName: file.name,
@@ -2645,104 +2798,6 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Future<void> _showCustomerWorkDialog() async {
-    final repository = widget.chatRepository;
-    if (repository == null) return;
-
-    late final List<CustomerShareCandidate> candidates;
-    try {
-      candidates = await repository.listCustomerShareCandidates();
-    } catch (_) {
-      if (!mounted) return;
-      await xpDlg(
-        context,
-        'Доступ заказчика',
-        'Не удалось получить работы. Проверьте миграцию 017 и права пользователя.',
-      );
-      return;
-    }
-    if (!mounted) return;
-    if (candidates.isEmpty) {
-      await xpDlg(
-        context,
-        'Доступ заказчика',
-        'Нет активных работ с подтвержденным заказчиком, которыми вы можете управлять.',
-      );
-      return;
-    }
-
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text(
-          'Доступ заказчика к работе',
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
-        ),
-        content: SizedBox(
-          width: 560,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 420),
-            child: ListView.separated(
-              shrinkWrap: true,
-              itemCount: candidates.length,
-              separatorBuilder: (_, __) => const Divider(height: 1),
-              itemBuilder: (_, index) {
-                final candidate = candidates[index];
-                return ListTile(
-                  key: ValueKey('customer-job-${candidate.jobId}'),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-                  leading: Icon(
-                    candidate.customerShared
-                        ? Icons.visibility_outlined
-                        : Icons.lock_outline,
-                    color: candidate.customerShared
-                        ? const Color(0xFF137A45)
-                        : const Color(0xFF8A4B00),
-                  ),
-                  title: Text(
-                    'Работа № ${candidate.jobNumber}',
-                    style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  subtitle: Text(
-                    candidate.customerName.isEmpty
-                        ? 'Заказчик подтвержден'
-                        : candidate.customerName,
-                    style: const TextStyle(fontSize: 10),
-                  ),
-                  trailing: FilledButton.tonal(
-                    key: ValueKey(
-                      'customer-access-toggle-${candidate.jobId}',
-                    ),
-                    onPressed: () {
-                      Navigator.pop(dialogContext);
-                      _requestCustomerAccessChange(
-                        jobId: candidate.jobId,
-                        jobLabel: 'работу № ${candidate.jobNumber}',
-                        shared: !candidate.customerShared,
-                      );
-                    },
-                    child: Text(
-                      candidate.customerShared ? 'Закрыть' : 'Открыть',
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Готово'),
-          ),
-        ],
-      ),
-    );
-  }
-
   Future<void> _requestCustomerAccessChange({
     required String jobId,
     required String jobLabel,
@@ -2758,8 +2813,8 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
         content: Text(
           shared
-              ? 'Заказчик увидит $jobLabel, ее чат, протоколы и опубликованные материалы.'
-              : 'Заказчик больше не увидит $jobLabel и ее материалы. Команда сохранит доступ.',
+              ? 'Заказчик увидит $jobLabel и только сообщения, адресованные ему. Внутренняя переписка останется скрытой.'
+              : 'Заказчик больше не увидит $jobLabel и его чат. Переписка сохранится.',
         ),
         actions: [
           TextButton(
@@ -2785,8 +2840,8 @@ class _ChatScreenState extends State<ChatScreen> {
         SnackBar(
           content: Text(
             shared
-                ? 'Работа открыта назначенному заказчику'
-                : 'Доступ заказчика закрыт',
+                ? 'Заказчик подключён к работе'
+                : 'Заказчик отключён от работы',
           ),
         ),
       );
@@ -3186,7 +3241,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _approvalMessages.add(
         _ChatMessage(
           author: _userName,
-          role: 'менеджер',
+          role: 'представитель заказчика',
           time: time,
           text: 'Статус согласования изменен: $status.',
           isMine: true,
@@ -3200,7 +3255,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (text.isEmpty) return;
     if (_usesServerChat) {
       final repository = widget.chatRepository;
-      final thread = _activeServerThread;
+      final thread = _workMessageTarget;
       if (repository == null || thread == null || _sendingMessage) return;
       setState(() => _sendingMessage = true);
       try {
@@ -3208,10 +3263,20 @@ class _ChatScreenState extends State<ChatScreen> {
           threadId: thread.id,
           text: text,
         );
-        if (!mounted || _activeServerThread?.id != thread.id) return;
+        if (!mounted ||
+            !_activeMessageChannels.any(
+              (entry) => entry.thread.id == thread.id,
+            )) {
+          return;
+        }
         setState(() {
-          if (!_serverMessages.any((item) => item.id == message.id)) {
-            _serverMessages = [..._serverMessages, message];
+          final messages = List<ChatMessage>.of(
+            _messagesByThread[thread.id] ?? const [],
+          );
+          if (!messages.any((item) => item.id == message.id)) {
+            messages.add(message);
+            _messagesByThread[thread.id] = messages;
+            _serverMessages = _mergedMessages(_activeMessageChannels);
           }
           _msgCtrl.clear();
           _serverChatError = null;
@@ -3236,7 +3301,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _ChatMessage(
           author: _userName,
           role: _chats[_activeChat].kind == _ChatKind.approval
-              ? 'менеджер'
+              ? 'представитель заказчика'
               : 'оператор',
           time: '$time ✓',
           text: text,
@@ -3301,17 +3366,33 @@ class _WorkThreadGroup {
 
   String? get customerName {
     for (final channel in channels) {
-      final name = channel.thread.customerName?.trim();
-      if (name != null && name.isNotEmpty) return name;
+      final name = channel.thread.customerName.trim();
+      if (name.isNotEmpty) return name;
     }
     return null;
+  }
+
+  String get jobFlowState {
+    for (final channel in channels) {
+      if (channel.thread.jobFlowState.isNotEmpty) {
+        return channel.thread.jobFlowState;
+      }
+    }
+    return '';
+  }
+
+  String get jobStage {
+    for (final channel in channels) {
+      if (channel.thread.jobStage.isNotEmpty) return channel.thread.jobStage;
+    }
+    return '';
   }
 
   DateTime? get updatedAt {
     DateTime? latest;
     for (final channel in channels) {
       final value = channel.thread.updatedAt;
-      if (value != null && (latest == null || value.isAfter(latest))) {
+      if (latest == null || value.isAfter(latest)) {
         latest = value;
       }
     }
@@ -3326,6 +3407,12 @@ class _WorkThreadGroup {
   bool get isArchived => channels.every(
         (channel) => channel.thread.isArchivedJob,
       );
+
+  String get statusLabel {
+    if (isArchived) return 'выполнена';
+    if (jobFlowState == 'blocked') return 'стоп';
+    return 'в работе';
+  }
 }
 
 class _TeamDraft {
@@ -3344,6 +3431,7 @@ class _ChatMessage {
   final String time;
   final String text;
   final bool isMine;
+  final String? audienceLabel;
   final _SharedCheckCard? card;
   final _ApprovalCard? approvalCard;
   final ChatAttachment? attachment;
@@ -3354,6 +3442,7 @@ class _ChatMessage {
     required this.time,
     required this.text,
     required this.isMine,
+    this.audienceLabel,
     this.card,
     this.approvalCard,
     this.attachment,

@@ -127,17 +127,22 @@ class SupabaseCustomerDirectoryService implements CustomerDirectoryService {
     String? customerUserId,
     String? customerId,
   }) async {
-    final response = await client.rpc(
-      'save_organization_customer_v1',
-      params: {
-        'target_organization': organizationId,
-        'target_code': code.trim(),
-        'target_name': name.trim(),
-        'target_manager_user': managerUserId,
-        'target_customer_user': customerUserId,
-        'target_customer': customerId,
-      },
-    );
+    final params = {
+      'target_organization': organizationId,
+      'target_code': code.trim(),
+      'target_name': name.trim(),
+      'target_manager_user': managerUserId,
+      'target_customer_user': customerUserId,
+      'target_customer': customerId,
+    };
+    Object? response;
+    try {
+      response =
+          await client.rpc('save_organization_customer_v2', params: params);
+    } catch (_) {
+      response =
+          await client.rpc('save_organization_customer_v1', params: params);
+    }
     if (response is String && response.isNotEmpty) return response;
     throw StateError('Supabase did not return the customer ID');
   }

@@ -22,5 +22,6 @@ abstract interface class ProductionJobService {
     required String jobNumber,
     String? customerId,
     String? requestedCustomerName,
+    String? responsibleUserId,
   });
 }

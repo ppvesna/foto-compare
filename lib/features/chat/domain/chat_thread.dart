@@ -18,6 +18,8 @@ class ChatThread {
   final bool customerShared;
   final bool canManageCustomerAccess;
   final String jobStatus;
+  final String jobStage;
+  final String jobFlowState;
   final String customerName;
   final int unreadCount;
   final DateTime? archivedAt;
@@ -33,6 +35,8 @@ class ChatThread {
     this.customerShared = false,
     this.canManageCustomerAccess = false,
     this.jobStatus = '',
+    this.jobStage = '',
+    this.jobFlowState = '',
     this.customerName = '',
     this.unreadCount = 0,
     this.archivedAt,
@@ -51,6 +55,8 @@ class ChatThread {
     bool? customerShared,
     bool? canManageCustomerAccess,
     String? jobStatus,
+    String? jobStage,
+    String? jobFlowState,
     String? customerName,
     int? unreadCount,
     DateTime? archivedAt,
@@ -68,6 +74,8 @@ class ChatThread {
       canManageCustomerAccess:
           canManageCustomerAccess ?? this.canManageCustomerAccess,
       jobStatus: jobStatus ?? this.jobStatus,
+      jobStage: jobStage ?? this.jobStage,
+      jobFlowState: jobFlowState ?? this.jobFlowState,
       customerName: customerName ?? this.customerName,
       unreadCount: unreadCount ?? this.unreadCount,
       archivedAt: clearArchivedAt ? null : archivedAt ?? this.archivedAt,

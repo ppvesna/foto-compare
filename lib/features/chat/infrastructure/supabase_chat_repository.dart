@@ -12,8 +12,6 @@ import '../domain/chat_thread.dart';
 import '../domain/customer_share_candidate.dart';
 
 class SupabaseChatRepository implements ChatRepository {
-  static const maxAttachmentBytes = 10 * 1024 * 1024;
-
   final SupabaseClient client;
   final String currentUserId;
   final CloudStorage storage;
@@ -31,7 +29,12 @@ class SupabaseChatRepository implements ChatRepository {
 
   @override
   Future<List<ChatThread>> listThreads() async {
-    final response = await client.rpc('list_accessible_chat_threads_v2');
+    Object? response;
+    try {
+      response = await client.rpc('list_accessible_chat_threads_v3');
+    } catch (_) {
+      response = await client.rpc('list_accessible_chat_threads_v2');
+    }
     final rows = response is List ? response : const [];
     return rows
         .whereType<Map>()
@@ -279,7 +282,7 @@ class SupabaseChatRepository implements ChatRepository {
     if (fileName.isEmpty) {
       throw ArgumentError.value(upload.fileName, 'upload.fileName');
     }
-    if (upload.bytes.isEmpty || upload.bytes.length > maxAttachmentBytes) {
+    if (upload.bytes.isEmpty) {
       throw ArgumentError.value(upload.bytes.length, 'upload.bytes');
     }
     final thread = await client
@@ -289,24 +292,35 @@ class SupabaseChatRepository implements ChatRepository {
         .single();
     final organizationId = thread['organization_id'] as String? ?? '';
     final jobId = thread['job_id'] as String? ?? '';
+    final threadKind = thread['kind'] as String? ?? '';
     final internal = thread['kind'] == 'job_internal';
-    if ((thread['kind'] != 'job' && thread['kind'] != 'job_internal') ||
+    final jobChat = threadKind == 'job' || threadKind == 'job_internal';
+    final organizationChat = organizationId.isNotEmpty &&
+        (threadKind == 'direct' ||
+            threadKind == 'group' ||
+            threadKind == 'organization' ||
+            threadKind == 'service');
+    if ((!jobChat && !organizationChat) ||
         organizationId.isEmpty ||
-        jobId.isEmpty) {
-      throw StateError(
-          'Attachments are available only in production job chats');
+        (jobChat && jobId.isEmpty)) {
+      throw StateError('Attachments are unavailable in this conversation');
     }
 
     final assetId = 'chat-${const Uuid().v4()}';
-    final scope = internal
-        ? CloudAssetScope.organizationJobInternalChat(
+    final scope = organizationChat
+        ? CloudAssetScope.organizationChat(
             organizationId: organizationId,
-            jobId: jobId,
+            threadId: threadId,
           )
-        : CloudAssetScope.organizationJobChat(
-            organizationId: organizationId,
-            jobId: jobId,
-          );
+        : internal
+            ? CloudAssetScope.organizationJobInternalChat(
+                organizationId: organizationId,
+                jobId: jobId,
+              )
+            : CloudAssetScope.organizationJobChat(
+                organizationId: organizationId,
+                jobId: jobId,
+              );
     final attachment = ChatAttachment(
       assetId: assetId,
       fileName: fileName,
@@ -316,6 +330,7 @@ class SupabaseChatRepository implements ChatRepository {
       sizeBytes: upload.bytes.length,
       organizationId: organizationId,
       jobId: jobId,
+      threadId: organizationChat ? threadId : '',
       internal: internal,
     );
     await storage.upload(
@@ -358,15 +373,20 @@ class SupabaseChatRepository implements ChatRepository {
   Future<Uint8List> loadAttachment(ChatAttachment attachment) {
     return storage.download(
       attachment.assetId,
-      scope: attachment.internal
-          ? CloudAssetScope.organizationJobInternalChat(
+      scope: attachment.threadId.isNotEmpty
+          ? CloudAssetScope.organizationChat(
               organizationId: attachment.organizationId,
-              jobId: attachment.jobId,
+              threadId: attachment.threadId,
             )
-          : CloudAssetScope.organizationJobChat(
-              organizationId: attachment.organizationId,
-              jobId: attachment.jobId,
-            ),
+          : attachment.internal
+              ? CloudAssetScope.organizationJobInternalChat(
+                  organizationId: attachment.organizationId,
+                  jobId: attachment.jobId,
+                )
+              : CloudAssetScope.organizationJobChat(
+                  organizationId: attachment.organizationId,
+                  jobId: attachment.jobId,
+                ),
     );
   }
 
@@ -406,6 +426,8 @@ class SupabaseChatRepository implements ChatRepository {
       canManageCustomerAccess:
           row['can_manage_customer_access'] as bool? ?? false,
       jobStatus: row['job_status'] as String? ?? '',
+      jobStage: row['job_stage'] as String? ?? '',
+      jobFlowState: row['job_flow_state'] as String? ?? '',
       customerName: row['customer_name'] as String? ?? '',
       unreadCount: (row['unread_count'] as num?)?.toInt() ?? 0,
       archivedAt: row['archived_at'] == null

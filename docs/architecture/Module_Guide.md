@@ -190,6 +190,8 @@ single-member organization rather than a separate data model.
 
 Manager, designer, and inspection specialist do not belong in this module as roles.
 They are assignments inside a production job.
+The Russian UI calls the external `customer` role «Заказчик» and the internal
+`manager` function «Представитель заказчика»; stored codes and policies stay unchanged.
 
 Current administration foundation: the owner/admin policy, public service contract,
 Supabase RPC adapter, mock, and settings UI exist. Migration `006` provides organization
@@ -294,12 +296,25 @@ administrator completes a work, and an administrator may restore it from the arc
 Owner remains read-only for the internal production process. A customer sees only
 `В работе / Выполнен`, without batches, blocks, attempt history, or internal chat.
 
+The batch boundary is immutable: changing the employee or any production condition
+(press, material, format/roll width, inks, or another fixed condition) must create a new
+numbered batch. The previous batch is retained unchanged. Only another physical
+stack/roll under the same employee and identical conditions stays in that batch;
+another comparison of the same unit is an inspection attempt.
+
+Migration `034` exposes this boundary as one route card with four views:
+`Continue / New work / Completed / Inspection history`. New work records the customer
+and responsible employee before batch 1 is created. The client directs a different
+employee to a new batch, while the RPC rejects adding a stack or roll to another
+employee's batch. Comparison opened from the route card receives a fixed job context.
+
 Relevant files:
 
 - `lib/features/production/domain/production_workflow.dart`
 - `lib/features/production/infrastructure/supabase_production_workflow_service.dart`
 - `lib/screens/works_screen.dart`
 - `supabase/migrations/031_production_batches_inspections_v1.sql`
+- `supabase/migrations/034_work_hub_and_contextual_chat_v1.sql`
 
 The job has separate internal and customer chat channels. Their attachments use
 different private Storage scopes so customer access cannot cross into production
@@ -391,8 +406,10 @@ Migration `032` extends the contract with a role-scoped contact directory, direc
 conversation opening, team membership management, and reversible team archive.
 Administrators manage internal teams; customers never enter them and can discover only
 employees attached to their visible jobs. The presentation groups personal dialogs,
-teams, works, and service events. A work is rendered once with separate internal and
-customer-channel selectors; the server keeps both membership boundaries independent.
+teams, works, and service events. Migration `033` presents one combined chronological
+work timeline to staff and an explicit `internal / customer` audience choice when
+sending. The server keeps both histories, attachments and membership boundaries
+independent; only an administrator manages external-customer access.
 
 Relevant files:
 
@@ -400,6 +417,7 @@ Relevant files:
 - `lib/features/chat/infrastructure/supabase_chat_repository.dart`
 - `lib/screens/chat_screen.dart`
 - `supabase/migrations/032_chat_directory_and_teams_v1.sql`
+- `supabase/migrations/033_unified_work_chat_v1.sql`
 
 ### settings
 
@@ -492,9 +510,10 @@ customer sees the job chat, protocols, and assets only while the job is shared.
 
 Migration `024` adds a dedicated `chat` subpath below each job's private Storage
 scope. Any user who can view the job may insert a unique chat attachment there;
-update and delete are restricted to the object's owner. `ChatRepository` enforces a
-10 MB client limit, stores only attachment metadata in `chat_messages`, and downloads
-through `CloudStorage`, so the existing job RLS remains the read boundary.
+update and delete are restricted to the object's owner. `ChatRepository` stores only
+attachment metadata in `chat_messages` and downloads through `CloudStorage`, so the
+existing job RLS remains the read boundary. The client does not impose an artificial
+file-size ceiling; actual limits belong to the selected storage provider and plan.
 
 ### analytics
 

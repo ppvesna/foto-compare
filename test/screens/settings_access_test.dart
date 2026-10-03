@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:photo_compare/capabilities/storage/storage.dart';
 import 'package:photo_compare/features/auth/auth.dart';
 import 'package:photo_compare/features/billing/billing.dart';
+import 'package:photo_compare/features/chat/chat.dart';
 import 'package:photo_compare/features/organization/organization.dart';
 import 'package:photo_compare/screens/settings_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -164,7 +165,7 @@ void main() {
     expect(find.text('vesna'), findsOneWidget);
     expect(find.text('Точная Delta E'), findsOneWidget);
     expect(find.text('Функции в конкретной работе'), findsOneWidget);
-    expect(find.text('Менеджер'), findsOneWidget);
+    expect(find.text('Представитель заказчика'), findsOneWidget);
     expect(find.text('Дизайнер'), findsOneWidget);
     expect(find.text('Специалист проверки'), findsOneWidget);
     expect(find.text('Мест в команде'), findsOneWidget);
@@ -1627,5 +1628,71 @@ void main() {
 
     expect(usageService.loadCalls, 2);
     expect(find.text('1 из 500'), findsOneWidget);
+  });
+
+  testWidgets('administrator creates a chat team in organization settings',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1440, 1100));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final chatRepository = MockChatRepository(
+      currentUserId: 'admin-1',
+      contacts: const [
+        ChatContact(
+          userId: 'employee-1',
+          displayName: 'Маша',
+          nickname: 'masha_check',
+          roleLabel: 'Сотрудник',
+          canAddToTeam: true,
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SettingsScreen(
+            entitlements: EntitlementSnapshot.forPlan(PlanTier.pro),
+            organizationAccess: OrganizationAccess.forRole(
+              organizationId: 'organization-1',
+              role: OrganizationRole.admin,
+            ),
+            organizationAdministrationService:
+                MockOrganizationAdministrationService(),
+            customerDirectoryService: MockCustomerDirectoryService(),
+            chatRepository: chatRepository,
+            onAccessChanged: () async {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Организация').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Команды чата'));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('settings-create-chat-team')),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('settings-chat-team-name')),
+      'Смена тест',
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('settings-chat-team-member-employee-1')),
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('settings-save-chat-team')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Смена тест'), findsOneWidget);
+    expect(
+      chatRepository.threads
+          .where((thread) => thread.kind == ChatThreadKind.team)
+          .single
+          .title,
+      'Смена тест',
+    );
   });
 }

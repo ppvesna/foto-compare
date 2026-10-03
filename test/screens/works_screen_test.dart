@@ -113,6 +113,43 @@ void main() {
     expect(
         find.byKey(const ValueKey('complete-production-work')), findsNothing);
   });
+
+  testWidgets('owner can open the new work section', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1100, 760));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: WorksScreen(
+            organizationId: 'org-1',
+            currentUserId: 'owner-1',
+            organizationAccess: OrganizationAccess.forRole(
+              organizationId: 'org-1',
+              role: OrganizationRole.owner,
+            ),
+            workflowService: _FakeWorkflowService(readOnlyMode: true),
+            customerDirectoryService: MockCustomerDirectoryService(),
+            productionJobService: MockProductionJobService(),
+            onOpenComparison: (_) {},
+            onOpenChat: (_) {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final newWorkTab = find.byKey(
+      const ValueKey('work-section-create'),
+    );
+    expect(newWorkTab, findsOneWidget);
+    await tester.tap(newWorkTab);
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('create-production-work')),
+      findsOneWidget,
+    );
+  });
 }
 
 class _FakeWorkflowService implements ProductionWorkflowService {
@@ -217,6 +254,20 @@ class _FakeWorkflowService implements ProductionWorkflowService {
 
   @override
   Future<List<ProductionWorker>> listWorkers(String jobId) async => const [];
+
+  @override
+  Future<List<ProductionWorker>> listOrganizationWorkers(
+    String organizationId,
+  ) async =>
+      const [];
+
+  @override
+  Future<List<ProductionInspectionHistoryItem>> listInspectionHistory({
+    required String organizationId,
+    String search = '',
+    int limit = 100,
+  }) async =>
+      const [];
 
   @override
   Future<String> createBatch({

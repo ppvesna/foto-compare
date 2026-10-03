@@ -47,10 +47,18 @@ class SupabaseProductionWorkflowService implements ProductionWorkflowService {
 
   @override
   Future<ProductionWorkDetail> loadWork(String jobId) async {
-    final response = await client.rpc(
-      'get_production_work_v2',
-      params: {'target_job': jobId},
-    );
+    Object? response;
+    try {
+      response = await client.rpc(
+        'get_production_work_v3',
+        params: {'target_job': jobId},
+      );
+    } catch (_) {
+      response = await client.rpc(
+        'get_production_work_v2',
+        params: {'target_job': jobId},
+      );
+    }
     if (response is! Map) {
       throw StateError('Данные работы не получены');
     }
@@ -97,6 +105,62 @@ class SupabaseProductionWorkflowService implements ProductionWorkflowService {
         userId: row['user_id'] as String,
         displayName: row['display_name'] as String? ?? '',
         nickname: row['nickname'] as String? ?? '',
+      );
+    }).toList(growable: false);
+  }
+
+  @override
+  Future<List<ProductionWorker>> listOrganizationWorkers(
+    String organizationId,
+  ) async {
+    final response = await client.rpc(
+      'list_organization_production_workers_v1',
+      params: {'target_organization': organizationId},
+    );
+    return (response as List? ?? const []).map((item) {
+      final row = Map<String, dynamic>.from(item as Map);
+      return ProductionWorker(
+        userId: row['user_id'] as String,
+        displayName: row['display_name'] as String? ?? '',
+        nickname: row['nickname'] as String? ?? '',
+      );
+    }).toList(growable: false);
+  }
+
+  @override
+  Future<List<ProductionInspectionHistoryItem>> listInspectionHistory({
+    required String organizationId,
+    String search = '',
+    int limit = 100,
+  }) async {
+    final response = await client.rpc(
+      'list_production_inspection_history_v1',
+      params: {
+        'target_organization': organizationId,
+        'search_text': search.trim(),
+        'result_limit': limit,
+      },
+    );
+    return (response as List? ?? const []).map((item) {
+      final row = Map<String, dynamic>.from(item as Map);
+      return ProductionInspectionHistoryItem(
+        attemptId: row['attempt_id'] as String,
+        jobId: row['job_id'] as String,
+        jobNumber: row['job_number'] as String? ?? '',
+        customerName: row['customer_name'] as String? ?? '',
+        batchNumber: (row['batch_no'] as num?)?.toInt() ?? 1,
+        unitNumber: (row['unit_no'] as num?)?.toInt() ?? 1,
+        unitType: ProductionUnitType.fromWire(row['unit_type'] as String?),
+        inspectionNumber: (row['inspection_no'] as num?)?.toInt() ?? 1,
+        attemptNumber: (row['attempt_no'] as num?)?.toInt() ?? 1,
+        protocolOwnerUserId: row['protocol_owner_user_id'] as String? ?? '',
+        protocolId: row['protocol_id'] as String? ?? '',
+        score: (row['score'] as num?)?.toDouble() ?? 0,
+        attemptedByUserId: row['attempted_by_user_id'] as String? ?? '',
+        attemptedByName: row['attempted_by_name'] as String? ?? '',
+        attemptedAt: DateTime.parse(row['attempted_at'] as String),
+        decisionStatus: row['decision_status'] as String? ?? 'checking',
+        decisionNote: row['decision_note'] as String? ?? '',
       );
     }).toList(growable: false);
   }
@@ -302,6 +366,7 @@ class SupabaseProductionWorkflowService implements ProductionWorkflowService {
   ProductionBatch _batch(Map<String, dynamic> row) => ProductionBatch(
         id: row['id'] as String,
         number: (row['sequence_no'] as num?)?.toInt() ?? 1,
+        employeeUserId: row['employee_user_id'] as String? ?? '',
         employeeName: row['employee_name'] as String? ?? '',
         reason: row['creation_reason'] as String? ?? '',
         machine: row['machine_label'] as String? ?? '',

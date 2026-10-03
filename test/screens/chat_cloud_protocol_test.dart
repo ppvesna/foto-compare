@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
+import 'package:photo_compare/features/chat/chat.dart';
 import 'package:photo_compare/features/protocols/protocols.dart';
 import 'package:photo_compare/screens/chat_screen.dart';
 
@@ -12,6 +13,7 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(1024, 430));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final repository = MockProtocolCloudRepository();
+    final chatRepository = _internalJobChat();
     final preview = Uint8List.fromList(
       img.encodePng(img.Image(width: 32, height: 32)),
     );
@@ -48,6 +50,10 @@ void main() {
             displayName: 'Олег',
             nickname: 'owner',
             organizationName: 'Vesna',
+            initialJobId: 'job-1',
+            initialThreadKind: ChatThreadKind.jobInternal,
+            canShareInspectionAssets: true,
+            chatRepository: chatRepository,
             protocolCloudRepository: repository,
           ),
         ),
@@ -74,6 +80,7 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(1024, 430));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final repository = MockProtocolCloudRepository();
+    final chatRepository = _internalJobChat();
 
     await tester.pumpWidget(
       MaterialApp(
@@ -83,6 +90,10 @@ void main() {
             displayName: 'Анна',
             nickname: 'admin',
             organizationName: 'Vesna',
+            initialJobId: 'job-1',
+            initialThreadKind: ChatThreadKind.jobInternal,
+            canShareInspectionAssets: true,
+            chatRepository: chatRepository,
             protocolCloudRepository: repository,
           ),
         ),
@@ -116,4 +127,64 @@ void main() {
     expect(find.textContaining('98.4%'), findsWidgets);
     expect(find.text('Доступных облачных протоколов пока нет.'), findsNothing);
   });
+
+  testWidgets('customer-facing work keeps inspection attachment actions',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1024, 430));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final chatRepository = MockChatRepository(
+      threads: [
+        ChatThread(
+          id: 'job-customer-1',
+          title: 'Работа № 1001 · заказчик',
+          kind: ChatThreadKind.jobCustomer,
+          organizationId: 'organization-1',
+          jobId: 'job-1',
+          updatedAt: DateTime.utc(2026, 10, 3),
+        ),
+      ],
+      messages: const {'job-customer-1': []},
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChatScreen(
+            email: 'owner@example.com',
+            displayName: 'Олег',
+            nickname: 'owner',
+            organizationName: 'Vesna',
+            initialJobId: 'job-1',
+            initialThreadKind: ChatThreadKind.jobCustomer,
+            canShareInspectionAssets: true,
+            chatRepository: chatRepository,
+            protocolCloudRepository: MockProtocolCloudRepository(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('chat-attach-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Протокол проверки'), findsOneWidget);
+    expect(find.text('Превью'), findsOneWidget);
+    expect(find.text('Карта отличий'), findsOneWidget);
+    expect(find.text('Файл или изображение'), findsOneWidget);
+  });
 }
+
+MockChatRepository _internalJobChat() => MockChatRepository(
+      threads: [
+        ChatThread(
+          id: 'job-internal-1',
+          title: 'Работа № 1001',
+          kind: ChatThreadKind.jobInternal,
+          organizationId: 'organization-1',
+          jobId: 'job-1',
+          updatedAt: DateTime.utc(2026, 10, 3),
+        ),
+      ],
+      messages: const {'job-internal-1': []},
+    );

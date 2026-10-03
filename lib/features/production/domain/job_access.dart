@@ -137,7 +137,7 @@ extension JobFunctionLabel on JobFunction {
   String get label {
     switch (this) {
       case JobFunction.manager:
-        return 'Менеджер';
+        return 'Представитель заказчика';
       case JobFunction.designer:
         return 'Дизайнер';
       case JobFunction.inspectionSpecialist:

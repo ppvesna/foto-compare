@@ -75,6 +75,8 @@ class MockCloudStorage implements CloudStorage {
         return 'organizations/${scope.organizationId}/jobs/${scope.jobId}/chat/$assetId';
       case CloudAssetScopeType.organizationJobInternalChat:
         return 'organizations/${scope.organizationId}/jobs/${scope.jobId}/chat-internal/$assetId';
+      case CloudAssetScopeType.organizationChat:
+        return 'organizations/${scope.organizationId}/chats/${scope.threadId}/$assetId';
     }
   }
 }

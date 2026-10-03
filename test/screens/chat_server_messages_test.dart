@@ -32,6 +32,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Личные заметки'), findsWidgets);
+    expect(
+      find.byKey(const ValueKey('chat-section-service')),
+      findsNothing,
+    );
     await tester.enterText(
       find.byKey(const ValueKey('chat-message-input')),
       'Проверка готова',
@@ -45,13 +49,38 @@ void main() {
     expect(messages.single.text, 'Проверка готова');
   });
 
-  testWidgets('manager opens a job chat for the customer', (tester) async {
+  testWidgets('administrator connects the customer from the work chat header',
+      (tester) async {
     await tester.binding.setSurfaceSize(const Size(1024, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final repository = MockChatRepository(
       currentUserId: 'manager-1',
       currentNickname: 'manager_anna',
       currentDisplayName: 'Анна',
+      threads: [
+        ChatThread(
+          id: 'job-customer-154',
+          title: 'Работа № 154',
+          kind: ChatThreadKind.jobCustomer,
+          organizationId: 'organization-1',
+          jobId: 'job-154',
+          customerName: 'ООО Ромашка',
+          customerShared: false,
+          canManageCustomerAccess: true,
+          updatedAt: DateTime.utc(2026, 10, 3, 12),
+        ),
+        ChatThread(
+          id: 'job-internal-154',
+          title: 'Работа № 154 · производство',
+          kind: ChatThreadKind.jobInternal,
+          organizationId: 'organization-1',
+          jobId: 'job-154',
+          customerName: 'ООО Ромашка',
+          customerShared: false,
+          canManageCustomerAccess: true,
+          updatedAt: DateTime.utc(2026, 10, 3, 11),
+        ),
+      ],
       customerShareCandidates: [
         const CustomerShareCandidate(
           jobId: 'job-154',
@@ -71,6 +100,7 @@ void main() {
             displayName: 'Анна',
             nickname: 'manager_anna',
             organizationName: 'Vesna',
+            canManageCustomerChatAccess: true,
             chatRepository: repository,
           ),
         ),
@@ -78,19 +108,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const ValueKey('chat-attach-button')));
-    await tester.pumpAndSettle();
     await tester.tap(
-      find.byKey(const ValueKey('customer-access-menu-action')),
+      find.byKey(const ValueKey('current-customer-access-toggle')),
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Работа № 154'), findsOneWidget);
-    expect(find.text('ООО Ромашка'), findsOneWidget);
-    await tester.tap(
-      find.byKey(const ValueKey('customer-access-toggle-job-154')),
-    );
-    await tester.pumpAndSettle();
     await tester.tap(
       find.byKey(const ValueKey('confirm-customer-access-change')),
     );
@@ -98,7 +120,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
 
     expect(
-      find.text('Работа доступна назначенному заказчику'),
+      find.text('Заказчик подключён'),
       findsOneWidget,
     );
     expect(
@@ -168,7 +190,8 @@ void main() {
     expect(messages.single.attachment?.fileName, 'sample.png');
   });
 
-  testWidgets('administrator service chat is read only', (tester) async {
+  testWidgets('administrator writes in the organization service chat',
+      (tester) async {
     await tester.binding.setSurfaceSize(const Size(1024, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final repository = MockChatRepository(
@@ -195,6 +218,64 @@ void main() {
             displayName: 'Анна',
             nickname: 'admin_anna',
             organizationName: 'Vesna',
+            showOrganizationService: true,
+            chatRepository: repository,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('chat-message-input')), findsOneWidget);
+    expect(find.text('служебный чат организации'), findsWidgets);
+    await tester.enterText(
+      find.byKey(const ValueKey('chat-message-input')),
+      'Проверка смены',
+    );
+    await tester.tap(find.byKey(const ValueKey('chat-send-button')));
+    await tester.pumpAndSettle();
+    expect(find.text('Проверка смены'), findsOneWidget);
+  });
+
+  testWidgets('organization staff sees service section before events',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1024, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final repository = MockChatRepository(
+      currentUserId: 'employee-1',
+      currentNickname: 'employee_masha',
+      currentDisplayName: 'Маша',
+      threads: [
+        ChatThread(
+          id: 'personal-1',
+          title: 'Личные заметки',
+          kind: ChatThreadKind.personal,
+          updatedAt: DateTime.utc(2026, 10, 3, 12),
+        ),
+        ChatThread(
+          id: 'service-chat-1',
+          title: 'Служебные',
+          kind: ChatThreadKind.service,
+          organizationId: 'organization-1',
+          updatedAt: DateTime.utc(2026, 10, 3, 11),
+        ),
+      ],
+      messages: const {
+        'personal-1': [],
+        'service-chat-1': [],
+      },
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChatScreen(
+            currentUserId: 'employee-1',
+            email: 'masha@example.com',
+            displayName: 'Маша',
+            nickname: 'employee_masha',
+            organizationName: 'Vesna',
+            showOrganizationService: true,
             chatRepository: repository,
           ),
         ),
@@ -203,11 +284,13 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      find.byKey(const ValueKey('service-chat-read-only')),
+      find.byKey(const ValueKey('chat-section-service')),
       findsOneWidget,
     );
-    expect(find.byKey(const ValueKey('chat-message-input')), findsNothing);
-    expect(find.text('служебный журнал администратора'), findsWidgets);
+    await tester.tap(find.byKey(const ValueKey('chat-section-service')));
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.byKey(const ValueKey('chat-message-input')), findsOneWidget);
+    expect(find.byKey(const ValueKey('chat-attach-button')), findsOneWidget);
   });
 
   testWidgets('chat filters active unread archive and searches all jobs',
@@ -242,6 +325,7 @@ void main() {
           organizationId: 'organization-1',
           jobId: 'job-unread',
           jobStatus: 'active',
+          jobFlowState: 'blocked',
           customerName: 'Бета',
           unreadCount: 4,
           updatedAt: DateTime.utc(2026, 10, 3, 10),
@@ -280,7 +364,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
 
     expect(find.text('Работа № VESNA-ACTIVE-001'), findsWidgets);
-    expect(find.text('Работа № VESNA-UNREAD-002'), findsOneWidget);
+    expect(find.text('Работа № VESNA-UNREAD-002'), findsNothing);
     expect(find.text('Работа № VESNA-ARCHIVE-003'), findsNothing);
 
     await tester.tap(find.byKey(const ValueKey('chat-filter-unread')));
@@ -294,7 +378,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
     expect(find.text('Работа № VESNA-ARCHIVE-003'), findsWidgets);
-    expect(find.textContaining('архив · Гамма'), findsWidgets);
+    expect(find.textContaining('выполнена · Гамма'), findsWidgets);
 
     await tester.enterText(
       find.byKey(const ValueKey('chat-search')),
@@ -366,7 +450,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
 
     expect(find.text('Работа № VESNA-LIVE-004'), findsOneWidget);
-    expect(find.text('Непрочитанные · 1'), findsOneWidget);
+    expect(find.byKey(const ValueKey('chat-only-unread')), findsOneWidget);
   });
 
   testWidgets('personal search opens a direct dialog', (tester) async {
@@ -422,7 +506,7 @@ void main() {
     );
   });
 
-  testWidgets('work list groups internal and customer channels',
+  testWidgets('work list opens one combined conversation with audiences',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(1024, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -454,6 +538,32 @@ void main() {
           updatedAt: DateTime.utc(2026, 10, 3, 10),
         ),
       ],
+      messages: {
+        'job-customer-1': [
+          ChatMessage(
+            id: 'customer-message-1',
+            threadId: 'job-customer-1',
+            senderId: 'admin-1',
+            senderNickname: 'admin_anna',
+            senderDisplayName: 'Анна',
+            kind: ChatMessageKind.text,
+            text: 'Видно заказчику',
+            createdAt: DateTime.utc(2026, 10, 3, 10, 30),
+          ),
+        ],
+        'job-internal-1': [
+          ChatMessage(
+            id: 'internal-message-1',
+            threadId: 'job-internal-1',
+            senderId: 'employee-1',
+            senderNickname: 'employee_masha',
+            senderDisplayName: 'Маша',
+            kind: ChatMessageKind.text,
+            text: 'Внутренняя запись',
+            createdAt: DateTime.utc(2026, 10, 3, 10),
+          ),
+        ],
+      },
     );
 
     await tester.pumpWidget(
@@ -474,16 +584,38 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('chat-section-works')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
+    await tester.tap(find.byKey(const ValueKey('open-work-chat-job-1')));
+    await tester.pumpAndSettle();
 
     expect(
       find.byKey(const ValueKey('work-chat-group-job-1')),
       findsOneWidget,
     );
-    expect(find.text('Производство'), findsOneWidget);
-    expect(find.text('Заказчик'), findsOneWidget);
+    expect(find.byKey(const ValueKey('work-chat-channel-job-customer-1')),
+        findsNothing);
+    expect(find.text('Внутренняя запись'), findsOneWidget);
+    expect(find.text('Видно заказчику'), findsOneWidget);
+    expect(find.text('Заказчику'), findsWidgets);
+
+    await tester.tap(
+      find.byKey(const ValueKey('work-audience-customer')),
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('chat-message-input')),
+      'Новое заказчику',
+    );
+    await tester.tap(find.byKey(const ValueKey('chat-send-button')));
+    await tester.pumpAndSettle();
+
+    final customerMessages = await repository.listMessages('job-customer-1');
+    expect(customerMessages.last.text, 'Новое заказчику');
+    expect(
+      await repository.listMessages('job-internal-1'),
+      hasLength(1),
+    );
   });
 
-  testWidgets('administrator creates a team from internal contacts',
+  testWidgets('team management is absent from the conversation screen',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(1024, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -518,26 +650,10 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('chat-section-teams')));
     await tester.pump(const Duration(milliseconds: 300));
-    await tester.tap(find.byKey(const ValueKey('create-chat-team')));
-    await tester.pumpAndSettle();
-
-    await tester.enterText(
-      find.byKey(const ValueKey('chat-team-name')),
-      'Смена тест',
-    );
-    await tester.tap(
-      find.byKey(const ValueKey('chat-team-member-employee-1')),
-    );
-    await tester.tap(find.byKey(const ValueKey('save-chat-team')));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 500));
-
-    expect(find.text('Смена тест'), findsWidgets);
+    expect(find.byKey(const ValueKey('create-chat-team')), findsNothing);
     expect(
-      (await repository.listThreads())
-          .singleWhere((thread) => thread.kind == ChatThreadKind.team)
-          .canManage,
-      isTrue,
-    );
+        repository.threads
+            .where((thread) => thread.kind == ChatThreadKind.team),
+        isEmpty);
   });
 }

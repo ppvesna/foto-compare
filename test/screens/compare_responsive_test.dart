@@ -67,8 +67,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('customer representative sees chat handoff, not workflow',
-      (tester) async {
+  testWidgets('customer sees chat handoff, not workflow', (tester) async {
     await tester.binding.setSurfaceSize(const Size(390, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     SharedPreferences.setMockInitialValues({});
@@ -100,6 +99,10 @@ void main() {
       findsNothing,
     );
     expect(find.text('Указать работу'), findsNothing);
+    expect(
+      find.textContaining('Заказчик не загружает эталоны'),
+      findsOneWidget,
+    );
 
     await tester.tap(find.byKey(const ValueKey('comparison-open-chat')));
     await tester.pump();

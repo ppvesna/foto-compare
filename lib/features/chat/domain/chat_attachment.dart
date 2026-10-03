@@ -7,6 +7,7 @@ class ChatAttachment {
   final int sizeBytes;
   final String organizationId;
   final String jobId;
+  final String threadId;
   final bool internal;
 
   const ChatAttachment({
@@ -16,6 +17,7 @@ class ChatAttachment {
     required this.sizeBytes,
     required this.organizationId,
     required this.jobId,
+    this.threadId = '',
     this.internal = false,
   });
 
@@ -27,6 +29,7 @@ class ChatAttachment {
     final mimeType = metadata['mime_type'] as String? ?? '';
     final organizationId = metadata['organization_id'] as String? ?? '';
     final jobId = metadata['job_id'] as String? ?? '';
+    final threadId = metadata['thread_id'] as String? ?? '';
     final rawSize = metadata['size_bytes'];
     final sizeBytes = rawSize is int
         ? rawSize
@@ -37,7 +40,7 @@ class ChatAttachment {
         fileName.isEmpty ||
         mimeType.isEmpty ||
         organizationId.isEmpty ||
-        jobId.isEmpty ||
+        (jobId.isEmpty && threadId.isEmpty) ||
         sizeBytes < 0) {
       return null;
     }
@@ -48,6 +51,7 @@ class ChatAttachment {
       sizeBytes: sizeBytes,
       organizationId: organizationId,
       jobId: jobId,
+      threadId: threadId,
       internal: metadata['internal'] == true,
     );
   }
@@ -59,6 +63,7 @@ class ChatAttachment {
         'size_bytes': sizeBytes,
         'organization_id': organizationId,
         'job_id': jobId,
+        'thread_id': threadId,
         'internal': internal,
       };
 }

@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../domain/organization_access.dart';
 import '../domain/organization_access_service.dart';
+import '../domain/organization_member.dart';
 
 class SupabaseOrganizationAccessService implements OrganizationAccessService {
   final SupabaseClient client;
@@ -86,6 +87,14 @@ class SupabaseOrganizationAccessService implements OrganizationAccessService {
         (snapshot['organization_role'] ?? snapshot['role']) as String?;
     if (organizationId == null || roleName == null) return null;
 
+    final rawFunctions = snapshot['employee_functions'];
+    final functions = rawFunctions is List
+        ? rawFunctions
+            .map((value) =>
+                OrganizationMemberFunctionCodec.fromStoredName('$value'))
+            .whereType<OrganizationMemberFunction>()
+            .toSet()
+        : <OrganizationMemberFunction>{};
     return OrganizationAccess.forRole(
       organizationId: organizationId,
       organizationName: organizationName,
@@ -93,6 +102,7 @@ class SupabaseOrganizationAccessService implements OrganizationAccessService {
         roleName,
         fallback: OrganizationRole.customer,
       ),
+      functions: functions,
     );
   }
 }

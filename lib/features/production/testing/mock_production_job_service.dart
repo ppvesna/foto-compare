@@ -7,6 +7,7 @@ class MockProductionJobService implements ProductionJobService {
     String jobNumber,
     String? customerId,
     String? requestedCustomerName,
+    String? responsibleUserId,
   })? lastOpenJob;
 
   MockProductionJobService({this.result});
@@ -17,12 +18,14 @@ class MockProductionJobService implements ProductionJobService {
     required String jobNumber,
     String? customerId,
     String? requestedCustomerName,
+    String? responsibleUserId,
   }) async {
     lastOpenJob = (
       organizationId: organizationId,
       jobNumber: jobNumber,
       customerId: customerId,
       requestedCustomerName: requestedCustomerName,
+      responsibleUserId: responsibleUserId,
     );
     return result ??
         ProductionJobContext(

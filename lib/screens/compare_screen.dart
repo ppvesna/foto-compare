@@ -2406,8 +2406,9 @@ class _CompareScreenState extends State<CompareScreen>
                 ),
                 const SizedBox(height: 9),
                 Text(
-                  'Представитель заказчика не загружает эталоны и не запускает сравнение. '
-                  'Готовые протоколы и материалы доступны в чате работы.',
+                  'Заказчик не загружает эталоны и не запускает сравнение. '
+                  'В чате работы доступны только сообщения и файлы, которые '
+                  'представитель заказчика со стороны компании отправил ему.',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 12,
@@ -3596,11 +3597,13 @@ class _CompareScreenState extends State<CompareScreen>
     return [
       _WorkflowAction(
         '1',
-        'Работа и заказчик',
+        widget.initialJob == null
+            ? 'Работа и заказчик'
+            : 'Работа ${_currentJobNumber.trim()}',
         Icons.assignment_outlined,
         done: hasJob,
         active: !hasJob,
-        onTap: _editJobNumber,
+        onTap: widget.initialJob == null ? _editJobNumber : null,
       ),
       _WorkflowAction(
         '2',
