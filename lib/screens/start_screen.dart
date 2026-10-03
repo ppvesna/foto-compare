@@ -10,8 +10,13 @@ import '../widgets/xp_widgets.dart';
 
 class StartScreen extends StatefulWidget {
   final PasswordRecoveryService? passwordRecoveryService;
+  final Future<void> Function(String login, String password)? signInOverride;
 
-  const StartScreen({super.key, this.passwordRecoveryService});
+  const StartScreen({
+    super.key,
+    this.passwordRecoveryService,
+    this.signInOverride,
+  });
 
   @override
   State<StartScreen> createState() => _StartScreenState();
@@ -31,6 +36,7 @@ class _StartScreenState extends State<StartScreen>
   final _nickCtrl = TextEditingController();
   final _orgCtrl = TextEditingController();
   final _pass2Ctrl = TextEditingController();
+  final _loginPasswordFocus = FocusNode();
 
   PasswordRecoveryService get _passwordRecoveryService =>
       widget.passwordRecoveryService ??
@@ -54,6 +60,7 @@ class _StartScreenState extends State<StartScreen>
     _nickCtrl.dispose();
     _orgCtrl.dispose();
     _pass2Ctrl.dispose();
+    _loginPasswordFocus.dispose();
     super.dispose();
   }
 
@@ -343,6 +350,7 @@ class _StartScreenState extends State<StartScreen>
           label: 'Пароль',
           hint: 'Введите пароль',
           controller: _passCtrl,
+          focusNode: _loginPasswordFocus,
           icon: Icons.lock_outline,
           password: true,
           textInputAction: TextInputAction.done,
@@ -611,7 +619,9 @@ class _StartScreenState extends State<StartScreen>
     }
     setState(() => _authBusy = true);
     try {
-      if (_looksLikeEmail(login)) {
+      if (widget.signInOverride != null) {
+        await widget.signInOverride!(login, _passCtrl.text);
+      } else if (_looksLikeEmail(login)) {
         await Supabase.instance.client.auth.signInWithPassword(
           email: login,
           password: _passCtrl.text,
@@ -657,7 +667,14 @@ class _StartScreenState extends State<StartScreen>
         );
       }
     } catch (e) {
-      if (mounted) xpDlg(context, 'Ошибка входа', _authErrorText(e));
+      final invalidCredentials = _isInvalidCredentials(e);
+      if (invalidCredentials) _passCtrl.clear();
+      if (mounted) {
+        await xpDlg(context, 'Ошибка входа', _authErrorText(e));
+      }
+      if (mounted && invalidCredentials) {
+        _loginPasswordFocus.requestFocus();
+      }
     } finally {
       if (mounted) setState(() => _authBusy = false);
     }
@@ -752,6 +769,12 @@ class _StartScreenState extends State<StartScreen>
       return 'Нет соединения с сервером авторизации. Проверьте интернет и повторите вход.';
     }
     return text;
+  }
+
+  bool _isInvalidCredentials(Object error) {
+    final lower = error.toString().toLowerCase();
+    return lower.contains('invalid login credentials') ||
+        lower.contains('invalid nickname or password');
   }
 }
 

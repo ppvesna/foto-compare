@@ -9,6 +9,7 @@ class AuthTextField extends StatefulWidget {
   final bool enabled;
   final TextInputType? keyboardType;
   final TextInputAction? textInputAction;
+  final FocusNode? focusNode;
   final List<String>? autofillHints;
   final ValueChanged<String>? onChanged;
   final ValueChanged<String>? onSubmitted;
@@ -23,6 +24,7 @@ class AuthTextField extends StatefulWidget {
     this.enabled = true,
     this.keyboardType,
     this.textInputAction,
+    this.focusNode,
     this.autofillHints,
     this.onChanged,
     this.onSubmitted,
@@ -45,6 +47,7 @@ class _AuthTextFieldState extends State<AuthTextField> {
   Widget build(BuildContext context) {
     return TextField(
       controller: widget.controller,
+      focusNode: widget.focusNode,
       enabled: widget.enabled,
       obscureText: _obscured,
       enableSuggestions: !widget.password,

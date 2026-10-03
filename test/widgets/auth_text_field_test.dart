@@ -70,6 +70,56 @@ void main() {
     expect(find.text('Пароли совпадают.'), findsOneWidget);
   });
 
+  testWidgets('failed login clears only password and returns focus',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: StartScreen(
+          signInOverride: (login, password) async {
+            throw StateError('Invalid nickname or password');
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const ValueKey('login-identity')),
+      'masha_test',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('login-password')),
+      'wrong-password',
+    );
+    await tester.tap(find.byKey(const ValueKey('login-submit')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.text('Ошибка входа'), findsOneWidget);
+
+    await tester.tap(find.text('ОК'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    final identityField = tester.widget<TextField>(
+      find.descendant(
+        of: find.byKey(const ValueKey('login-identity')),
+        matching: find.byType(TextField),
+      ),
+    );
+    final passwordField = tester.widget<TextField>(
+      find.descendant(
+        of: find.byKey(const ValueKey('login-password')),
+        matching: find.byType(TextField),
+      ),
+    );
+    expect(identityField.controller?.text, 'masha_test');
+    expect(passwordField.controller?.text, isEmpty);
+    expect(passwordField.focusNode?.hasFocus, isTrue);
+  });
+
   testWidgets('forgot password validates email and requests a reset link',
       (tester) async {
     final service = MockPasswordRecoveryService();
