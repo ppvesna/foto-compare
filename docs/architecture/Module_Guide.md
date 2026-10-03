@@ -281,7 +281,18 @@ functions, and `JobAccessPolicy` define effective access. `ProductionJobService`
 Supabase adapter and mock open a work by organization number, approved customer, or
 unconfirmed customer request. Migration `012` persists jobs and participants. Owner and
 admin can access all organization jobs; employees and customers require an explicit
-participant record. Sample persistence and remote protocol synchronization remain
+participant record.
+
+Migration `030` adds the production workflow boundary. `ProductionWorkflowService`
+lists accessible works with server-side search and cursor pagination, loads a work's
+stage, active defect blocks and audit history, and performs guarded transitions. The
+stage sequence is preparation, prepress, printing, quality control, completed. An
+administrator or the job's assigned manager advances the stage. They appoint defect
+controllers only from active employees who hold the inspection-specialist function;
+each controller separately receives block and/or unblock authority. Owner is read-only
+for this internal production process. Any unresolved whole-work or partial-scope block
+prevents the next stage. A customer sees the blocked state but only reasons explicitly
+marked customer-visible. Sample persistence and remote protocol synchronization remain
 pending.
 
 ### protocols

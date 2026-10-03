@@ -13,12 +13,14 @@ import 'screens/home_screen.dart';
 import 'screens/invitation_setup_screen.dart';
 import 'screens/password_recovery_screen.dart';
 import 'screens/settings_screen.dart';
+import 'screens/works_screen.dart';
 import 'features/auth/auth.dart';
 import 'features/billing/billing.dart';
 import 'features/chat/chat.dart';
 import 'features/organization/organization.dart';
 import 'features/print_proofing/print_proofing.dart';
 import 'features/protocols/protocols.dart';
+import 'features/production/production.dart';
 import 'services/sync_service.dart';
 import 'services/browser_auth_url.dart';
 import 'widgets/auth_page_backdrop.dart';
@@ -311,12 +313,19 @@ class _MainShellState extends State<MainShell> {
   ProtocolCloudRepository? _protocolCloudRepository;
   ChatRepository? _chatRepository;
   CheckUsageService? _checkUsageService;
+  late final ProductionWorkflowService _workflowService;
+  ProductionWorkSummary? _comparisonWork;
+  bool _showComparison = false;
+  String? _requestedChatJobId;
   int _checkUsageRevision = 0;
   String? _handledInvitationId;
 
   @override
   void initState() {
     super.initState();
+    _workflowService = SupabaseProductionWorkflowService(
+      Supabase.instance.client,
+    );
     _loadAccess();
   }
 
@@ -460,7 +469,27 @@ class _MainShellState extends State<MainShell> {
       return;
     }
     setState(() {
+      if (i == 1) _showComparison = false;
       _tab = i;
+    });
+  }
+
+  void _openWorkComparison(ProductionWorkSummary work) {
+    setState(() {
+      _comparisonWork = work;
+      _showComparison = true;
+      _tab = 1;
+    });
+  }
+
+  void _backToWorks() {
+    setState(() => _showComparison = false);
+  }
+
+  void _openWorkChat(ProductionWorkSummary work) {
+    setState(() {
+      _requestedChatJobId = work.jobId;
+      _tab = 2;
     });
   }
 
@@ -567,22 +596,47 @@ class _MainShellState extends State<MainShell> {
         onOpenSettings: _openAccessSettings,
         onSignOut: _signOut,
       ),
-      CompareScreen(
-        entitlements: _entitlements,
-        organizationAccess: _organizationAccess,
-        protocolCloudRepository: _protocolCloudRepository,
-        checkUsageService: _checkUsageService,
-        onNavigate: _onTab,
-        onCheckUsageChanged: () {
-          if (mounted) setState(() => _checkUsageRevision++);
-        },
-      ),
+      if (_showComparison && _comparisonWork != null)
+        CompareScreen(
+          key: ValueKey('comparison-${_comparisonWork!.jobId}'),
+          entitlements: _entitlements,
+          organizationAccess: _organizationAccess,
+          initialJob: ProductionJobContext(
+            jobId: _comparisonWork!.jobId,
+            jobNumber: _comparisonWork!.jobNumber,
+            customerId: _comparisonWork!.customerId,
+            customerName: _comparisonWork!.customerName,
+            customerConfirmed: _comparisonWork!.customerId != null,
+          ),
+          onBackToWorks: _backToWorks,
+          protocolCloudRepository: _protocolCloudRepository,
+          checkUsageService: _checkUsageService,
+          onNavigate: _onTab,
+          onCheckUsageChanged: () {
+            if (mounted) setState(() => _checkUsageRevision++);
+          },
+        )
+      else
+        WorksScreen(
+          organizationId: _organizationAccess.organizationId,
+          organizationAccess: _organizationAccess,
+          workflowService: _workflowService,
+          customerDirectoryService: SupabaseCustomerDirectoryService(
+            Supabase.instance.client,
+          ),
+          productionJobService: SupabaseProductionJobService(
+            Supabase.instance.client,
+          ),
+          onOpenComparison: _openWorkComparison,
+          onOpenChat: _openWorkChat,
+        ),
       ChatScreen(
         currentUserId: user?.id ?? '',
         email: email,
         displayName: displayName,
         nickname: nickname,
         organizationName: organizationName,
+        initialJobId: _requestedChatJobId,
         protocolCloudRepository: _protocolCloudRepository,
         chatRepository: _chatRepository,
       ),
@@ -733,7 +787,7 @@ class _MainShellState extends State<MainShell> {
             child: Row(
               children: [
                 _navBtn(0, 'Главная', Icons.home_outlined),
-                _navBtn(1, 'Сравнение', Icons.compare_outlined),
+                _navBtn(1, 'Работы', Icons.work_outline_rounded),
                 _navBtn(2, 'Чат', Icons.chat_bubble_outline),
                 _navBtn(3, 'Настройки', Icons.tune_outlined),
               ],

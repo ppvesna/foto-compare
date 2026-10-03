@@ -20,6 +20,7 @@ class ChatScreen extends StatefulWidget {
   final String displayName;
   final String nickname;
   final String organizationName;
+  final String? initialJobId;
   final ProtocolCloudRepository? protocolCloudRepository;
   final ChatRepository? chatRepository;
   final ChatAttachmentPicker? attachmentPicker;
@@ -31,6 +32,7 @@ class ChatScreen extends StatefulWidget {
     required this.displayName,
     required this.nickname,
     required this.organizationName,
+    this.initialJobId,
     this.protocolCloudRepository,
     this.chatRepository,
     this.attachmentPicker,
@@ -256,7 +258,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     _loadCloudProtocols();
-    _loadServerChats();
+    _loadServerChats(preferredJobId: widget.initialJobId);
   }
 
   @override
@@ -268,7 +270,10 @@ class _ChatScreenState extends State<ChatScreen> {
     if (oldWidget.chatRepository != widget.chatRepository) {
       _messageSubscription?.cancel();
       _threadSubscription?.cancel();
-      _loadServerChats();
+      _loadServerChats(preferredJobId: widget.initialJobId);
+    } else if (oldWidget.initialJobId != widget.initialJobId &&
+        widget.initialJobId != null) {
+      _loadServerChats(preferredJobId: widget.initialJobId);
     }
   }
 

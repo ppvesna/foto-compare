@@ -61,6 +61,8 @@ class CompareScreen extends StatefulWidget {
   final ProtocolCloudRepository? protocolCloudRepository;
   final CheckUsageService? checkUsageService;
   final VoidCallback? onCheckUsageChanged;
+  final ProductionJobContext? initialJob;
+  final VoidCallback? onBackToWorks;
   // App navigation lives in MainShell; the restricted role view uses this to
   // send customer representatives back to their job chat.
   final ValueChanged<int>? onNavigate;
@@ -74,6 +76,8 @@ class CompareScreen extends StatefulWidget {
     this.protocolCloudRepository,
     this.checkUsageService,
     this.onCheckUsageChanged,
+    this.initialJob,
+    this.onBackToWorks,
     this.onNavigate,
   });
 
@@ -323,6 +327,7 @@ class _CompareScreenState extends State<CompareScreen>
   @override
   void initState() {
     super.initState();
+    _applyInitialJob(widget.initialJob);
     _tabs = TabController(length: 4, vsync: this);
     _loadSavedReference();
     _loadProfiles();
@@ -345,6 +350,19 @@ class _CompareScreenState extends State<CompareScreen>
         widget.organizationAccess.organizationId) {
       _loadCustomerDirectory();
     }
+    if (oldWidget.initialJob?.jobId != widget.initialJob?.jobId) {
+      setState(() => _applyInitialJob(widget.initialJob));
+    }
+  }
+
+  void _applyInitialJob(ProductionJobContext? job) {
+    if (job == null) return;
+    _jobNumber = job.jobNumber;
+    _cloudJobId = job.jobId;
+    _selectedCustomerId = job.customerId;
+    _selectedCustomerName = job.customerConfirmed ? job.customerName : '';
+    _requestedCustomerName = job.customerConfirmed ? '' : job.customerName;
+    _customerConfirmed = job.customerConfirmed;
   }
 
   CustomerDirectoryService get _customerDirectoryService =>
@@ -2430,6 +2448,15 @@ class _CompareScreenState extends State<CompareScreen>
           ),
           child: Row(
             children: [
+              if (widget.onBackToWorks != null) ...[
+                IconButton(
+                  key: const ValueKey('back-to-works'),
+                  tooltip: 'Вернуться к работам',
+                  onPressed: widget.onBackToWorks,
+                  icon: const Icon(Icons.arrow_back_rounded, size: 19),
+                ),
+                const SizedBox(width: 3),
+              ],
               Expanded(
                 child: _workspaceModeSelector(
                   compact: compact,

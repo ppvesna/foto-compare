@@ -53,6 +53,11 @@ Rule: every step must preserve the working application and be independently reve
 - Migration `029` adds server-backed per-user chat read state and searchable job
   metadata. Active, unread, and archived threads now remain usable when an
   organization has hundreds of works.
+- Migration `030` adds the scalable work register and guarded production workflow.
+  Comparison and chat now open from a selected work. Server-side stages, scoped defect
+  blocks, appointed inspection controllers and transition history prevent a blocked
+  work from advancing and keep owner, administrator, manager, specialist and customer
+  responsibilities separate.
 - The `vesna-test` employee and customer job sharing/revocation gate has passed. The
   remote ledger is still empty because historical migrations were applied pointwise;
   the next release task is to repair/audit that ledger before production deployment.
@@ -226,6 +231,12 @@ Migration `029` is applied pointwise to the test environment. It adds protected
 per-user read cursors and extends accessible thread summaries with job status,
 customer name, and unread count. The remote schema lint passes; the historical remote
 migration ledger remains intentionally untouched pending its separate audit.
+
+Migration `030` is applied pointwise to the test environment. It adds cursor-paginated
+work search, production stages, ready/blocked/completed state, partial-scope defect
+blocks, explicit block/unblock controller assignments and immutable transition history.
+The database rejects stage advancement while any defect block remains active. Client
+role testing of the new controls is the next checkpoint.
 
 ## Phase 4: Inspection boundary
 

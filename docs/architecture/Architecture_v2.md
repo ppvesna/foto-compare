@@ -208,6 +208,14 @@ job status, customer name, and unread count. The client keeps the ordinary team 
 personal threads visible with active work, moves completed/archived jobs to a separate
 view, and searches every accessible thread without broadening its RLS boundary. Group
 updates are published through Realtime so inactive-thread counters refresh live.
+Migration `030` moves production navigation out of chat into a paginated work register.
+Every job has a current production stage, a ready/blocked/completed flow state, scoped
+defect blocks, explicitly assigned inspection controllers, and an immutable transition
+history. An administrator or assigned job manager advances stages and appoints
+controllers; only an appointed employee with the inspection-specialist function may
+block or unblock. Owner observes but does not mutate this internal production flow.
+Unresolved blocks make advancement impossible at the database boundary. Customer users
+see the overall state and only defect explanations deliberately marked customer-visible.
 
 ## 7. Inspection domain
 
