@@ -1,3 +1,4 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../capabilities/storage/storage.dart';
@@ -8,6 +9,7 @@ import '../features/capture/capture.dart';
 import '../features/color_analysis/color_analysis.dart';
 import '../features/organization/organization.dart';
 import '../features/production/production.dart';
+import '../features/print_proofing/print_proofing.dart';
 import '../services/calibration_settings_service.dart';
 import '../features/protocols/protocols.dart';
 import '../services/compare_settings_service.dart';
@@ -40,6 +42,8 @@ enum _CustomerAction {
 
 enum _OrganizationWorkspace { team, customers }
 
+enum _PrintConditionAction { archive, restore, deletePermanently }
+
 class SettingsScreen extends StatefulWidget {
   final EntitlementSnapshot entitlements;
   final OrganizationAccess organizationAccess;
@@ -51,6 +55,7 @@ class SettingsScreen extends StatefulWidget {
   final CloudStorage? cloudStorage;
   final PaymentService? paymentService;
   final CheckUsageService? checkUsageService;
+  final PrintConditionService? printConditionService;
   final int checkUsageRevision;
 
   const SettingsScreen({
@@ -65,6 +70,7 @@ class SettingsScreen extends StatefulWidget {
     this.cloudStorage,
     this.paymentService,
     this.checkUsageService,
+    this.printConditionService,
     this.checkUsageRevision = 0,
   });
 
@@ -147,6 +153,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   CheckUsageSnapshot? _checkUsage;
   bool _checkUsageLoading = false;
   String? _checkUsageError;
+  List<PrintCondition> _printConditions = const [];
+  bool _printConditionsLoading = false;
+  bool _canManagePrintConditions = false;
+  bool _canAdministerPrintConditions = false;
+  bool _showArchivedPrintConditions = false;
+  String? _printConditionsError;
 
   static const _sections = [
     _SettingsSection('Аккаунт', 'профиль пользователя'),
@@ -156,6 +168,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _SettingsSection('Камера', 'захват с ноутбука или USB'),
     _SettingsSection('Калибровка', 'точки, лупа и магнит'),
     _SettingsSection('Цвет', 'CMYK точки и Delta E'),
+    _SettingsSection('Условия печати', 'машина, материал и профиль'),
     _SettingsSection('Плотности', 'оптические плотности CMYK'),
     _SettingsSection('Штрихкоды', 'EAN, QR, DataMatrix'),
     _SettingsSection('Проверка', 'уровни анализа'),
@@ -179,6 +192,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _loadCheckUsage();
     _billingScope = _defaultBillingScope();
     if (_section == 2) _loadBillingData();
+    if (_section == 7) _loadPrintConditions();
   }
 
   @override
@@ -565,6 +579,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         } else if (index == 3) {
           _loadOrganizationMembers();
           _loadCustomerDirectory();
+        } else if (index == 7) {
+          _loadPrintConditions();
         }
       },
       borderRadius: BorderRadius.circular(14),
@@ -612,15 +628,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 if (_section == 4) _cameraSection(),
                 if (_section == 5) _calibrationSection(),
                 if (_section == 6) _colorSection(),
-                if (_section == 7) _densitySection(),
-                if (_section == 8) _barcodeSection(),
-                if (_section == 9) _inspectionSection(),
-                if (_section == 10) _storageSection(),
+                if (_section == 7) _printConditionsSection(),
+                if (_section == 8) _densitySection(),
+                if (_section == 9) _barcodeSection(),
+                if (_section == 10) _inspectionSection(),
+                if (_section == 11) _storageSection(),
               ],
             ),
           ),
         ),
-        if (_section > 3)
+        if (_section > 3 && _section != 7)
           Container(
             width: double.infinity,
             padding: const EdgeInsets.fromLTRB(12, 9, 12, 10),
@@ -4105,6 +4122,622 @@ class _SettingsScreenState extends State<SettingsScreen> {
         child: _dotGainTable(),
       ),
     ]);
+  }
+
+  Future<void> _loadPrintConditions() async {
+    final organizationId = widget.organizationAccess.organizationId;
+    final service = widget.printConditionService;
+    if (organizationId == null || service == null) {
+      if (mounted) {
+        setState(() {
+          _printConditions = const [];
+          _printConditionsLoading = false;
+          _canManagePrintConditions = false;
+          _canAdministerPrintConditions = false;
+          _printConditionsError = organizationId == null
+              ? 'Условия печати принадлежат организации.'
+              : 'Сервис условий печати не подключён.';
+        });
+      }
+      return;
+    }
+    if (widget.organizationAccess.role == OrganizationRole.customer) return;
+    setState(() {
+      _printConditionsLoading = true;
+      _printConditionsError = null;
+    });
+    try {
+      final results = await Future.wait<Object>([
+        service.canManageConditions(organizationId),
+        service.canAdministerConditions(organizationId),
+        service.listConditions(organizationId, includeArchived: true),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _canManagePrintConditions = results[0] as bool;
+        _canAdministerPrintConditions = results[1] as bool;
+        _printConditions = results[2] as List<PrintCondition>;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _canManagePrintConditions = false;
+        _canAdministerPrintConditions = false;
+        _printConditionsError =
+            'Хранилище условий печати пока недоступно. Проверьте подключение и миграции 027–028.';
+      });
+    } finally {
+      if (mounted) setState(() => _printConditionsLoading = false);
+    }
+  }
+
+  Future<PrintConditionDraft?> _printConditionDraftDialog({
+    required PrintConditionSource source,
+  }) async {
+    final machine = TextEditingController();
+    final material = TextEditingController();
+    final inks = TextEditingController(text: 'CMYK');
+    String? error;
+    final result = await showDialog<PrintConditionDraft>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(
+            source == PrintConditionSource.iccImport
+                ? 'Профессиональный ICC'
+                : 'Быстрый профиль',
+          ),
+          content: SizedBox(
+            width: 520,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    source == PrintConditionSource.iccImport
+                        ? 'ICC уже проверен как выходной CMYK-профиль. Опишите реальное условие печати.'
+                        : 'Создаётся черновик. Для расчёта понадобятся шкала Trimatrix, откалиброванная камера и контрольные поля.',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      height: 1.4,
+                      color: Colors.black54,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    key: const ValueKey('print-condition-machine'),
+                    controller: machine,
+                    decoration: const InputDecoration(
+                      labelText: 'Печатная машина',
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    key: const ValueKey('print-condition-material'),
+                    controller: material,
+                    decoration: const InputDecoration(
+                      labelText: 'Материал',
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    key: const ValueKey('print-condition-inks'),
+                    controller: inks,
+                    decoration: const InputDecoration(
+                      labelText: 'Краски / режим',
+                    ),
+                  ),
+                  if (error != null) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      error!,
+                      style: const TextStyle(
+                        color: Colors.red,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              onPressed: () {
+                if (machine.text.trim().isEmpty ||
+                    material.text.trim().isEmpty ||
+                    inks.text.trim().isEmpty) {
+                  setDialogState(() {
+                    error = 'Заполните машину, материал и краски.';
+                  });
+                  return;
+                }
+                final machineName = machine.text.trim();
+                final materialName = material.text.trim();
+                final inkSet = inks.text.trim();
+                Navigator.pop(
+                  dialogContext,
+                  PrintConditionDraft(
+                    displayName: '$machineName · $materialName · $inkSet',
+                    machineName: machineName,
+                    materialName: materialName,
+                    inkSet: inkSet,
+                  ),
+                );
+              },
+              child: const Text('Создать черновик'),
+            ),
+          ],
+        ),
+      ),
+    );
+    // showDialog completes before the reverse route animation releases its fields.
+    // Wait for that animation, then release our explicitly supplied controllers.
+    await Future<void>.delayed(kThemeAnimationDuration);
+    machine.dispose();
+    material.dispose();
+    inks.dispose();
+    return result;
+  }
+
+  Future<void> _createQuickPrintCondition() async {
+    final organizationId = widget.organizationAccess.organizationId;
+    final service = widget.printConditionService;
+    if (organizationId == null || service == null) return;
+    final draft = await _printConditionDraftDialog(
+      source: PrintConditionSource.quickCamera,
+    );
+    if (draft == null || !mounted) return;
+    setState(() => _printConditionsLoading = true);
+    try {
+      await service.createQuickDraft(
+        organizationId: organizationId,
+        draft: draft,
+      );
+      await _loadPrintConditions();
+      if (mounted) {
+        await xpDlg(
+          context,
+          'Черновик создан',
+          'Следующий этап — распечатать шкалу, снять её откалиброванной камерой и проверить контрольные поля.',
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        await xpDlg(
+          context,
+          'Черновик не создан',
+          'Операция доступна владельцу или сотруднику с функцией специалиста проверки. Проверьте миграцию 027.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _printConditionsLoading = false);
+    }
+  }
+
+  Future<void> _importIccPrintCondition() async {
+    final organizationId = widget.organizationAccess.organizationId;
+    final service = widget.printConditionService;
+    if (organizationId == null || service == null) return;
+    final file = await FilePicker.pickFile(
+      type: FileType.custom,
+      allowedExtensions: const ['icc', 'icm'],
+    );
+    if (file == null || !mounted) return;
+    final bytes = await file.readAsBytes();
+    if (!mounted) return;
+    if (bytes.isEmpty) {
+      await xpDlg(context, 'ICC не прочитан', 'Выбранный файл пуст.');
+      return;
+    }
+    final inspection = IccProfileInspector.inspect(bytes, fileName: file.name);
+    if (!inspection.accepted) {
+      await xpDlg(
+        context,
+        'ICC не подходит',
+        inspection.problems.join('\n'),
+      );
+      return;
+    }
+    final draft = await _printConditionDraftDialog(
+      source: PrintConditionSource.iccImport,
+    );
+    if (draft == null || !mounted) return;
+    setState(() => _printConditionsLoading = true);
+    try {
+      await service.createIccDraft(
+        organizationId: organizationId,
+        draft: draft,
+        fileName: file.name,
+        bytes: bytes,
+        inspection: inspection,
+      );
+      await _loadPrintConditions();
+      if (mounted) {
+        await xpDlg(
+          context,
+          'ICC загружен',
+          'Профиль сохранён как черновик. Перед публикацией специалист проверяет условие печати и контрольный отпечаток.',
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        await xpDlg(
+          context,
+          'ICC не загружен',
+          'Не удалось сохранить профиль организации. Проверьте права специалиста и миграцию 027.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _printConditionsLoading = false);
+    }
+  }
+
+  Future<void> _confirmPrintConditionAction(
+    PrintCondition condition,
+    _PrintConditionAction action,
+  ) async {
+    final title = switch (action) {
+      _PrintConditionAction.archive => 'Удалить профиль?',
+      _PrintConditionAction.restore => 'Восстановить профиль?',
+      _PrintConditionAction.deletePermanently => 'Удалить профиль навсегда?',
+    };
+    final message = switch (action) {
+      _PrintConditionAction.archive =>
+        '«${condition.displayName}» исчезнет из активного списка и новых работ. '
+            'История сохранится, а специалист сможет восстановить профиль из архива. '
+            'Администратор получит служебное уведомление.',
+      _PrintConditionAction.restore =>
+        '«${condition.displayName}» вернётся в активный список с прежним статусом.',
+      _PrintConditionAction.deletePermanently =>
+        '«${condition.displayName}» будет удалён без возможности восстановления. '
+            'Это разрешено только для профиля, который никогда не использовался в работе.',
+    };
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: action == _PrintConditionAction.deletePermanently
+                ? FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFFB42318),
+                  )
+                : null,
+            child: Text(switch (action) {
+              _PrintConditionAction.archive => 'В архив',
+              _PrintConditionAction.restore => 'Восстановить',
+              _PrintConditionAction.deletePermanently => 'Удалить навсегда',
+            }),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      await _runPrintConditionAction(condition, action);
+    }
+  }
+
+  Future<void> _runPrintConditionAction(
+    PrintCondition condition,
+    _PrintConditionAction action,
+  ) async {
+    final service = widget.printConditionService;
+    if (service == null) return;
+    setState(() => _printConditionsLoading = true);
+    try {
+      switch (action) {
+        case _PrintConditionAction.archive:
+          await service.archiveCondition(condition.id);
+          break;
+        case _PrintConditionAction.restore:
+          await service.restoreCondition(condition.id);
+          break;
+        case _PrintConditionAction.deletePermanently:
+          await service.deleteConditionPermanently(condition.id);
+          break;
+      }
+      await _loadPrintConditions();
+    } catch (_) {
+      if (!mounted) return;
+      final message = switch (action) {
+        _PrintConditionAction.archive =>
+          'Профиль может убрать в архив только сотрудник с функцией специалиста проверки.',
+        _PrintConditionAction.restore =>
+          'Не удалось вернуть профиль из архива. Проверьте права специалиста.',
+        _PrintConditionAction.deletePermanently => condition.usedInJobs
+            ? 'Профиль уже использовался в работе и должен остаться в истории.'
+            : 'Окончательное удаление доступно администратору только для неиспользованного архивного профиля.',
+      };
+      await xpDlg(context, 'Действие не выполнено', message);
+    } finally {
+      if (mounted) setState(() => _printConditionsLoading = false);
+    }
+  }
+
+  Widget _printConditionsSection() {
+    if (widget.organizationAccess.role == OrganizationRole.customer) {
+      return _settingsPanel(
+        title: 'Условия печати',
+        child: const Text(
+          'Профили машины и материала создаёт производственная команда. '
+          'Представитель использует только условия, назначенные его работе.',
+          style: TextStyle(fontSize: 12, height: 1.45),
+        ),
+      );
+    }
+    final organizationId = widget.organizationAccess.organizationId;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _settingsPanel(
+          title: 'Условия печати',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                'Профиль всегда относится к конкретной машине, краскам и материалу. '
+                'Заказчику показываются только опубликованные условия, назначенные его работе.',
+                style: TextStyle(fontSize: 11, height: 1.4),
+              ),
+              const SizedBox(height: 12),
+              if (organizationId == null)
+                _notePanel('Сначала создайте или выберите организацию.')
+              else if (_canManagePrintConditions)
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    FilledButton.icon(
+                      key: const ValueKey('create-quick-print-condition'),
+                      onPressed: _printConditionsLoading
+                          ? null
+                          : _createQuickPrintCondition,
+                      icon: const Icon(Icons.camera_alt_outlined, size: 18),
+                      label: const Text('Быстрый профиль'),
+                    ),
+                    OutlinedButton.icon(
+                      key: const ValueKey('import-icc-print-condition'),
+                      onPressed: _printConditionsLoading
+                          ? null
+                          : _importIccPrintCondition,
+                      icon: const Icon(Icons.upload_file, size: 18),
+                      label: const Text('Загрузить ICC/ICM'),
+                    ),
+                  ],
+                )
+              else
+                _notePanel(
+                  _canAdministerPrintConditions
+                      ? 'Профили создаёт и обслуживает специалист проверки. Администратор может окончательно удалить из архива только неиспользованный профиль.'
+                      : 'Просмотр доступен, но создавать, подтверждать и архивировать профиль может только специалист проверки.',
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 10),
+        if (_printConditionsLoading)
+          const Center(
+            child: Padding(
+              padding: EdgeInsets.all(24),
+              child: CircularProgressIndicator(),
+            ),
+          )
+        else if (_printConditionsError != null)
+          _settingsPanel(
+            title: 'Профили недоступны',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _printConditionsError!,
+                  style: const TextStyle(fontSize: 11, height: 1.4),
+                ),
+                const SizedBox(height: 8),
+                XpBtn(label: 'Повторить', onPressed: _loadPrintConditions),
+              ],
+            ),
+          )
+        else if (_printConditions.isEmpty)
+          _settingsPanel(
+            title: 'Профилей пока нет',
+            child: const Text(
+              'Создайте быстрый черновик по шкале Trimatrix или загрузите профессиональный выходной ICC/ICM.',
+              style: TextStyle(fontSize: 11, height: 1.4),
+            ),
+          )
+        else ...[
+          if (_canManagePrintConditions || _canAdministerPrintConditions) ...[
+            _printConditionListSwitch(),
+            const SizedBox(height: 10),
+          ],
+          if (_visiblePrintConditions.isEmpty)
+            _settingsPanel(
+              title: _showArchivedPrintConditions
+                  ? 'Архив пуст'
+                  : 'Активных профилей нет',
+              child: Text(
+                _showArchivedPrintConditions
+                    ? 'Удалённые специалистом профили появятся здесь.'
+                    : 'Откройте архив или создайте новый профиль.',
+                style: const TextStyle(fontSize: 11, height: 1.4),
+              ),
+            )
+          else
+            ..._visiblePrintConditions.map(_printConditionCard),
+        ],
+      ],
+    );
+  }
+
+  List<PrintCondition> get _visiblePrintConditions => _printConditions
+      .where(
+        (condition) =>
+            (condition.status == PrintConditionStatus.archived) ==
+            _showArchivedPrintConditions,
+      )
+      .toList(growable: false);
+
+  Widget _printConditionListSwitch() {
+    final activeCount = _printConditions
+        .where((condition) => condition.status != PrintConditionStatus.archived)
+        .length;
+    final archivedCount = _printConditions
+        .where((condition) => condition.status == PrintConditionStatus.archived)
+        .length;
+    return _settingsPanel(
+      title: 'Список профилей',
+      child: Row(
+        children: [
+          Expanded(
+            child: OutlinedButton(
+              key: const ValueKey('active-print-conditions'),
+              onPressed: _showArchivedPrintConditions
+                  ? () => setState(() => _showArchivedPrintConditions = false)
+                  : null,
+              child: Text('Активные · $activeCount'),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: OutlinedButton(
+              key: const ValueKey('archived-print-conditions'),
+              onPressed: _showArchivedPrintConditions
+                  ? null
+                  : () => setState(() => _showArchivedPrintConditions = true),
+              child: Text('Архив · $archivedCount'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _printConditionCard(PrintCondition condition) {
+    final white = condition.mediaWhitePoint;
+    final evidence = condition.source == PrintConditionSource.iccImport
+        ? condition.iccEvidence == null
+            ? 'ICC ещё не прикреплён'
+            : 'ICC ${condition.iccEvidence!.version} · ${condition.iccEvidence!.dataColorSpace.trim()}'
+        : condition.quickEvidence == null
+            ? 'ожидает шкалу и фотографию'
+            : 'ΔE ср. ${condition.quickEvidence!.averageDeltaE?.toStringAsFixed(1) ?? '—'} · max ${condition.quickEvidence!.maximumDeltaE?.toStringAsFixed(1) ?? '—'}';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: _settingsPanel(
+        title: condition.displayName,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _infoRow('Источник', condition.source.label),
+            _infoRow('Статус', condition.status.label),
+            _infoRow('Машина', condition.machineName),
+            _infoRow('Материал', condition.materialName),
+            _infoRow('Краски', condition.inkSet),
+            _infoRow('Данные', evidence),
+            if (white != null)
+              _infoRow(
+                'Точка белого',
+                'L* ${white.l.toStringAsFixed(1)} · a* ${white.a.toStringAsFixed(1)} · b* ${white.b.toStringAsFixed(1)}',
+              ),
+            _infoRow(
+              'Заказчикам',
+              condition.customerSelectable
+                  ? 'доступен после назначения работе'
+                  : 'не опубликован',
+            ),
+            if (condition.status == PrintConditionStatus.archived &&
+                condition.usedInJobs)
+              const Padding(
+                padding: EdgeInsets.only(top: 8),
+                child: Text(
+                  'Профиль использовался в работе — его можно восстановить, но нельзя удалить из истории.',
+                  style: TextStyle(
+                    fontSize: 11,
+                    height: 1.4,
+                    color: Colors.black54,
+                  ),
+                ),
+              ),
+            if (_printConditionActions(condition).isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: _printConditionActions(condition),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _printConditionActions(PrintCondition condition) {
+    if (condition.status != PrintConditionStatus.archived) {
+      if (!_canManagePrintConditions) return const [];
+      return [
+        OutlinedButton.icon(
+          key: ValueKey('archive-print-condition-${condition.id}'),
+          onPressed: _printConditionsLoading
+              ? null
+              : () => _confirmPrintConditionAction(
+                    condition,
+                    _PrintConditionAction.archive,
+                  ),
+          icon: const Icon(Icons.archive_outlined, size: 18),
+          label: const Text('Удалить профиль'),
+        ),
+      ];
+    }
+
+    final actions = <Widget>[];
+    if (_canManagePrintConditions) {
+      actions.add(
+        OutlinedButton.icon(
+          key: ValueKey('restore-print-condition-${condition.id}'),
+          onPressed: _printConditionsLoading
+              ? null
+              : () => _confirmPrintConditionAction(
+                    condition,
+                    _PrintConditionAction.restore,
+                  ),
+          icon: const Icon(Icons.restore, size: 18),
+          label: const Text('Восстановить'),
+        ),
+      );
+    }
+    if (_canAdministerPrintConditions && !condition.usedInJobs) {
+      actions.add(
+        OutlinedButton.icon(
+          key: ValueKey('delete-print-condition-${condition.id}'),
+          onPressed: _printConditionsLoading
+              ? null
+              : () => _confirmPrintConditionAction(
+                    condition,
+                    _PrintConditionAction.deletePermanently,
+                  ),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: const Color(0xFFB42318),
+          ),
+          icon: const Icon(Icons.delete_forever_outlined, size: 18),
+          label: const Text('Удалить навсегда'),
+        ),
+      );
+    }
+    return actions;
   }
 
   Widget _densitySection() {

@@ -167,4 +167,46 @@ void main() {
     final messages = await repository.listMessages('job-chat-2');
     expect(messages.single.attachment?.fileName, 'sample.png');
   });
+
+  testWidgets('administrator service chat is read only', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1024, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final repository = MockChatRepository(
+      currentUserId: 'admin-1',
+      currentNickname: 'admin_anna',
+      currentDisplayName: 'Анна',
+      threads: [
+        ChatThread(
+          id: 'service-chat-1',
+          title: 'Служебные уведомления',
+          kind: ChatThreadKind.service,
+          organizationId: 'organization-1',
+          updatedAt: DateTime.utc(2026, 10, 3),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChatScreen(
+            currentUserId: 'admin-1',
+            email: 'anna@example.com',
+            displayName: 'Анна',
+            nickname: 'admin_anna',
+            organizationName: 'Vesna',
+            chatRepository: repository,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('service-chat-read-only')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('chat-message-input')), findsNothing);
+    expect(find.text('служебный журнал администратора'), findsWidgets);
+  });
 }

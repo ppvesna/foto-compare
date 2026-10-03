@@ -327,6 +327,8 @@ class SupabaseChatRepository implements ChatRepository {
         return ChatThreadKind.job;
       case 'direct':
         return ChatThreadKind.direct;
+      case 'service':
+        return ChatThreadKind.service;
       default:
         return ChatThreadKind.personal;
     }

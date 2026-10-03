@@ -20,7 +20,7 @@ In particular, Architecture v2 does not require an immediate refactor of
 
 The implemented boundaries include `lib/features/auth`, `lib/features/protocols`,
 `lib/features/references`, the first `billing`, `organization`, customer-directory,
-and production workflow contracts, plus the initial `capabilities/storage` contract
+production, and print-proofing workflow contracts, plus the initial `capabilities/storage` contract
 and local settings adapter. The auth boundary currently owns editable current-profile
 data; sign-in, registration, and invitation completion now share an adaptive form UI
 with explicit password visibility controls. Forgotten-password recovery is isolated
@@ -194,6 +194,15 @@ without recreating the relationship. Pending invitations accept corrected email,
 nickname, and display name and can then be resent; active representatives keep their
 login identity while their display name is corrected. Customer links, job grants,
 chat messages, and history are unchanged.
+Migration `027` adds organization-owned print conditions and job assignments. Raw ICC
+files remain in a private organization Storage path and are available only to an
+employee with the inspection-specialist function. Customer RPCs return only
+published metadata explicitly assigned to a visible job; they never return the raw ICC
+path. A customer cannot create, verify, publish, or assign a print condition.
+Migration `028` adds archive-first lifecycle rules. The specialist archives and restores;
+an administrator receives an admin-only service-chat event and may permanently delete
+only an archived condition that has never been assigned. The owner is intentionally
+outside this production workflow, while assignment history prevents destructive cleanup.
 
 ## 7. Inspection domain
 
@@ -219,6 +228,23 @@ access policy. A narrow service now opens or updates the active server job from 
 legacy comparison screen without refactoring that screen. Customer identity is stored
 in new local protocols. Samples, remote protocol synchronization, and image assets
 remain separate future steps.
+
+### 7.1 Print proofing
+
+`print_proofing` owns a production condition, not the customer's artwork. A condition
+identifies the press, material, ink set, measurement condition, media white point, and
+the evidence used to validate it. Two evidence paths are allowed:
+
+- a quick camera path based on a Trimatrix chart, an enabled calibrated camera, and
+  separate validation patches with recorded Delta E;
+- a professional path importing an output-device CMYK ICC/ICM profile whose header is
+  validated before private upload.
+
+Both paths start as drafts. Publication requires evidence and a specialist decision;
+assignment to a production job is separate from publication. A representative sees
+only published conditions assigned to that representative's visible job. The current
+module intentionally stops before pixel rendering: a real soft-proof needs a
+color-managed renderer and must not be simulated by an uncalibrated visual filter.
 
 ## 8. Comparison pipeline
 

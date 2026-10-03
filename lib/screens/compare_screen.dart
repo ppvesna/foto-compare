@@ -61,7 +61,8 @@ class CompareScreen extends StatefulWidget {
   final ProtocolCloudRepository? protocolCloudRepository;
   final CheckUsageService? checkUsageService;
   final VoidCallback? onCheckUsageChanged;
-  // Retained for state-compatible hot reloads; app navigation lives in MainShell.
+  // App navigation lives in MainShell; the restricted role view uses this to
+  // send customer representatives back to their job chat.
   final ValueChanged<int>? onNavigate;
 
   const CompareScreen({
@@ -2276,6 +2277,10 @@ class _CompareScreenState extends State<CompareScreen>
   // ── Build ─────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
+    if (!widget.organizationAccess
+        .allows(OrganizationPermission.runInspection)) {
+      return _restrictedInspectionView();
+    }
     return Container(
       margin: const EdgeInsets.fromLTRB(7, 6, 7, 5),
       clipBehavior: Clip.antiAlias,
@@ -2296,6 +2301,88 @@ class _CompareScreenState extends State<CompareScreen>
           _workspaceCommandBar(),
           Expanded(child: _hudWorkbench()),
         ],
+      ),
+    );
+  }
+
+  Widget _restrictedInspectionView() {
+    return Container(
+      key: const ValueKey('comparison-role-restricted'),
+      margin: const EdgeInsets.fromLTRB(7, 6, 7, 5),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: AppTheme.appBackground,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppTheme.workspaceChromeLine),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x180E2A31),
+            blurRadius: 8,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(22, 24, 22, 22),
+            decoration: BoxDecoration(
+              color: AppTheme.surface,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: AppTheme.line),
+              boxShadow: AppTheme.shadowSubtle,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 54,
+                  height: 54,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFE3F1F2),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.forum_outlined,
+                    color: Color(0xFF1F747A),
+                    size: 27,
+                  ),
+                ),
+                const SizedBox(height: 15),
+                const Text(
+                  'Проверку выполняет производственная команда',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                    color: AppTheme.graphite,
+                  ),
+                ),
+                const SizedBox(height: 9),
+                Text(
+                  'Представитель заказчика не загружает эталоны и не запускает сравнение. '
+                  'Готовые протоколы и материалы доступны в чате работы.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 12,
+                    height: 1.45,
+                    color: Colors.blueGrey.shade700,
+                  ),
+                ),
+                if (widget.onNavigate != null) ...[
+                  const SizedBox(height: 18),
+                  FilledButton.icon(
+                    key: const ValueKey('comparison-open-chat'),
+                    onPressed: () => widget.onNavigate!(2),
+                    icon: const Icon(Icons.chat_bubble_outline, size: 18),
+                    label: const Text('Перейти в чат'),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

@@ -17,6 +17,7 @@ import 'features/auth/auth.dart';
 import 'features/billing/billing.dart';
 import 'features/chat/chat.dart';
 import 'features/organization/organization.dart';
+import 'features/print_proofing/print_proofing.dart';
 import 'features/protocols/protocols.dart';
 import 'services/sync_service.dart';
 import 'services/browser_auth_url.dart';
@@ -571,6 +572,7 @@ class _MainShellState extends State<MainShell> {
         organizationAccess: _organizationAccess,
         protocolCloudRepository: _protocolCloudRepository,
         checkUsageService: _checkUsageService,
+        onNavigate: _onTab,
         onCheckUsageChanged: () {
           if (mounted) setState(() => _checkUsageRevision++);
         },
@@ -590,6 +592,9 @@ class _MainShellState extends State<MainShell> {
         organizationAccess: _organizationAccess,
         initialSection: _settingsInitialSection,
         cloudStorage: _cloudStorage,
+        printConditionService: SupabasePrintConditionService(
+          Supabase.instance.client,
+        ),
         checkUsageService: _checkUsageService,
         checkUsageRevision: _checkUsageRevision,
         onAccessChanged: _loadAccess,

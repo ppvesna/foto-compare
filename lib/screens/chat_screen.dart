@@ -622,6 +622,8 @@ class _ChatScreenState extends State<ChatScreen> {
         return 'обсуждение работы и протоколов';
       case ChatThreadKind.direct:
         return 'личный диалог';
+      case ChatThreadKind.service:
+        return 'служебный журнал администратора';
       case ChatThreadKind.personal:
         return 'видно только вам';
     }
@@ -635,6 +637,8 @@ class _ChatScreenState extends State<ChatScreen> {
         return const Color(0xFF0EA5A4);
       case ChatThreadKind.direct:
         return const Color(0xFF16A34A);
+      case ChatThreadKind.service:
+        return const Color(0xFFC2410C);
       case ChatThreadKind.personal:
         return const Color(0xFF64748B);
     }
@@ -704,7 +708,23 @@ class _ChatScreenState extends State<ChatScreen> {
                       ),
                     ),
         ),
-        _composer(),
+        if (thread.kind == ChatThreadKind.service)
+          Container(
+            key: const ValueKey('service-chat-read-only'),
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(14, 9, 14, 10),
+            decoration: const BoxDecoration(
+              color: AppTheme.surfaceMuted,
+              border: Border(top: BorderSide(color: AppTheme.line)),
+            ),
+            child: const Text(
+              'Только служебные события · ответы не требуются',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 10, color: Colors.black54),
+            ),
+          )
+        else
+          _composer(),
       ]),
     );
   }

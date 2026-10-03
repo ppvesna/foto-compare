@@ -41,8 +41,18 @@ Rule: every step must preserve the working application and be independently reve
   idempotent server counter shared by an organization plan. The live test workspace
   recorded a fresh completed check after the UTC reset; both an administrator and the
   owner see the same shared value `1/500`.
+- Migration `027` and the `print_proofing` module establish organization-owned print
+  conditions with two evidence paths: calibrated-camera drafts and validated output
+  CMYK ICC/ICM import. Raw profiles are private; a representative can receive only
+  published metadata assigned to a visible job. Real color-managed rendering in job
+  chat remains a later, explicit adapter step and is not emulated with a visual filter.
+- Migration `028` adds archive-first profile lifecycle and separates duties: the
+  inspection specialist changes profile state, the administrator receives a private
+  service-chat audit event and may permanently delete only never-used archive entries,
+  and the owner remains outside this production process.
 - The `vesna-test` employee and customer job sharing/revocation gate has passed. The
-  next release task is to audit remote deployment state and stabilize the branch.
+  remote ledger is still empty because historical migrations were applied pointwise;
+  the next release task is to repair/audit that ledger before production deployment.
 
 ## Migration policy
 
@@ -197,6 +207,17 @@ participants, RPCs, and RLS and is available in the test environment. Customer r
 and revocation have passed the multi-account manual test. Remaining production checks
 include foreign-work isolation with a second fixture and the complete
 `CUSTOMER_WORKFLOW_V1_TEST_PLAN.md`.
+
+Migration `027` adds an independently deployable print-condition slice. It has been
+applied pointwise to the test environment and verified by schema lint. Draft creation
+and ICC upload are connected; quick characterization, publish/assign UI, and the actual
+soft-proof renderer stay separate so incomplete calibration cannot be presented as a
+customer-visible result.
+
+Migration `028` is also applied pointwise to the test environment. It adds reversible
+archive/restore state, immutable usage history, administrator-only permanent cleanup,
+and a service chat visible only to administrators. Manual multi-role verification is the
+next step.
 
 ## Phase 4: Inspection boundary
 

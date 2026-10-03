@@ -67,6 +67,47 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('customer representative sees chat handoff, not workflow',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(390, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    SharedPreferences.setMockInitialValues({});
+    int? destination;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CompareScreen(
+            entitlements: EntitlementSnapshot.forPlan(PlanTier.pro),
+            organizationAccess: OrganizationAccess.forRole(
+              organizationId: 'organization-1',
+              organizationName: 'Vesna',
+              role: OrganizationRole.customer,
+            ),
+            onNavigate: (value) => destination = value,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('comparison-role-restricted')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('current-workflow-action')),
+      findsNothing,
+    );
+    expect(find.text('Указать работу'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('comparison-open-chat')));
+    await tester.pump();
+
+    expect(destination, 2);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('overflow menu opens the full inspector on demand',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(590, 700));

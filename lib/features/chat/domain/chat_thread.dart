@@ -3,6 +3,7 @@ enum ChatThreadKind {
   organization,
   job,
   direct,
+  service,
 }
 
 class ChatThread {

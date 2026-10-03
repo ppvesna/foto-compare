@@ -18,6 +18,7 @@ lib/
     inspection/
     references/
     production/
+    print_proofing/
     protocols/
     reports/
     billing/
@@ -96,6 +97,13 @@ lib/features/production/
   infrastructure/supabase_production_job_service.dart
   testing/mock_production_job_service.dart
   production.dart
+
+lib/features/print_proofing/
+  domain/icc_profile_inspector.dart
+  domain/print_condition.dart
+  domain/print_condition_service.dart
+  infrastructure/supabase_print_condition_service.dart
+  print_proofing.dart
 
 lib/capabilities/storage/
   domain/cloud_storage.dart
@@ -285,6 +293,27 @@ Public contracts: `ProtocolRepository`, `ProtocolFactory`, `ProtocolReader`.
 
 Dependencies: storage and sync. It accepts results from Inspection but does not import
 Inspection presentation.
+
+### print_proofing
+
+Responsibilities: organization-owned press/material/ink conditions, evidence for quick
+camera characterization or professional ICC import, publication state, and assignment
+to production jobs.
+
+Public contracts: `PrintCondition`, `PrintConditionService`,
+`IccProfileInspector`.
+
+Dependencies: organization identity and permissions, production job access, private
+storage, calibrated capture, and a future color-managed renderer. The module does not
+own the customer's source artwork and does not run the production inspection engine.
+
+Current foundation: migrations `027–028`, typed domain models, structural validation for
+output CMYK ICC/ICM files, a Supabase adapter, and the Settings section are connected.
+Only an employee with the inspection-specialist function creates, archives, and restores
+profiles. An administrator receives archive events in an admin-only service chat and may
+permanently remove an unused archived profile; owner and customer are excluded from that
+production workflow. Customer-facing pixel rendering and chat attachment actions remain disabled
+until a real color-management adapter is available.
 
 ### reports
 
