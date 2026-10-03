@@ -58,12 +58,14 @@ class _ChatScreenState extends State<ChatScreen> {
   List<ChatThread> _serverThreads = const [];
   List<ChatMessage> _serverMessages = const [];
   bool _serverChatsLoading = false;
+  bool _serverThreadsRefreshing = false;
   bool _serverMessagesLoading = false;
   bool _sendingMessage = false;
   bool _sendingAttachment = false;
   bool _customerAccessUpdating = false;
   String? _serverChatError;
   StreamSubscription<List<ChatMessage>>? _messageSubscription;
+  StreamSubscription<void>? _threadSubscription;
 
   bool get _usesServerChat => widget.chatRepository != null;
 
@@ -265,6 +267,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     if (oldWidget.chatRepository != widget.chatRepository) {
       _messageSubscription?.cancel();
+      _threadSubscription?.cancel();
       _loadServerChats();
     }
   }
@@ -275,6 +278,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollCtrl.dispose();
     _chatSearchCtrl.dispose();
     _messageSubscription?.cancel();
+    _threadSubscription?.cancel();
     super.dispose();
   }
 
@@ -368,6 +372,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 ? preservedIndex
                 : 0;
       });
+      await _watchServerThreads();
       await _loadServerMessages();
     } catch (_) {
       if (!mounted) return;
@@ -379,6 +384,44 @@ class _ChatScreenState extends State<ChatScreen> {
       });
     } finally {
       if (mounted) setState(() => _serverChatsLoading = false);
+    }
+  }
+
+  Future<void> _watchServerThreads() async {
+    await _threadSubscription?.cancel();
+    final repository = widget.chatRepository;
+    if (repository == null || !mounted) return;
+    _threadSubscription = repository.watchThreadChanges().listen(
+          (_) => unawaited(_refreshServerThreads()),
+        );
+  }
+
+  Future<void> _refreshServerThreads() async {
+    final repository = widget.chatRepository;
+    if (repository == null || _serverChatsLoading || _serverThreadsRefreshing) {
+      return;
+    }
+    _serverThreadsRefreshing = true;
+    final activeThreadId = _activeServerThread?.id;
+    try {
+      final threads = await repository.listThreads();
+      if (!mounted) return;
+      final preservedIndex = activeThreadId == null
+          ? -1
+          : threads.indexWhere((thread) => thread.id == activeThreadId);
+      final activeThreadChanged = preservedIndex < 0 && threads.isNotEmpty;
+      setState(() {
+        _serverThreads = threads;
+        _activeChat = preservedIndex >= 0 ? preservedIndex : 0;
+      });
+      if (activeThreadChanged) {
+        await _messageSubscription?.cancel();
+        await _loadServerMessages();
+      }
+    } catch (_) {
+      // The open chat remains usable; the next Realtime event retries the list.
+    } finally {
+      _serverThreadsRefreshing = false;
     }
   }
 

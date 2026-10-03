@@ -19,6 +19,20 @@ CREATE INDEX IF NOT EXISTS chat_messages_unread_idx
 ON chat_messages(group_id, created_at DESC)
 WHERE NOT is_deleted;
 
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime'
+      AND schemaname = 'public'
+      AND tablename = 'chat_groups'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE chat_groups;
+  END IF;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION mark_chat_thread_read_v1(
   target_thread UUID
 )

@@ -15,6 +15,8 @@ class MockChatRepository implements ChatRepository {
   final Map<String, List<ChatMessage>> messages;
   final List<CustomerShareCandidate> customerShareCandidates;
   final Map<String, StreamController<List<ChatMessage>>> _controllers = {};
+  final StreamController<void> _threadChangesController =
+      StreamController<void>.broadcast();
   final Map<String, Uint8List> _attachmentBytes = {};
   int _messageSequence = 0;
 
@@ -48,6 +50,11 @@ class MockChatRepository implements ChatRepository {
   Future<List<ChatThread>> listThreads() async {
     return List.unmodifiable(threads);
   }
+
+  @override
+  Stream<void> watchThreadChanges() => _threadChangesController.stream;
+
+  void notifyThreadChanged() => _threadChangesController.add(null);
 
   @override
   Future<void> markThreadRead(String threadId) async {
@@ -85,6 +92,7 @@ class MockChatRepository implements ChatRepository {
         customerShared: shared,
         canManageCustomerAccess: true,
       );
+      notifyThreadChanged();
       return;
     }
     if (!shared) return;
@@ -100,6 +108,7 @@ class MockChatRepository implements ChatRepository {
     );
     threads.add(thread);
     messages.putIfAbsent(thread.id, () => []);
+    notifyThreadChanged();
   }
 
   @override
@@ -150,6 +159,7 @@ class MockChatRepository implements ChatRepository {
         updatedAt: message.createdAt,
         unreadCount: 0,
       );
+      notifyThreadChanged();
     }
     return message;
   }
@@ -192,6 +202,14 @@ class MockChatRepository implements ChatRepository {
     );
     messages.putIfAbsent(threadId, () => []).add(message);
     _controllers[threadId]?.add(List.unmodifiable(messages[threadId]!));
+    final threadIndex = threads.indexWhere((item) => item.id == threadId);
+    if (threadIndex >= 0) {
+      threads[threadIndex] = threads[threadIndex].copyWith(
+        updatedAt: message.createdAt,
+        unreadCount: 0,
+      );
+      notifyThreadChanged();
+    }
     return message;
   }
 

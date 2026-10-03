@@ -10,6 +10,8 @@ abstract interface class ChatRepository {
 
   Future<List<ChatThread>> listThreads();
 
+  Stream<void> watchThreadChanges();
+
   Future<void> markThreadRead(String threadId);
 
   Future<List<CustomerShareCandidate>> listCustomerShareCandidates();

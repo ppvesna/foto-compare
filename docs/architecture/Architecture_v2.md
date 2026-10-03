@@ -206,7 +206,8 @@ outside this production workflow, while assignment history prevents destructive 
 Migration `029` adds per-user chat read cursors and enriches accessible thread rows with
 job status, customer name, and unread count. The client keeps the ordinary team and
 personal threads visible with active work, moves completed/archived jobs to a separate
-view, and searches every accessible thread without broadening its RLS boundary.
+view, and searches every accessible thread without broadening its RLS boundary. Group
+updates are published through Realtime so inactive-thread counters refresh live.
 
 ## 7. Inspection domain
 

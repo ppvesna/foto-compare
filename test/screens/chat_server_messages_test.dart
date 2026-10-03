@@ -309,4 +309,56 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
     expect(find.text('Работа № VESNA-ARCHIVE-003'), findsWidgets);
   });
+
+  testWidgets('chat list refreshes when another thread changes',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1024, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final repository = MockChatRepository(
+      currentUserId: 'admin-1',
+      threads: [
+        ChatThread(
+          id: 'personal-1',
+          title: 'Личные заметки',
+          kind: ChatThreadKind.personal,
+          updatedAt: DateTime.utc(2026, 10, 3),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChatScreen(
+            currentUserId: 'admin-1',
+            email: 'anna@example.com',
+            displayName: 'Анна',
+            nickname: 'admin_anna',
+            organizationName: 'Vesna',
+            chatRepository: repository,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    repository.threads.add(
+      ChatThread(
+        id: 'job-live',
+        title: 'Работа № VESNA-LIVE-004',
+        kind: ChatThreadKind.job,
+        organizationId: 'organization-1',
+        jobId: 'job-live',
+        jobStatus: 'active',
+        unreadCount: 1,
+        updatedAt: DateTime.utc(2026, 10, 3, 13),
+      ),
+    );
+    repository.notifyThreadChanged();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('Работа № VESNA-LIVE-004'), findsOneWidget);
+    expect(find.text('Непрочитанные · 1'), findsOneWidget);
+  });
 }

@@ -61,6 +61,7 @@ void main() {
     ).readAsString();
 
     expect(sql, contains('CREATE TABLE IF NOT EXISTS chat_thread_reads'));
+    expect(sql, contains('ALTER PUBLICATION supabase_realtime ADD TABLE chat_groups'));
     expect(sql, contains('mark_chat_thread_read_v1'));
     expect(sql, contains('job_status TEXT'));
     expect(sql, contains('customer_name TEXT'));

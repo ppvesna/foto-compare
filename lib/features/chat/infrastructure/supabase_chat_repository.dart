@@ -41,6 +41,15 @@ class SupabaseChatRepository implements ChatRepository {
   }
 
   @override
+  Stream<void> watchThreadChanges() {
+    return client
+        .from('chat_groups')
+        .stream(primaryKey: ['id'])
+        .skip(1)
+        .map((_) {});
+  }
+
+  @override
   Future<void> markThreadRead(String threadId) async {
     await client.rpc(
       'mark_chat_thread_read_v1',
