@@ -1,5 +1,6 @@
 /// Схема базы данных Photo Compare
 /// SQLite (локально) + PostgreSQL (сервер, та же структура)
+library;
 
 class DbSchema {
   static const int version = 2;

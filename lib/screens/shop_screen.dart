@@ -109,7 +109,7 @@ class _ShopScreenState extends State<ShopScreen> {
       Padding(
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
         child: Row(children: [
-          Expanded(child: XpInput(placeholder: '🔍 Поиск...')),
+          const Expanded(child: XpInput(placeholder: '🔍 Поиск...')),
           const SizedBox(width: 6),
           XpBtn(label: 'Найти', onPressed: () {}),
         ]),
@@ -245,8 +245,6 @@ class _ShopScreenState extends State<ShopScreen> {
   }
 }
 
-
 // ════════════════════════════════════════════════════
 // SETTINGS SCREEN
 // ════════════════════════════════════════════════════
-

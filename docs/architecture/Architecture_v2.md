@@ -232,9 +232,12 @@ those conversations by intent. Migration `033` renders the two work audiences as
 chronological staff timeline with an explicit audience selector. Their histories,
 attachments and permissions remain separate; an external customer sees only customer
 messages, and only an administrator can connect or disconnect that customer.
-Migration `034` makes the production register the operator's route card: create and
-assign a work there, continue the next action, view completed work, and inspect attempt
-history. Team administration belongs to organization settings. Chat remains a
+Migration `034` provides the production data and history contracts. The current client
+presents them as a deliberately small inspection register: one search, active/archive,
+and a role-aware `⋮` menu. Migration `038` narrows new-work entry to an employee with
+the inspection-specialist function. Owner and administrator supervise the organization
+but do not enter inspection data. Team administration belongs to organization settings.
+Chat remains a
 communication surface whose filters, composer and `+` actions depend on the selected
 thread and the member's function. The organization service thread is writable by
 organization members and is never exposed to customer representatives.
@@ -262,21 +265,14 @@ protocol records the comparison engine version, thresholds, color settings,
 calibration data, source asset IDs, device context, operator, and timestamps. This
 makes old results interpretable after the algorithm evolves.
 
-Current implementation note: the `production` domain defines `ProductionJob`, stable
-job IDs, participants, job functions, numbered batches, physical stacks/rolls,
-inspection attempts, and the effective job access policy. The legacy comparison screen
-records attempts against the selected physical unit and asks the employee for a final
-`approved` or `blocked` decision. Customer identity is stored in local protocols.
-Samples, full remote protocol synchronization, and original image assets remain
+Current implementation note: the `production` domain still defines stable job IDs,
+participants, compatibility batches/units, inspection attempts, and effective access.
+The user-facing unit is now simply a sample. The legacy batch hierarchy remains behind
+the service boundary for existing rows and must not leak back into the main workflow.
+The comparison screen records another attempt for the selected sample and leaves the
+final `passes / does not pass` decision to the employee. Customer identity is stored in
+local protocols; full remote protocol synchronization and original image assets remain
 separate future steps.
-
-Batch identity is a production invariant, not a presentation preference. A batch fixes
-the responsible employee and its production conditions. Any change of employee, press,
-material, format or roll width, inks, or another production condition creates the next
-numbered batch before work continues. An existing batch is never reassigned or rewritten
-after such a change. A new stack/roll belongs to the current batch only while all fixed
-conditions and the employee remain unchanged. Rechecking the same physical unit creates
-a new inspection attempt, not a batch.
 
 ### 7.1 Print proofing
 

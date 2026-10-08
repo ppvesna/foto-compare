@@ -20,12 +20,12 @@ class AuthApiService {
 
     try {
       final res = await ApiService().post('/auth/login', {
-        'email':    email,
+        'email': email,
         'password': password,
       });
 
       final token = res['token'] as String?;
-      final user  = res['user']  as Map<String, dynamic>?;
+      final user = res['user'] as Map<String, dynamic>?;
 
       if (token == null || user == null) {
         return AuthResult.error('Неверный ответ сервера');
@@ -37,7 +37,9 @@ class AuthApiService {
 
       return AuthResult.success(user);
     } on ApiException catch (e) {
-      if (e.isUnauthorized) return AuthResult.error('Неверный email или пароль');
+      if (e.isUnauthorized) {
+        return AuthResult.error('Неверный email или пароль');
+      }
       return AuthResult.error('Ошибка сервера: ${e.statusCode}');
     } catch (e) {
       return AuthResult.error('Нет соединения с сервером');
@@ -55,13 +57,13 @@ class AuthApiService {
 
     try {
       final res = await ApiService().post('/auth/register', {
-        'email':        email,
-        'password':     password,
+        'email': email,
+        'password': password,
         'display_name': name,
       });
 
       final token = res['token'] as String?;
-      final user  = res['user']  as Map<String, dynamic>?;
+      final user = res['user'] as Map<String, dynamic>?;
 
       if (token == null || user == null) {
         return AuthResult.error('Неверный ответ сервера');
@@ -73,7 +75,9 @@ class AuthApiService {
 
       return AuthResult.success(user);
     } on ApiException catch (e) {
-      if (e.statusCode == 409) return AuthResult.error('Email уже зарегистрирован');
+      if (e.statusCode == 409) {
+        return AuthResult.error('Email уже зарегистрирован');
+      }
       return AuthResult.error('Ошибка регистрации: ${e.statusCode}');
     } catch (e) {
       return AuthResult.error('Нет соединения с сервером');
@@ -113,7 +117,10 @@ class AuthApiService {
     try {
       final res = await ApiService().post('/auth/refresh', {});
       final token = res['token'] as String?;
-      if (token != null) { ApiService().setToken(token); return true; }
+      if (token != null) {
+        ApiService().setToken(token);
+        return true;
+      }
       return false;
     } catch (_) {
       return false;
@@ -134,13 +141,13 @@ class AuthApiService {
 
   AuthResult _guestResult() {
     _currentUser = {
-      'id':           'guest_local',
-      'email':        'guest@local',
+      'id': 'guest_local',
+      'email': 'guest@local',
       'display_name': 'Гость',
-      'is_premium':   0,
-      'plan':         'free',
-      'created_at':   DateTime.now().toIso8601String(),
-      'updated_at':   DateTime.now().toIso8601String(),
+      'is_premium': 0,
+      'plan': 'free',
+      'created_at': DateTime.now().toIso8601String(),
+      'updated_at': DateTime.now().toIso8601String(),
     };
     return AuthResult.success(_currentUser!);
   }

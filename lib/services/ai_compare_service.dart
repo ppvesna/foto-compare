@@ -76,16 +76,15 @@ class AiCompareService {
     return Uint8List.fromList(img.encodeJpg(resized, quality: 88));
   }
 
-  static Future<AiAnalysis> analyze(
-      Uint8List ref, Uint8List cmp) async {
+  static Future<AiAnalysis> analyze(Uint8List ref, Uint8List cmp) async {
     final refData = _prepare(ref);
     final cmpData = _prepare(cmp);
 
     final response = await Supabase.instance.client.functions.invoke(
       'analyze-print',
       body: {
-        'refImage':     base64Encode(refData),
-        'cmpImage':     base64Encode(cmpData),
+        'refImage': base64Encode(refData),
+        'cmpImage': base64Encode(cmpData),
         'refMediaType': 'image/jpeg',
         'cmpMediaType': 'image/jpeg',
       },
@@ -107,11 +106,11 @@ class AiCompareService {
     final response = await Supabase.instance.client.functions.invoke(
       'analyze-print',
       body: {
-        'refImage':     base64Encode(refData),
-        'cmpImage':     base64Encode(refData), // тот же снимок
+        'refImage': base64Encode(refData),
+        'cmpImage': base64Encode(refData), // тот же снимок
         'refMediaType': 'image/jpeg',
         'cmpMediaType': 'image/jpeg',
-        'mode':         'reference_quality',   // подсказка для prompt
+        'mode': 'reference_quality', // подсказка для prompt
       },
     );
     if (response.status != 200) {

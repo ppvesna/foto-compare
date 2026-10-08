@@ -286,27 +286,23 @@ admin can access all organization jobs; employees and customers require an expli
 participant record.
 
 Migration `030` introduced the production workflow boundary and scalable work register.
-Migration `031` replaces its controller-centric UI with the physical hierarchy
-`work → batch → stack/roll → inspection → attempt`. `ProductionWorkflowService`
-lists accessible works, loads batches and units, creates the next numbered batch,
-records comparison attempts, and finalizes a unit as approved or blocked. Any assigned
-internal employee may block a unit; only an administrator may remove an active block.
-An unresolved block prevents work completion. The responsible manager or an
-administrator completes a work, and an administrator may restore it from the archive.
-Owner remains read-only for the internal production process. A customer sees only
-`В работе / Выполнен`, without batches, blocks, attempt history, or internal chat.
+Migration `031` keeps the compatible server hierarchy
+`work → batch → stack/roll → inspection → attempt`. The application no longer
+exposes that production hierarchy as its primary UI: Trimatrix is an inspection tool,
+not the customer's production CRM. The presentation calls the inspected item a
+`sample`; repeated comparisons append attempts and preserve earlier results. Existing
+batch/unit records remain readable so deployed data and protocol links are not lost.
 
-The batch boundary is immutable: changing the employee or any production condition
-(press, material, format/roll width, inks, or another fixed condition) must create a new
-numbered batch. The previous batch is retained unchanged. Only another physical
-stack/roll under the same employee and identical conditions stays in that batch;
-another comparison of the same unit is an inspection attempt.
+The current work register has one search across active and archived records, the two
+views `Continue / Archive`, and a role-dependent overflow menu on each row. Opening a
+comparison never reassigns its work. A new work is entered only by an employee with the
+inspection-specialist function; owner and administrator remain outside inspection-data
+entry. The external customer does not see this register and receives only messages and
+files deliberately sent through the customer chat.
 
-Migration `034` exposes this boundary as one route card with four views:
-`Continue / New work / Completed / Inspection history`. New work records the customer
-and responsible employee before batch 1 is created. The client directs a different
-employee to a new batch, while the RPC rejects adding a stack or roll to another
-employee's batch. Comparison opened from the route card receives a fixed job context.
+The compatibility batch invariant is still enforced by the database for old clients
+and records. New UI code must not surface batch, stack, or roll administration again
+without a separate product decision.
 
 Relevant files:
 
@@ -315,6 +311,7 @@ Relevant files:
 - `lib/screens/works_screen.dart`
 - `supabase/migrations/031_production_batches_inspections_v1.sql`
 - `supabase/migrations/034_work_hub_and_contextual_chat_v1.sql`
+- `supabase/migrations/038_inspection_specialist_work_creation_v1.sql`
 
 The job has separate internal and customer chat channels. Their attachments use
 different private Storage scopes so customer access cannot cross into production

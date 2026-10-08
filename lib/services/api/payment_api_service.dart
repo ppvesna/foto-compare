@@ -14,44 +14,44 @@ class PaymentApiService {
 
   static const Map<String, Product> products = {
     'premium_monthly': Product(
-      id:          'premium_monthly',
-      name:        'Premium Pro',
+      id: 'premium_monthly',
+      name: 'Premium Pro',
       description: 'Полный доступ, AI анализ, без ограничений',
-      price:       9.99,
-      currency:    'USD',
-      interval:    'month',
+      price: 9.99,
+      currency: 'USD',
+      interval: 'month',
     ),
     'ai_monthly': Product(
-      id:          'ai_monthly',
-      name:        'AI Анализ',
+      id: 'ai_monthly',
+      name: 'AI Анализ',
       description: '50 AI анализов в месяц',
-      price:       4.99,
-      currency:    'USD',
-      interval:    'month',
+      price: 4.99,
+      currency: 'USD',
+      interval: 'month',
     ),
     'server_monthly': Product(
-      id:          'server_monthly',
-      name:        'Серверная обработка',
+      id: 'server_monthly',
+      name: 'Серверная обработка',
       description: 'До 500 фото в месяц на сервере',
-      price:       3.99,
-      currency:    'USD',
-      interval:    'month',
+      price: 3.99,
+      currency: 'USD',
+      interval: 'month',
     ),
     'api_monthly': Product(
-      id:          'api_monthly',
-      name:        'API Доступ',
+      id: 'api_monthly',
+      name: 'API Доступ',
       description: '10,000 запросов в месяц',
-      price:       19.99,
-      currency:    'USD',
-      interval:    'month',
+      price: 19.99,
+      currency: 'USD',
+      interval: 'month',
     ),
     'pack_100': Product(
-      id:          'pack_100',
-      name:        'Пакет 100 сравнений',
+      id: 'pack_100',
+      name: 'Пакет 100 сравнений',
       description: '100 дополнительных сравнений',
-      price:       2.99,
-      currency:    'USD',
-      interval:    'once',
+      price: 2.99,
+      currency: 'USD',
+      interval: 'once',
     ),
   };
 
@@ -71,7 +71,7 @@ class PaymentApiService {
       // 1. Создаём PaymentIntent на сервере
       final intent = await ApiService().post('/payments/create-intent', {
         'product_id': productId,
-        'user_id':    userId,
+        'user_id': userId,
       });
 
       final clientSecret = intent['client_secret'] as String?;
@@ -91,26 +91,25 @@ class PaymentApiService {
       // 3. Подтверждаем на сервере
       final confirm = await ApiService().post('/payments/confirm', {
         'payment_intent_id': intent['payment_intent_id'],
-        'user_id':           userId,
+        'user_id': userId,
       });
 
       // 4. Сохраняем локально
       final purchase = {
-        'id':               confirm['purchase_id'] ?? '${userId}_$productId',
-        'user_id':          userId,
-        'product_id':       productId,
-        'product_name':     product.name,
-        'price':            product.price,
-        'currency':         product.currency,
-        'status':           'active',
+        'id': confirm['purchase_id'] ?? '${userId}_$productId',
+        'user_id': userId,
+        'product_id': productId,
+        'product_name': product.name,
+        'price': product.price,
+        'currency': product.currency,
+        'status': 'active',
         'stripe_payment_id': confirm['payment_intent_id'],
-        'expires_at':       _expiresAt(product.interval),
-        'created_at':       DateTime.now().toIso8601String(),
+        'expires_at': _expiresAt(product.interval),
+        'created_at': DateTime.now().toIso8601String(),
       };
       await LocalDatabase().savePurchase(purchase);
 
       return PaymentResult.success(purchase);
-
     } on ApiException catch (e) {
       return PaymentResult.error('Ошибка платежа: ${e.statusCode}');
     } catch (e) {
@@ -123,8 +122,8 @@ class PaymentApiService {
   Future<List<Map<String, dynamic>>> restorePurchases(String userId) async {
     if (!isEnabled) return [];
     try {
-      final res = await ApiService().get('/payments/purchases',
-          params: {'user_id': userId});
+      final res = await ApiService()
+          .get('/payments/purchases', params: {'user_id': userId});
       final items = res['items'] as List? ?? [];
       for (final item in items) {
         await LocalDatabase().savePurchase(item as Map<String, dynamic>);
@@ -145,9 +144,12 @@ class PaymentApiService {
 
   String? _expiresAt(String interval) {
     switch (interval) {
-      case 'month': return DateTime.now().add(const Duration(days: 31)).toIso8601String();
-      case 'year':  return DateTime.now().add(const Duration(days: 365)).toIso8601String();
-      default: return null; // разовая покупка не истекает
+      case 'month':
+        return DateTime.now().add(const Duration(days: 31)).toIso8601String();
+      case 'year':
+        return DateTime.now().add(const Duration(days: 365)).toIso8601String();
+      default:
+        return null; // разовая покупка не истекает
     }
   }
 }
@@ -171,9 +173,9 @@ class Product {
 }
 
 class PaymentResult {
-  final bool                      success;
-  final Map<String, dynamic>?     purchase;
-  final String?                   error;
+  final bool success;
+  final Map<String, dynamic>? purchase;
+  final String? error;
 
   const PaymentResult._({required this.success, this.purchase, this.error});
 

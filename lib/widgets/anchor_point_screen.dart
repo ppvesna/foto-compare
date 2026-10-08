@@ -11,7 +11,7 @@ import 'package:flutter/gestures.dart';
 class AnchorPointScreen extends StatefulWidget {
   final Uint8List imageBytes;
   final String title;
-  final List<Offset>? initialPoints;   // image-pixel coords
+  final List<Offset>? initialPoints; // image-pixel coords
   final List<Offset>? predictedPoints; // normalized 0..1 (for AUTO MODE)
   final int minPoints;
   final int maxPoints;
@@ -47,8 +47,6 @@ class _AnchorPointScreenState extends State<AnchorPointScreen> {
   Offset? _scaleFocalPoint;
   static const double _minZoom = 1.0;
   static const double _maxZoom = 6.0;
-
-  bool get _autoMode => widget.predictedPoints != null && _points.isEmpty;
 
   @override
   void initState() {
@@ -125,19 +123,27 @@ class _AnchorPointScreenState extends State<AnchorPointScreen> {
     setState(() {
       _pan = _clampPan(
         _pan + (focal - center - _pan) * (1 - newZoom / _zoom),
-        newZoom, widgetSize,
+        newZoom,
+        widgetSize,
       );
       _zoom = newZoom;
     });
   }
 
-  void _resetView() => setState(() { _zoom = 1.0; _pan = Offset.zero; });
+  void _resetView() => setState(() {
+        _zoom = 1.0;
+        _pan = Offset.zero;
+      });
 
   void _onTapDown(TapDownDetails d, Size widgetSize) {
     if (_imageSize == Size.zero) return;
     final imgPt = _toImageCoords(d.localPosition, widgetSize);
-    if (imgPt.dx < 0 || imgPt.dy < 0 ||
-        imgPt.dx > _imageSize.width || imgPt.dy > _imageSize.height) return;
+    if (imgPt.dx < 0 ||
+        imgPt.dy < 0 ||
+        imgPt.dx > _imageSize.width ||
+        imgPt.dy > _imageSize.height) {
+      return;
+    }
 
     // Tap near existing point → remove
     for (int i = 0; i < _points.length; i++) {
@@ -188,7 +194,8 @@ class _AnchorPointScreenState extends State<AnchorPointScreen> {
         (1 - newZoom / _scaleStartZoom);
     final panFromDrag = d.localFocalPoint - _scaleFocalPoint!;
     setState(() {
-      _pan = _clampPan(_scaleStartPan + panFromDrag + panFromZoom, newZoom, widgetSize);
+      _pan = _clampPan(
+          _scaleStartPan + panFromDrag + panFromZoom, newZoom, widgetSize);
       _zoom = newZoom;
     });
   }
@@ -210,8 +217,11 @@ class _AnchorPointScreenState extends State<AnchorPointScreen> {
         actions: [
           if (_points.isNotEmpty)
             TextButton(
-              onPressed: () { setState(() => _points.clear()); },
-              child: const Text('Сброс', style: TextStyle(color: Colors.orange)),
+              onPressed: () {
+                setState(() => _points.clear());
+              },
+              child:
+                  const Text('Сброс', style: TextStyle(color: Colors.orange)),
             ),
           TextButton(
             onPressed: canConfirm
@@ -230,7 +240,8 @@ class _AnchorPointScreenState extends State<AnchorPointScreen> {
       body: _uiImage == null
           ? const Center(child: CircularProgressIndicator())
           : LayoutBuilder(builder: (ctx, constraints) {
-              final widgetSize = Size(constraints.maxWidth, constraints.maxHeight);
+              final widgetSize =
+                  Size(constraints.maxWidth, constraints.maxHeight);
               return Stack(children: [
                 Listener(
                   onPointerSignal: (event) {
@@ -268,23 +279,31 @@ class _AnchorPointScreenState extends State<AnchorPointScreen> {
                   right: 8,
                   top: 8,
                   child: Column(children: [
-                    _zoomBtn('＋', () => _zoomAt(
-                        Offset(widgetSize.width / 2, widgetSize.height / 2),
-                        1.25, widgetSize)),
+                    _zoomBtn(
+                        '＋',
+                        () => _zoomAt(
+                            Offset(widgetSize.width / 2, widgetSize.height / 2),
+                            1.25,
+                            widgetSize)),
                     const SizedBox(height: 4),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 3),
                       decoration: BoxDecoration(
                         color: Colors.black54,
                         borderRadius: BorderRadius.circular(4),
                       ),
                       child: Text('${(_zoom * 100).round()}%',
-                          style: const TextStyle(color: Colors.white, fontSize: 10)),
+                          style: const TextStyle(
+                              color: Colors.white, fontSize: 10)),
                     ),
                     const SizedBox(height: 4),
-                    _zoomBtn('－', () => _zoomAt(
-                        Offset(widgetSize.width / 2, widgetSize.height / 2),
-                        0.8, widgetSize)),
+                    _zoomBtn(
+                        '－',
+                        () => _zoomAt(
+                            Offset(widgetSize.width / 2, widgetSize.height / 2),
+                            0.8,
+                            widgetSize)),
                     const SizedBox(height: 4),
                     _zoomBtn('⟲', _resetView),
                   ]),
@@ -298,9 +317,10 @@ class _AnchorPointScreenState extends State<AnchorPointScreen> {
                     right: 0,
                     child: Center(
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 4),
                         decoration: BoxDecoration(
-                          color: Colors.blue.withOpacity(0.85),
+                          color: Colors.blue.withValues(alpha: 0.85),
                           borderRadius: BorderRadius.circular(6),
                         ),
                         child: const Text(
@@ -318,17 +338,16 @@ class _AnchorPointScreenState extends State<AnchorPointScreen> {
                   right: 0,
                   child: Center(
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
                       decoration: BoxDecoration(
                         color: Colors.black54,
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Text(
-                        (widget.predictedPoints != null
-                            ? 'Перетащите точки для уточнения · Нажмите точку чтобы удалить\n'
-                            : 'Нажмите чтобы добавить · Перетащите чтобы уточнить · Нажмите точку чтобы удалить\n') +
-                        'Колесо мыши / щипок — зум · Потяните пустое место — сдвиг вида',
-                        style: const TextStyle(color: Colors.white70, fontSize: 11),
+                        '${widget.predictedPoints != null ? 'Перетащите точки для уточнения · Нажмите точку чтобы удалить\n' : 'Нажмите чтобы добавить · Перетащите чтобы уточнить · Нажмите точку чтобы удалить\n'}Колесо мыши / щипок — зум · Потяните пустое место — сдвиг вида',
+                        style: const TextStyle(
+                            color: Colors.white70, fontSize: 11),
                         textAlign: TextAlign.center,
                       ),
                     ),
@@ -352,7 +371,10 @@ class _AnchorPointScreenState extends State<AnchorPointScreen> {
           border: Border.all(color: Colors.white24),
         ),
         child: Text(label,
-            style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+            style: const TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.bold)),
       ),
     );
   }
@@ -416,13 +438,16 @@ class _AnchorPainter extends CustomPainter {
     this.isPredicted = false,
   });
 
-  Offset _toWidget(Offset imgPt) => Offset(imgPt.dx * scale + offset.dx, imgPt.dy * scale + offset.dy);
+  Offset _toWidget(Offset imgPt) =>
+      Offset(imgPt.dx * scale + offset.dx, imgPt.dy * scale + offset.dy);
 
   @override
   void paint(Canvas canvas, Size size) {
     final dst = Rect.fromLTWH(
-      offset.dx, offset.dy,
-      imageSize.width * scale, imageSize.height * scale,
+      offset.dx,
+      offset.dy,
+      imageSize.width * scale,
+      imageSize.height * scale,
     );
     canvas.save();
     canvas.clipRect(Rect.fromLTWH(0, 0, size.width, size.height));
@@ -431,41 +456,49 @@ class _AnchorPainter extends CustomPainter {
 
     if (points.length >= 2) {
       final linePaint = Paint()
-        ..color = Colors.yellow.withOpacity(0.7)
+        ..color = Colors.yellow.withValues(alpha: 0.7)
         ..strokeWidth = 1.5
         ..style = PaintingStyle.stroke;
       for (int i = 0; i < points.length - 1; i++) {
-        canvas.drawLine(_toWidget(points[i]), _toWidget(points[i + 1]), linePaint);
+        canvas.drawLine(
+            _toWidget(points[i]), _toWidget(points[i + 1]), linePaint);
       }
       if (points.length >= 3) {
-        canvas.drawLine(_toWidget(points.last), _toWidget(points.first), linePaint);
+        canvas.drawLine(
+            _toWidget(points.last), _toWidget(points.first), linePaint);
       }
     }
 
     for (int i = 0; i < points.length; i++) {
       final wp = _toWidget(points[i]);
       final isDragging = draggingIdx == i;
-      final color = isPredicted ? Colors.cyan : (i == 0 ? Colors.red : Colors.yellow);
+      final color =
+          isPredicted ? Colors.cyan : (i == 0 ? Colors.red : Colors.yellow);
 
       // Outer search ring for predicted points
       if (isPredicted) {
-        canvas.drawCircle(wp, 22,
+        canvas.drawCircle(
+            wp,
+            22,
             Paint()
-              ..color = Colors.cyan.withOpacity(0.25)
+              ..color = Colors.cyan.withValues(alpha: 0.25)
               ..style = PaintingStyle.fill);
-        canvas.drawCircle(wp, 22,
+        canvas.drawCircle(
+            wp,
+            22,
             Paint()
-              ..color = Colors.cyan.withOpacity(0.6)
+              ..color = Colors.cyan.withValues(alpha: 0.6)
               ..strokeWidth = 1.5
               ..style = PaintingStyle.stroke);
       }
 
       final r = isDragging ? 5.0 : 3.5;
-      canvas.drawCircle(wp, r + 2,
-          Paint()..color = Colors.black.withOpacity(0.5));
-      canvas.drawCircle(wp, r,
-          Paint()..color = color);
-      canvas.drawCircle(wp, r,
+      canvas.drawCircle(
+          wp, r + 2, Paint()..color = Colors.black.withValues(alpha: 0.5));
+      canvas.drawCircle(wp, r, Paint()..color = color);
+      canvas.drawCircle(
+          wp,
+          r,
           Paint()
             ..color = Colors.white
             ..strokeWidth = 1.5
@@ -516,12 +549,15 @@ class _MagnifierPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final half = viewSize / 2 / scale;
-    final src = Rect.fromCenter(center: center, width: half * 2, height: half * 2)
-        .intersect(Rect.fromLTWH(0, 0, imageSize.width, imageSize.height));
+    final src =
+        Rect.fromCenter(center: center, width: half * 2, height: half * 2)
+            .intersect(Rect.fromLTWH(0, 0, imageSize.width, imageSize.height));
     final dst = Rect.fromLTWH(0, 0, viewSize, viewSize);
     canvas.drawImageRect(image, src, dst, Paint());
 
-    final p = Paint()..color = Colors.red..strokeWidth = 1;
+    final p = Paint()
+      ..color = Colors.red
+      ..strokeWidth = 1;
     canvas.drawLine(Offset(viewSize / 2, 0), Offset(viewSize / 2, viewSize), p);
     canvas.drawLine(Offset(0, viewSize / 2), Offset(viewSize, viewSize / 2), p);
   }

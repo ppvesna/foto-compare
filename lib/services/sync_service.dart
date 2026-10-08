@@ -4,7 +4,6 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/app_config.dart';
 import '../database/local_database.dart';
-import 'supabase_service.dart';
 
 /// Сервис синхронизации локальной БД с Supabase.
 /// Стратегия: сначала пишем локально, потом фоново синхронизируем.
@@ -58,13 +57,14 @@ class SyncService {
     for (final item in pending) {
       try {
         await _pushItem(
-          table:  item['table_name'] as String,
-          id:     item['record_id']  as String,
-          op:     item['operation']  as String,
-          syncId: item['id']         as String,
+          table: item['table_name'] as String,
+          id: item['record_id'] as String,
+          op: item['operation'] as String,
+          syncId: item['id'] as String,
         );
       } catch (e) {
-        await LocalDatabase().markSyncFailed(item['id'] as String, e.toString());
+        await LocalDatabase()
+            .markSyncFailed(item['id'] as String, e.toString());
       }
     }
   }
@@ -76,7 +76,6 @@ class SyncService {
     required String syncId,
   }) async {
     final localDb = LocalDatabase();
-    final sb = SupabaseService();
     final client = Supabase.instance.client;
 
     switch (table) {
@@ -92,7 +91,8 @@ class SyncService {
         final rows = await localDb.getLayoutProfiles();
         final row = rows.firstWhere((r) => r['id'] == id, orElse: () => {});
         if (row.isNotEmpty) {
-          final data = _deserializeJsonFields(row, ['ref_anchors','homography','crop_region','alignment']);
+          final data = _deserializeJsonFields(
+              row, ['ref_anchors', 'homography', 'crop_region', 'alignment']);
           await client.from('layout_profiles').upsert(data);
         }
 
@@ -117,7 +117,9 @@ class SyncService {
     for (final f in fields) {
       final v = result[f];
       if (v is String) {
-        try { result[f] = jsonDecode(v); } catch (_) {}
+        try {
+          result[f] = jsonDecode(v);
+        } catch (_) {}
       }
     }
     return result;
@@ -127,12 +129,15 @@ class SyncService {
 
   Future<void> _pullUpdates() async {
     final localDb = LocalDatabase();
-    final client  = Supabase.instance.client;
+    final client = Supabase.instance.client;
 
     try {
       // Layouts
-      final layouts = await client.from('layouts')
-          .select().eq('is_deleted', false).order('updated_at');
+      final layouts = await client
+          .from('layouts')
+          .select()
+          .eq('is_deleted', false)
+          .order('updated_at');
       for (final row in layouts as List) {
         final r = Map<String, dynamic>.from(row as Map);
         r['created_at'] ??= DateTime.now().toIso8601String();
@@ -141,20 +146,19 @@ class SyncService {
       }
 
       // Layout Profiles
-      final profiles = await client.from('layout_profiles')
-          .select().order('updated_at');
+      final profiles =
+          await client.from('layout_profiles').select().order('updated_at');
       for (final row in profiles as List) {
-        final r = _serializeJsonFields(
-            Map<String, dynamic>.from(row as Map),
-            ['ref_anchors','homography','crop_region','alignment']);
+        final r = _serializeJsonFields(Map<String, dynamic>.from(row as Map),
+            ['ref_anchors', 'homography', 'crop_region', 'alignment']);
         r['created_at'] ??= DateTime.now().toIso8601String();
         r['updated_at'] ??= DateTime.now().toIso8601String();
         await localDb.saveLayoutProfile(r);
       }
 
       // Production Orders
-      final orders = await client.from('production_orders')
-          .select().order('updated_at');
+      final orders =
+          await client.from('production_orders').select().order('updated_at');
       for (final row in orders as List) {
         final r = Map<String, dynamic>.from(row as Map);
         r['created_at'] ??= DateTime.now().toIso8601String();
@@ -183,12 +187,14 @@ class SyncService {
 
   Future<SyncResult> fullSync(String userId) async {
     if (!AppConfig.featureServerSync) {
-      return SyncResult(success: false, message: 'Синхронизация отключена');
+      return const SyncResult(
+          success: false, message: 'Синхронизация отключена');
     }
     try {
       await _pushPending();
       await _pullUpdates();
-      return SyncResult(success: true, message: 'Синхронизация завершена');
+      return const SyncResult(
+          success: true, message: 'Синхронизация завершена');
     } catch (e) {
       return SyncResult(success: false, message: 'Ошибка: $e');
     }
@@ -196,10 +202,10 @@ class SyncService {
 }
 
 class SyncResult {
-  final bool   success;
+  final bool success;
   final String message;
-  final int    pushed;
-  final int    pulled;
+  final int pushed;
+  final int pulled;
 
   const SyncResult({
     required this.success,

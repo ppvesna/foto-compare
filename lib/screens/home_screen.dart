@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../features/billing/billing.dart';
 import '../features/organization/organization.dart';
 import '../widgets/xp_widgets.dart';
+import '../widgets/workspace_photo_background.dart';
 
 class HomeScreen extends StatelessWidget {
   final String email;
@@ -65,7 +66,7 @@ class HomeScreen extends StatelessWidget {
       ]),
       Expanded(
         child: Stack(children: [
-          const Positioned.fill(child: _HomePhotoBackground()),
+          const Positioned.fill(child: WorkspacePhotoBackground()),
           Positioned(
             left: 22,
             top: 18,
@@ -222,13 +223,13 @@ class HomeScreen extends StatelessWidget {
         borderRadius: BorderRadius.circular(18),
         child:
             Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(18, 18, 18, 12),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(18, 18, 18, 12),
             child: Row(children: [
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  children: const [
+                  children: [
                     Text(
                       'Рабочий профиль',
                       style: TextStyle(
@@ -250,7 +251,7 @@ class HomeScreen extends StatelessWidget {
                   ],
                 ),
               ),
-              const _MiniPrismMark(),
+              _MiniPrismMark(),
             ]),
           ),
           Container(
@@ -315,55 +316,6 @@ class HomeScreen extends StatelessWidget {
         ),
       ]),
     );
-  }
-}
-
-class _HomePhotoBackground extends StatelessWidget {
-  const _HomePhotoBackground();
-
-  @override
-  Widget build(BuildContext context) {
-    return Stack(children: [
-      Positioned.fill(
-        child: Image.asset(
-          'assets/images/start-hero-prism-lab.png',
-          fit: BoxFit.cover,
-          alignment: Alignment.center,
-        ),
-      ),
-      Positioned.fill(
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.centerLeft,
-              end: Alignment.centerRight,
-              colors: const [
-                Color(0xE60B111D),
-                Color(0x9D111827),
-                Color(0x33111827),
-              ],
-              stops: const [0.0, 0.48, 1.0],
-            ),
-          ),
-        ),
-      ),
-      Positioned.fill(
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: RadialGradient(
-              center: const Alignment(0.32, 0.10),
-              radius: 1.15,
-              colors: const [
-                Color(0x00111827),
-                Color(0x77111827),
-                Color(0xC90B111D),
-              ],
-              stops: const [0.0, 0.58, 1.0],
-            ),
-          ),
-        ),
-      ),
-    ]);
   }
 }
 
@@ -539,7 +491,7 @@ class _MiniPrismPainter extends CustomPainter {
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.1
-        ..color = const Color(0xFF0F172A).withOpacity(0.28),
+        ..color = const Color(0xFF0F172A).withValues(alpha: 0.28),
     );
     final colors = [
       const Color(0xFFE11D48),
@@ -552,7 +504,7 @@ class _MiniPrismPainter extends CustomPainter {
         Offset(0, y),
         Offset(size.width * 0.48, y + size.height * 0.08),
         Paint()
-          ..color = colors[i].withOpacity(0.85)
+          ..color = colors[i].withValues(alpha: 0.85)
           ..strokeWidth = 2.0
           ..strokeCap = StrokeCap.round,
       );
@@ -568,7 +520,7 @@ class _MiniPrismPainter extends CustomPainter {
         Offset(size.width * 0.62, y),
         Offset(size.width, y - size.height * (0.11 - i * 0.03)),
         Paint()
-          ..color = out[i].withOpacity(0.9)
+          ..color = out[i].withValues(alpha: 0.9)
           ..strokeWidth = 2.0
           ..strokeCap = StrokeCap.round,
       );

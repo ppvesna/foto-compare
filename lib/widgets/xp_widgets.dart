@@ -512,7 +512,7 @@ class SimBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
+        color: color.withValues(alpha: 0.12),
         border: Border.all(color: color, width: 1.5),
         borderRadius: BorderRadius.circular(3),
       ),

@@ -96,7 +96,7 @@ class _PixelTextPainter extends CustomPainter {
     for (final rune in text.runes) {
       final character = String.fromCharCode(rune);
       final glyph = _glyphs[character] ?? _glyphs['?']!;
-      if (shadowColor.alpha != 0) {
+      if (shadowColor.a != 0) {
         _paintGlyph(
           canvas,
           glyph,

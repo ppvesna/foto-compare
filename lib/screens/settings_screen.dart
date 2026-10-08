@@ -59,6 +59,7 @@ class SettingsScreen extends StatefulWidget {
   final PrintConditionService? printConditionService;
   final ChatRepository? chatRepository;
   final int checkUsageRevision;
+  final Future<void> Function()? onSignOut;
 
   const SettingsScreen({
     super.key,
@@ -75,6 +76,7 @@ class SettingsScreen extends StatefulWidget {
     this.printConditionService,
     this.chatRepository,
     this.checkUsageRevision = 0,
+    this.onSignOut,
   });
 
   @override
@@ -136,6 +138,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _accountProfileLoading = false;
   bool _accountProfileSaving = false;
   bool _accountProfileLoaded = false;
+  bool _accountProfileDirty = false;
   AccountProfile? _accountProfile;
   bool _customerBusy = false;
   bool _customerDirectoryAvailable = true;
@@ -299,6 +302,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       setState(() {
         _accountProfile = profile;
         _accountProfileLoaded = true;
+        _accountProfileDirty = false;
         _accountNicknameCtrl.text = profile.nickname;
         _accountDisplayNameCtrl.text = profile.displayName;
       });
@@ -346,6 +350,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       setState(() {
         _accountProfile = profile;
         _accountProfileLoaded = true;
+        _accountProfileDirty = false;
         _accountNicknameCtrl.text = profile.nickname;
         _accountDisplayNameCtrl.text = profile.displayName;
       });
@@ -479,59 +484,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Column(children: [
-      XpMenuBar(icon: 'ST', menus: [
-        XpMenu(label: 'Файл', items: [
-          XpMenuItem(
-            label: 'Сохранить',
-            icon: 'SV',
-            shortcut: 'Ctrl+S',
-            onTap: () => _saveSettings(),
-          ),
-          XpMenuItem.sep,
-          XpMenuItem(
-            label: 'Сбросить до базовых',
-            icon: 'RS',
-            onTap: _resetSettings,
-          ),
-        ]),
-        XpMenu(label: 'Профили', items: [
-          XpMenuItem(
-            label: 'ISO Coated / FOGRA39',
-            onTap: () =>
-                setState(() => _colorProfile = 'ISO Coated v2 / FOGRA39'),
-          ),
-          XpMenuItem(
-            label: 'Картон / упаковка',
-            onTap: () =>
-                setState(() => _colorProfile = 'Packaging board custom'),
-          ),
-          XpMenuItem(
-            label: 'Пленка / этикетка',
-            onTap: () => setState(() => _colorProfile = 'Film label custom'),
-          ),
-        ]),
-      ]),
-      Expanded(
-        child: LayoutBuilder(builder: (_, constraints) {
-          final compact = constraints.maxWidth < 900;
-          if (compact) {
-            return Column(children: [
-              SizedBox(height: 112, child: _sectionStrip()),
-              Expanded(child: _sectionBody()),
-            ]);
-          }
-          return Row(children: [
-            SizedBox(width: 252, child: _sectionSidebar()),
-            Expanded(child: _sectionBody()),
-          ]);
-        }),
-      ),
-      const XpStatusBar(
-        left: 'Настройки производства',
-        right: 'камера · калибровка · CMYK · штрихкоды',
-      ),
-    ]);
+    return LayoutBuilder(builder: (_, constraints) {
+      final compact = constraints.maxWidth < 900;
+      if (compact) {
+        return Column(children: [
+          SizedBox(height: 112, child: _sectionStrip()),
+          Expanded(child: _sectionBody()),
+        ]);
+      }
+      return Row(children: [
+        SizedBox(width: 252, child: _sectionSidebar()),
+        Expanded(child: _sectionBody()),
+      ]);
+    });
   }
 
   Widget _sectionSidebar() {
@@ -688,6 +653,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               enabled: !_accountProfileLoading && !_accountProfileSaving,
               autocorrect: false,
               enableSuggestions: false,
+              onChanged: (_) => setState(() => _accountProfileDirty = true),
               decoration: const InputDecoration(
                 labelText: 'Ник',
                 hintText: 'например printer_ivan',
@@ -699,6 +665,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             TextField(
               controller: _accountDisplayNameCtrl,
               enabled: !_accountProfileLoading && !_accountProfileSaving,
+              onChanged: (_) => setState(() => _accountProfileDirty = true),
               decoration: const InputDecoration(
                 labelText: 'Имя',
                 hintText: 'необязательно',
@@ -725,39 +692,70 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 'ID организации',
                 widget.organizationAccess.organizationId!,
               ),
-            const SizedBox(height: 12),
-            XpBtn(
-              label: _accountProfileSaving
-                  ? 'Сохранение…'
-                  : _accountProfileLoading
-                      ? 'Загрузка…'
-                      : 'Сохранить профиль',
-              primary: true,
-              onPressed: _accountProfileLoading || _accountProfileSaving
-                  ? null
-                  : _saveAccountProfile,
+            const SizedBox(height: 16),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final save = FilledButton.icon(
+                  key: const ValueKey('save-account-profile'),
+                  onPressed: _accountProfileLoading ||
+                          _accountProfileSaving ||
+                          !_accountProfileDirty
+                      ? null
+                      : _saveAccountProfile,
+                  icon: _accountProfileSaving
+                      ? const SizedBox.square(
+                          dimension: 15,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.save_outlined),
+                  label: Text(
+                    _accountProfileSaving
+                        ? 'Сохранение…'
+                        : 'Сохранить изменения',
+                  ),
+                );
+                final password = OutlinedButton.icon(
+                  key: const ValueKey('open-password-change'),
+                  onPressed: _changePassword,
+                  icon: const Icon(Icons.lock_reset),
+                  label: const Text('Изменить пароль'),
+                );
+                final signOut = OutlinedButton.icon(
+                  key: const ValueKey('sign-out-account'),
+                  onPressed: widget.onSignOut,
+                  icon: const Icon(Icons.logout_rounded),
+                  label: const Text('Выйти'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF9F2D27),
+                    side: const BorderSide(color: Color(0xFFD9AAA6)),
+                  ),
+                );
+                final actions = <Widget>[
+                  save,
+                  password,
+                  if (widget.onSignOut != null) signOut,
+                ];
+                if (constraints.maxWidth < 520) {
+                  return Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: actions,
+                  );
+                }
+                return Row(
+                  children: [
+                    Expanded(flex: 5, child: save),
+                    const SizedBox(width: 8),
+                    Expanded(flex: 4, child: password),
+                    if (widget.onSignOut != null) ...[
+                      const SizedBox(width: 8),
+                      Expanded(flex: 3, child: signOut),
+                    ],
+                  ],
+                );
+              },
             ),
           ]),
-        ),
-        const SizedBox(height: 12),
-        _settingsPanel(
-          title: 'Безопасность',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Text(
-                'Измените пароль текущего аккаунта. Для подтверждения понадобится действующий пароль.',
-                style: TextStyle(fontSize: 12, color: Colors.black54),
-              ),
-              const SizedBox(height: 12),
-              XpBtn(
-                key: const ValueKey('open-password-change'),
-                label: 'Изменить пароль',
-                icon: Icons.lock_reset,
-                onPressed: _changePassword,
-              ),
-            ],
-          ),
         ),
       ],
     );

@@ -31,20 +31,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('VESNA-500'), findsOneWidget);
-    expect(find.textContaining('Печать'), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('work-row-job-500')));
+    expect(find.text('Остановлена'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('work-menu-job-500')));
     await tester.pumpAndSettle();
-
-    expect(find.text('Заблокирована'), findsWidgets);
-    expect(find.text('Листы 120–180'), findsOneWidget);
-    expect(find.text('Полоса по краю'), findsWidgets);
-    expect(find.byKey(const ValueKey('advance-work-stage')), findsOneWidget);
-    final advance = tester.widget<OutlinedButton>(
-      find.byKey(const ValueKey('advance-work-stage')),
-    );
-    expect(advance.onPressed, isNull);
-
-    await tester.tap(find.text('Повторить'));
+    expect(find.text('Результаты и история'), findsOneWidget);
+    await tester.tap(find.text('Продолжить проверку'));
+    await tester.pumpAndSettle();
     expect(openedComparison?.work.jobId, 'job-500');
     expect(openedComparison?.unit.id, 'unit-1');
   });
@@ -72,13 +64,12 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('work-row-job-500')));
+    await tester.tap(find.byKey(const ValueKey('work-menu-job-500')));
     await tester.pumpAndSettle();
 
     expect(find.text('В работе'), findsWidgets);
-    expect(find.text('Партии и проверки'), findsNothing);
-    expect(find.byKey(const ValueKey('block-work')), findsNothing);
-    expect(find.text('Открыть чат'), findsOneWidget);
+    expect(find.text('Продолжить проверку'), findsNothing);
+    expect(find.text('Чат по работе'), findsOneWidget);
   });
 
   testWidgets('owner observes production details without working controls',
@@ -104,17 +95,15 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('work-row-job-500')));
+    await tester.tap(find.byKey(const ValueKey('work-menu-job-500')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Партии и проверки'), findsOneWidget);
-    expect(find.text('Повторить'), findsNothing);
-    expect(find.text('Добавить стопу или рулон'), findsNothing);
-    expect(
-        find.byKey(const ValueKey('complete-production-work')), findsNothing);
+    expect(find.text('Результаты и история'), findsOneWidget);
+    expect(find.text('Продолжить проверку'), findsNothing);
+    expect(find.text('Завершить работу'), findsNothing);
   });
 
-  testWidgets('owner can open the new work section', (tester) async {
+  testWidgets('inspection specialist can create a new work', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1100, 760));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
@@ -123,10 +112,13 @@ void main() {
         home: Scaffold(
           body: WorksScreen(
             organizationId: 'org-1',
-            currentUserId: 'owner-1',
+            currentUserId: 'specialist-1',
             organizationAccess: OrganizationAccess.forRole(
               organizationId: 'org-1',
-              role: OrganizationRole.owner,
+              role: OrganizationRole.employee,
+              functions: const {
+                OrganizationMemberFunction.inspectionSpecialist,
+              },
             ),
             workflowService: _FakeWorkflowService(readOnlyMode: true),
             customerDirectoryService: MockCustomerDirectoryService(),
@@ -139,16 +131,83 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final newWorkTab = find.byKey(
-      const ValueKey('work-section-create'),
-    );
-    expect(newWorkTab, findsOneWidget);
-    await tester.tap(newWorkTab);
-    await tester.pumpAndSettle();
     expect(
       find.byKey(const ValueKey('create-production-work')),
       findsOneWidget,
     );
+  });
+
+  testWidgets('work register opens as a closable archive overlay',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(900, 680));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    var closed = false;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: WorksScreen(
+            organizationId: 'org-1',
+            organizationAccess: OrganizationAccess.forRole(
+              organizationId: 'org-1',
+              role: OrganizationRole.admin,
+            ),
+            workflowService: _FakeWorkflowService(readOnlyMode: true),
+            initialView: ProductionWorkView.archived,
+            overlayMode: true,
+            onClose: () => closed = true,
+            onOpenComparison: (_) {},
+            onOpenChat: (_) {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Архив'), findsOneWidget);
+    expect(find.byKey(const ValueKey('work-view-switch')), findsNothing);
+    expect(find.byKey(const ValueKey('close-work-register')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('close-work-register')));
+    expect(closed, isTrue);
+  });
+
+  testWidgets('active overlay opens comparison by tapping the work row',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(900, 680));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    ProductionComparisonTarget? openedComparison;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: WorksScreen(
+            organizationId: 'org-1',
+            organizationAccess: OrganizationAccess.forRole(
+              organizationId: 'org-1',
+              role: OrganizationRole.admin,
+            ),
+            workflowService: _FakeWorkflowService(),
+            overlayMode: true,
+            onOpenComparison: (work) => openedComparison = work,
+            onOpenChat: (_) {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Проверка'), findsOneWidget);
+    expect(find.byKey(const ValueKey('work-view-switch')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('work-row-job-500')));
+    await tester.pumpAndSettle();
+
+    expect(openedComparison?.work.jobId, 'job-500');
+    expect(openedComparison?.unit.id, 'unit-1');
+
+    await tester.tap(find.byKey(const ValueKey('work-menu-job-500')));
+    await tester.pumpAndSettle();
+    expect(find.text('Продолжить проверку'), findsNothing);
+    expect(find.text('Результаты и история'), findsOneWidget);
   });
 }
 

@@ -59,8 +59,8 @@ class _OverlayAlignScreenState extends State<OverlayAlignScreen> {
   late double _opacity;
   Size _viewportSize = Size.zero;
 
-  static const double _zoomStep = 1.02;   // ±2% за нажатие
-  static const double _panStep = 2.0;     // px за нажатие
+  static const double _zoomStep = 1.02; // ±2% за нажатие
+  static const double _panStep = 2.0; // px за нажатие
 
   @override
   void initState() {
@@ -78,21 +78,22 @@ class _OverlayAlignScreenState extends State<OverlayAlignScreen> {
   void _zoomBy(double factor) {
     final c = Offset(_viewportSize.width / 2, _viewportSize.height / 2);
     final m = Matrix4.identity()
-      ..translate(c.dx, c.dy)
-      ..scale(factor)
-      ..translate(-c.dx, -c.dy);
+      ..translateByDouble(c.dx, c.dy, 0, 1)
+      ..scaleByDouble(factor, factor, factor, 1)
+      ..translateByDouble(-c.dx, -c.dy, 0, 1);
     setState(() => _ctrl.value = m * _ctrl.value);
   }
 
   void _panBy(double dx, double dy) {
-    final m = Matrix4.identity()..translate(dx, dy);
+    final m = Matrix4.identity()..translateByDouble(dx, dy, 0, 1);
     setState(() => _ctrl.value = m * _ctrl.value);
   }
 
   void _reset() => setState(() => _ctrl.value = Matrix4.identity());
 
   void _done() {
-    Navigator.of(context).pop(OverlayAlignResult(_ctrl.value.clone(), _opacity));
+    Navigator.of(context)
+        .pop(OverlayAlignResult(_ctrl.value.clone(), _opacity));
   }
 
   @override
@@ -107,7 +108,8 @@ class _OverlayAlignScreenState extends State<OverlayAlignScreen> {
           TextButton(
             onPressed: _done,
             child: const Text('Готово',
-                style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+                style: TextStyle(
+                    color: Colors.green, fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -144,15 +146,19 @@ class _OverlayAlignScreenState extends State<OverlayAlignScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           child: Column(children: [
             Row(children: [
-              const SizedBox(width: 90,
+              const SizedBox(
+                  width: 90,
                   child: Text('Прозрачность:', style: TextStyle(fontSize: 11))),
-              Expanded(child: Slider(
+              Expanded(
+                  child: Slider(
                 value: _opacity,
                 onChanged: (v) => setState(() => _opacity = v),
                 activeColor: AppTheme.blue,
               )),
-              SizedBox(width: 36, child: Text('${(_opacity * 100).round()}%',
-                  style: const TextStyle(fontSize: 10))),
+              SizedBox(
+                  width: 36,
+                  child: Text('${(_opacity * 100).round()}%',
+                      style: const TextStyle(fontSize: 10))),
             ]),
             const SizedBox(height: 6),
             Row(mainAxisAlignment: MainAxisAlignment.center, children: [
@@ -211,7 +217,8 @@ class _Label extends StatelessWidget {
         color: Colors.black54,
         borderRadius: BorderRadius.circular(4),
       ),
-      child: Text(text, style: const TextStyle(color: Colors.white, fontSize: 10)),
+      child:
+          Text(text, style: const TextStyle(color: Colors.white, fontSize: 10)),
     );
   }
 }

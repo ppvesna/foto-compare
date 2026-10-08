@@ -27,15 +27,23 @@ class LocalDatabase {
       version: DbSchema.version,
       onCreate: (db, v) async {
         final batch = db.batch();
-        for (final sql in DbSchema.all)     batch.execute(sql);
-        for (final sql in DbSchema.indexes) batch.execute(sql);
+        for (final sql in DbSchema.all) {
+          batch.execute(sql);
+        }
+        for (final sql in DbSchema.indexes) {
+          batch.execute(sql);
+        }
         await batch.commit(noResult: true);
       },
       onUpgrade: (db, oldV, newV) async {
         final batch = db.batch();
         if (oldV < 2) {
-          for (final sql in DbSchema.v2)     batch.execute(sql);
-          for (final sql in DbSchema.indexes) batch.execute(sql);
+          for (final sql in DbSchema.v2) {
+            batch.execute(sql);
+          }
+          for (final sql in DbSchema.indexes) {
+            batch.execute(sql);
+          }
         }
         await batch.commit(noResult: true);
       },
@@ -76,12 +84,24 @@ class LocalDatabase {
   }) async {
     final d = await db;
     final where = <String>['is_deleted = 0'];
-    final args  = <dynamic>[];
+    final args = <dynamic>[];
 
-    if (userId != null)        { where.add('user_id = ?');         args.add(userId); }
-    if (minSimilarity != null) { where.add('similarity >= ?');     args.add(minSimilarity); }
-    if (maxSimilarity != null) { where.add('similarity <= ?');     args.add(maxSimilarity); }
-    if (search != null)        { where.add('reference_path LIKE ?'); args.add('%$search%'); }
+    if (userId != null) {
+      where.add('user_id = ?');
+      args.add(userId);
+    }
+    if (minSimilarity != null) {
+      where.add('similarity >= ?');
+      args.add(minSimilarity);
+    }
+    if (maxSimilarity != null) {
+      where.add('similarity <= ?');
+      args.add(maxSimilarity);
+    }
+    if (search != null) {
+      where.add('reference_path LIKE ?');
+      args.add('%$search%');
+    }
 
     return d.query(
       'comparison_results',
@@ -95,16 +115,16 @@ class LocalDatabase {
 
   Future<void> deleteResult(String id) async {
     final d = await db;
-    await d.update('comparison_results',
-        {'is_deleted': 1, 'updated_at': _now()},
+    await d.update(
+        'comparison_results', {'is_deleted': 1, 'updated_at': _now()},
         where: 'id = ?', whereArgs: [id]);
     _logSync('comparison_results', id, 'delete');
   }
 
   Future<void> clearResults(String userId) async {
     final d = await db;
-    await d.update('comparison_results',
-        {'is_deleted': 1, 'updated_at': _now()},
+    await d.update(
+        'comparison_results', {'is_deleted': 1, 'updated_at': _now()},
         where: 'user_id = ? AND is_deleted = 0', whereArgs: [userId]);
   }
 
@@ -130,12 +150,15 @@ class LocalDatabase {
   Future<void> addGroupMember(String groupId, String userId,
       {String role = 'member'}) async {
     final d = await db;
-    await d.insert('chat_group_members', {
-      'group_id':  groupId,
-      'user_id':   userId,
-      'role':      role,
-      'joined_at': _now(),
-    }, conflictAlgorithm: ConflictAlgorithm.ignore);
+    await d.insert(
+        'chat_group_members',
+        {
+          'group_id': groupId,
+          'user_id': userId,
+          'role': role,
+          'joined_at': _now(),
+        },
+        conflictAlgorithm: ConflictAlgorithm.ignore);
   }
 
   // ── Chat Messages ──────────────────────────────────
@@ -156,12 +179,24 @@ class LocalDatabase {
   }) async {
     final d = await db;
     final where = <String>['is_deleted = 0'];
-    final args  = <dynamic>[];
+    final args = <dynamic>[];
 
-    if (groupId != null)     { where.add('group_id = ?');     args.add(groupId); }
-    if (recipientId != null) { where.add('recipient_id = ?'); args.add(recipientId); }
-    if (senderId != null)    { where.add('sender_id = ?');    args.add(senderId); }
-    if (before != null)      { where.add('created_at < ?');   args.add(before); }
+    if (groupId != null) {
+      where.add('group_id = ?');
+      args.add(groupId);
+    }
+    if (recipientId != null) {
+      where.add('recipient_id = ?');
+      args.add(recipientId);
+    }
+    if (senderId != null) {
+      where.add('sender_id = ?');
+      args.add(senderId);
+    }
+    if (before != null) {
+      where.add('created_at < ?');
+      args.add(before);
+    }
 
     return d.query(
       'chat_messages',
@@ -174,8 +209,7 @@ class LocalDatabase {
 
   Future<void> markMessagesRead(String groupId, String userId) async {
     final d = await db;
-    await d.update('chat_messages',
-        {'is_read': 1, 'updated_at': _now()},
+    await d.update('chat_messages', {'is_read': 1, 'updated_at': _now()},
         where: 'group_id = ? AND sender_id != ? AND is_read = 0',
         whereArgs: [groupId, userId]);
   }
@@ -200,8 +234,8 @@ class LocalDatabase {
 
   Future<Map<String, dynamic>?> getSettings(String userId) async {
     final d = await db;
-    final rows = await d.query('settings',
-        where: 'user_id = ?', whereArgs: [userId]);
+    final rows =
+        await d.query('settings', where: 'user_id = ?', whereArgs: [userId]);
     return rows.isEmpty ? null : rows.first;
   }
 
@@ -217,15 +251,15 @@ class LocalDatabase {
   Future<List<Map<String, dynamic>>> getPurchases(String userId) async {
     final d = await db;
     return d.query('purchases',
-        where: 'user_id = ?', whereArgs: [userId],
-        orderBy: 'created_at DESC');
+        where: 'user_id = ?', whereArgs: [userId], orderBy: 'created_at DESC');
   }
 
   Future<bool> hasActivePremium(String userId) async {
     final d = await db;
     final now = _now();
     final rows = await d.query('purchases',
-        where: "user_id = ? AND status = 'active' AND (expires_at IS NULL OR expires_at > ?)",
+        where:
+            "user_id = ? AND status = 'active' AND (expires_at IS NULL OR expires_at > ?)",
         whereArgs: [userId, now]);
     return rows.isNotEmpty;
   }
@@ -235,22 +269,18 @@ class LocalDatabase {
   Future<List<Map<String, dynamic>>> getPendingSync() async {
     final d = await db;
     return d.query('sync_log',
-        where: "status = 'pending'",
-        orderBy: 'created_at ASC',
-        limit: 50);
+        where: "status = 'pending'", orderBy: 'created_at ASC', limit: 50);
   }
 
   Future<void> markSynced(String syncId) async {
     final d = await db;
-    await d.update('sync_log',
-        {'status': 'synced', 'synced_at': _now()},
+    await d.update('sync_log', {'status': 'synced', 'synced_at': _now()},
         where: 'id = ?', whereArgs: [syncId]);
   }
 
   Future<void> markSyncFailed(String syncId, String error) async {
     final d = await db;
-    await d.update('sync_log',
-        {'status': 'failed', 'error': error},
+    await d.update('sync_log', {'status': 'failed', 'error': error},
         where: 'id = ?', whereArgs: [syncId]);
   }
 
@@ -270,14 +300,17 @@ class LocalDatabase {
   Future<void> _logSync(String table, String id, String op) async {
     if (!AppConfig.featureServerSync) return;
     final d = await db;
-    await d.insert('sync_log', {
-      'id':         '${table}_${id}_${DateTime.now().millisecondsSinceEpoch}',
-      'table_name': table,
-      'record_id':  id,
-      'operation':  op,
-      'status':     'pending',
-      'created_at': _now(),
-    }, conflictAlgorithm: ConflictAlgorithm.ignore);
+    await d.insert(
+        'sync_log',
+        {
+          'id': '${table}_${id}_${DateTime.now().millisecondsSinceEpoch}',
+          'table_name': table,
+          'record_id': id,
+          'operation': op,
+          'status': 'pending',
+          'created_at': _now(),
+        },
+        conflictAlgorithm: ConflictAlgorithm.ignore);
   }
 
   // ── Layouts ────────────────────────────────────────
@@ -297,8 +330,7 @@ class LocalDatabase {
 
   Future<void> deleteLayout(String id) async {
     final d = await db;
-    await d.update('layouts',
-        {'is_deleted': 1, 'updated_at': _now()},
+    await d.update('layouts', {'is_deleted': 1, 'updated_at': _now()},
         where: 'id = ?', whereArgs: [id]);
     _logSync('layouts', id, 'delete');
   }
@@ -312,11 +344,13 @@ class LocalDatabase {
     _logSync('layout_profiles', profile['id'], 'upsert');
   }
 
-  Future<List<Map<String, dynamic>>> getLayoutProfiles({String? layoutId}) async {
+  Future<List<Map<String, dynamic>>> getLayoutProfiles(
+      {String? layoutId}) async {
     final d = await db;
     if (layoutId != null) {
       return d.query('layout_profiles',
-          where: 'layout_id = ?', whereArgs: [layoutId],
+          where: 'layout_id = ?',
+          whereArgs: [layoutId],
           orderBy: 'created_at DESC');
     }
     return d.query('layout_profiles', orderBy: 'created_at DESC');
@@ -344,9 +378,15 @@ class LocalDatabase {
   }) async {
     final d = await db;
     final where = <String>[];
-    final args  = <dynamic>[];
-    if (layoutId != null) { where.add('layout_id = ?'); args.add(layoutId); }
-    if (status   != null) { where.add('status = ?');    args.add(status); }
+    final args = <dynamic>[];
+    if (layoutId != null) {
+      where.add('layout_id = ?');
+      args.add(layoutId);
+    }
+    if (status != null) {
+      where.add('status = ?');
+      args.add(status);
+    }
     return d.query('check_results',
         where: where.isEmpty ? null : where.join(' AND '),
         whereArgs: args.isEmpty ? null : args,
@@ -373,8 +413,8 @@ class LocalDatabase {
 
   Future<void> updateOrderStatus(String id, String status) async {
     final d = await db;
-    await d.update('production_orders',
-        {'status': status, 'updated_at': _now()},
+    await d.update(
+        'production_orders', {'status': status, 'updated_at': _now()},
         where: 'id = ?', whereArgs: [id]);
     _logSync('production_orders', id, 'update');
   }

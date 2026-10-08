@@ -14,6 +14,7 @@ import '../features/capture/capture.dart';
 import '../features/color_analysis/color_analysis.dart';
 import '../features/organization/organization.dart';
 import '../features/production/production.dart';
+import '../widgets/workspace_photo_background.dart';
 import '../widgets/xp_widgets.dart';
 import '../widgets/pixel_text.dart';
 import '../services/compare_service.dart';
@@ -31,7 +32,6 @@ import '../services/web_compare_worker_stub.dart'
     as web_worker;
 import '../config/app_config.dart';
 import '../widgets/crop_frame_screen.dart';
-import '../widgets/anchor_point_screen.dart';
 
 enum _ResultMapMode { deltaE, geometry, overlay }
 
@@ -65,6 +65,9 @@ class CompareScreen extends StatefulWidget {
   final VoidCallback? onCheckUsageChanged;
   final ProductionJobContext? initialJob;
   final VoidCallback? onBackToWorks;
+  final String backTooltip;
+  final bool canOpenChat;
+  final bool showStoredHistory;
   // App navigation lives in MainShell; the restricted role view uses this to
   // send customer representatives back to their job chat.
   final ValueChanged<int>? onNavigate;
@@ -82,6 +85,9 @@ class CompareScreen extends StatefulWidget {
     this.onCheckUsageChanged,
     this.initialJob,
     this.onBackToWorks,
+    this.backTooltip = 'Вернуться к работам',
+    this.canOpenChat = true,
+    this.showStoredHistory = true,
     this.onNavigate,
   });
 
@@ -89,15 +95,13 @@ class CompareScreen extends StatefulWidget {
   State<CompareScreen> createState() => _CompareScreenState();
 }
 
-class _CompareScreenState extends State<CompareScreen>
-    with SingleTickerProviderStateMixin {
+class _CompareScreenState extends State<CompareScreen> {
   static const Color _hudGreen = Color(0xFF70FF96);
   static const Color _hudGreenSecondary = Color(0xFF54EE80);
   static const Color _hudGreenLabel = Color(0xFF31D463);
   static const Color _hudWarning = Color(0xFFFF843D);
   static const Color _hudError = Color(0xFFFF4F55);
 
-  late TabController _tabs;
   Uint8List? _refImg;
   Uint8List? _cmpImg;
   final _picker = ImagePicker();
@@ -113,8 +117,6 @@ class _CompareScreenState extends State<CompareScreen>
   AiAnalysis? _aiResult;
   List<BarcodeResult> _refBarcodes = [];
   List<BarcodeResult> _cmpBarcodes = [];
-  OcrResult? _refOcr;
-  OcrResult? _cmpOcr;
   TextDiff? _textDiff;
   LabFingerprint? _refLabFingerprint;
   LabFingerprint? _cmpLabFingerprint;
@@ -181,72 +183,22 @@ class _CompareScreenState extends State<CompareScreen>
     );
   }
 
-  bool _hasReferenceQuota() {
-    final limit = widget.entitlements.limit(UsageLimit.savedReferences);
-    if (limit == null) return true;
-    final currentId = _layoutProfile?.id ?? _activeReferenceId;
-    final replacesExisting = currentId != null &&
-        _savedReferences.any((reference) => reference.id == currentId);
-    if (replacesExisting || _savedReferences.length < limit) return true;
-    xpDlg(
-      context,
-      'Лимит эталонов',
-      'В текущем плане можно сохранить не более $limit эталонов.',
-    );
-    return false;
-  }
-
-  bool _canManageReferences() {
-    if (widget.organizationAccess
-        .allows(OrganizationPermission.manageReferences)) {
-      return true;
-    }
-    xpDlg(
-      context,
-      'Нет права',
-      'Роль «${widget.organizationAccess.role.label}» не может изменять базу эталонов.',
-    );
-    return false;
-  }
-
   Uint8List? _refAligned;
   Uint8List? _cmpAligned;
-  Uint8List? _ref2Img; // второй снимок эталона для выбора
-  double? _ref1Sharpness; // резкость эталона 1
-  double? _ref2Sharpness; // резкость эталона 2
-  AiAnalysis? _refAiResult;
-  bool _refAiLoading = false;
-
-  // Ручное наложение на вкладке Эталон (ref1 + ref2)
-  final _overlayCtrl = TransformationController();
-  double _overlayOpacity = 0.5;
-  Size _overlayViewerSize = Size.zero;
-
-  // Вкладка Образец: cmp1 + cmp2 → merge
-  Uint8List? _cmp2Img;
-  double? _cmp1Sharpness;
-  double? _cmp2Sharpness;
-  final _cmp2Ctrl = TransformationController();
-  double _cmp2Opacity = 0.5;
   final _workspaceScrollCtrl = ScrollController();
 
-  // Вкладка Совмещение: два окна предпросмотра с якорными точками
   final _refAlignCtrl = TransformationController();
   final _cmpAlignCtrl = TransformationController();
-  List<Offset>? _refAnchorPts; // подтверждённые точки на эталоне
-  List<Offset>? _cmpAnchorPts; // подтверждённые точки на образце
+  List<Offset>? _refAnchorPts;
+  List<Offset>? _cmpAnchorPts;
   Size? _refImgSize;
   Size? _cmpImgSize;
-  // Пошаговая калибровка: 0=нет, 1=ставим на эталоне, 2=ставим на образце, 3=расчёт
   int _calStep = 0;
   List<Offset> _tempRefPts = [];
   List<Offset> _tempCmpPts = [];
   bool _anchorRefining = false;
   static const int _minAnchorPts = 4;
   static const int _maxAnchorPts = 8;
-
-  // Отступ рамки (10% с каждой стороны = 80% центральная зона)
-  static const double _framePad = 0.10;
 
   bool _stacking = false;
   bool _imageBusy = false;
@@ -322,7 +274,6 @@ class _CompareScreenState extends State<CompareScreen>
   // ── Калибровка / Layout Profile ──────────────────
   LayoutProfile? _layoutProfile;
   bool _calibrating = false;
-  List<LayoutProfile> _savedProfiles = [];
   CalibrationPointSettings _calibrationSettings =
       CalibrationPointSettings.defaults;
   ColorMeasurementSettings _measurementSettings =
@@ -335,9 +286,7 @@ class _CompareScreenState extends State<CompareScreen>
     super.initState();
     _productionInspectionState = widget.inspectionUnit?.state;
     _applyInitialJob(widget.initialJob);
-    _tabs = TabController(length: 4, vsync: this);
     _loadSavedReference();
-    _loadProfiles();
     _loadCalibrationSettings();
     _loadColorMeasurementSettings();
     _loadCameraCaptureSettings();
@@ -448,11 +397,6 @@ class _CompareScreenState extends State<CompareScreen>
     });
   }
 
-  Future<void> _loadProfiles() async {
-    final profiles = await LayoutProfileStorage.loadAll();
-    if (mounted) setState(() => _savedProfiles = profiles);
-  }
-
   Future<void> _loadSavedReference() async {
     final refs = await ReferenceStorage.loadProfiles();
     final active = await ReferenceStorage.loadActiveProfile();
@@ -463,11 +407,6 @@ class _CompareScreenState extends State<CompareScreen>
     }
   }
 
-  Future<void> _refreshSavedReferences() async {
-    final refs = await ReferenceStorage.loadProfiles();
-    if (mounted) setState(() => _savedReferences = refs);
-  }
-
   Future<void> _activateSavedReference(
     SavedReferenceProfile item, {
     bool showMessage = true,
@@ -476,11 +415,9 @@ class _CompareScreenState extends State<CompareScreen>
     final size = await _readImageSize(item.bytes);
     if (!mounted) return;
     final profile = item.layoutProfile;
-    final anchors = profile == null
-        ? null
-        : profile.refAnchors
-            .map((a) => Offset(a.x * size.width, a.y * size.height))
-            .toList();
+    final anchors = profile?.refAnchors
+        .map((a) => Offset(a.x * size.width, a.y * size.height))
+        .toList();
     setState(() {
       _workspaceView = _WorkspaceView.reference;
       _refImg = item.bytes;
@@ -515,113 +452,17 @@ class _CompareScreenState extends State<CompareScreen>
     }
   }
 
-  Future<void> _saveReference() async {
-    if (_refImg == null) return;
-    if (!_canManageReferences() || !_hasReferenceQuota()) return;
-    final now = DateTime.now();
-    final label =
-        '${now.day.toString().padLeft(2, '0')}.${now.month.toString().padLeft(2, '0')}.${now.year}';
-    final item = await ReferenceStorage.saveProfile(
-      bytes: _refImg!,
-      label: label,
-      layoutProfile: _layoutProfile,
-    );
-    await _refreshSavedReferences();
-    if (mounted) {
-      setState(() {
-        _savedRefLabel = item.label;
-        _activeReferenceId = item.id;
-      });
-      xpDlg(
-        context,
-        'Эталон сохранён',
-        'Будет загружаться автоматически при следующем запуске.',
-      );
-    }
-  }
-
-  void _newSample() {
-    setState(() {
-      _workspaceView = _WorkspaceView.sample;
-      _sampleNo = _nextSampleNumberFor(
-        referenceId: _activeReferenceId,
-        referenceLabel: _savedRefLabel,
-        minValue: _sampleNo + 1,
-      );
-      _cmpImg = null;
-      _cmpCropApplied = false;
-      _cmpImgSize = null;
-      _cmpAligned = null;
-      _cmpAnchorPts = null;
-      _cmp2Img = null;
-      _cmp1Sharpness = null;
-      _cmp2Sharpness = null;
-      _result = null;
-      _exactDeltaEReady = false;
-      _exactDeltaEComputing = false;
-      _exactDeltaERequested = false;
-      _activeProtocolId = null;
-      _activeProtocolCreatedAt = null;
-      _activeProtocolSampleImageId = null;
-      _activeProtocolSampleNo = null;
-      _aiResult = null;
-      _pointProbe = null;
-      _areaLoupe = null;
-      _loupeDraftRect = null;
-      _loupeDragStart = null;
-      _compareStatus = null;
-      _compareSteps.clear();
-      _timedSteps.clear();
-      _stageWatch = null;
-      _calStep = 0;
-      _tempCmpPts = [];
-    });
-  }
-
-  Future<void> _clearReference() async {
-    if (!_canManageReferences()) return;
-    final ok = await xpConfirm(
-      context,
-      'Сбросить эталон',
-      'Удалить сохранённый эталон с устройства?',
-    );
-    if (!ok) return;
-    await ReferenceStorage.clear();
-    if (mounted)
-      setState(() {
-        _savedReferences = [];
-        _activeReferenceId = null;
-        _refImg = null;
-        _refCropApplied = false;
-        _refImgSize = null;
-        _savedRefLabel = null;
-        _refAligned = null;
-        _layoutProfile = null;
-        _cmpAligned = null;
-        _refAnchorPts = null;
-        _cmpAnchorPts = null;
-      });
-  }
-
   // ── Калибровка: пошаговая расстановка точек прямо на панелях ───────────
   Future<void> _startCalibration() async {
     if (_refImg == null || _cmpImg == null) return;
     Size? refSize = _refImgSize;
     Size? cmpSize = _cmpImgSize;
-    if (refSize == null) {
-      refSize = await _readImageSize(_refImg!);
-    }
-    if (cmpSize == null) {
-      cmpSize = await _readImageSize(_cmpImg!);
-    }
-    final storedRefPtsRaw = _layoutProfile == null
-        ? null
-        : _layoutProfile!.refAnchors
-            .map((a) => Offset(a.x * refSize!.width, a.y * refSize.height))
-            .toList();
-    final storedRefPts = storedRefPtsRaw == null
-        ? null
-        : storedRefPtsRaw.take(_maxAnchorPts).toList();
+    refSize ??= await _readImageSize(_refImg!);
+    cmpSize ??= await _readImageSize(_cmpImg!);
+    final storedRefPtsRaw = _layoutProfile?.refAnchors
+        .map((a) => Offset(a.x * refSize!.width, a.y * refSize.height))
+        .toList();
+    final storedRefPts = storedRefPtsRaw?.take(_maxAnchorPts).toList();
     if (!mounted) return;
     final cropTimedSteps =
         _timedSteps.where((step) => step.label.startsWith('Обрезка ')).toList();
@@ -837,7 +678,6 @@ class _CompareScreenState extends State<CompareScreen>
       createdAt: _layoutProfile?.createdAt ?? DateTime.now(),
     );
     await LayoutProfileStorage.save(profile);
-    await _loadProfiles();
     if (!mounted) return false;
     setState(() {
       _layoutProfile = profile;
@@ -952,8 +792,7 @@ class _CompareScreenState extends State<CompareScreen>
         createdAt: _layoutProfile?.createdAt ?? DateTime.now(),
       );
       await LayoutProfileStorage.save(profile);
-      await _loadProfiles();
-
+      if (!mounted) return;
       setState(() {
         _layoutProfile = profile;
         _savedRefLabel = name;
@@ -979,90 +818,16 @@ class _CompareScreenState extends State<CompareScreen>
       }
     } finally {
       _finishTimedStage(label: 'Расчёт совмещения');
-      if (mounted)
+      if (mounted) {
         setState(() {
           _calibrating = false;
           if (_calStep == 3) _calStep = 0;
         });
+      }
     }
     if (shouldRunCompare && mounted) {
       await _yieldUi();
       await _runCompare();
-    }
-  }
-
-  // AUTO MODE — применяем сохранённый профиль, предсказываем позиции якорей
-  Future<void> _applyProfile(LayoutProfile profile) async {
-    if (_cmpImg == null) {
-      xpDlg(context, 'Нет образца', 'Загрузите образец.');
-      return;
-    }
-    if (_refImg == null) {
-      xpDlg(context, 'Нет эталона', 'Загрузите эталон.');
-      return;
-    }
-    setState(() => _calibrating = true);
-    try {
-      // Decode sample image size for denormalization of predicted points
-      final cmpSize = await _readImageSize(_cmpImg!);
-      final cmpW = cmpSize.width;
-      final cmpH = cmpSize.height;
-
-      // Предсказываем позиции на новом образце из нормализованных координат профиля
-      // (простое прямое применение — нормализованные позиции те же)
-      final predicted = profile.refAnchors
-          .map(
-            (a) => Offset(a.x, a.y),
-          ) // остаётся нормализованным для AnchorPointScreen
-          .toList();
-
-      // Пользователь быстро корректирует предсказанные точки
-      final srcPtsRaw = await Navigator.push<List<Offset>>(
-        context,
-        MaterialPageRoute(
-          builder: (_) => AnchorPointScreen(
-            imageBytes: _cmpImg!,
-            title: '${profile.name} — уточните точки',
-            predictedPoints: predicted,
-            minPoints: profile.refAnchors.length,
-            maxPoints: profile.refAnchors.length,
-          ),
-        ),
-      );
-      if (srcPtsRaw == null || !mounted) return;
-
-      // Ref точки в пикселях из нормализованных
-      final refW =
-          profile.refImageWidth > 0 ? profile.refImageWidth.toDouble() : cmpW;
-      final refH =
-          profile.refImageHeight > 0 ? profile.refImageHeight.toDouble() : cmpH;
-      final refPtsRaw = profile.refAnchors
-          .map((a) => Offset(a.x * refW, a.y * refH))
-          .toList();
-
-      setState(() => _calibrating = true);
-      final alignResult = await OpenCvService.alignByAnchors(
-        _refImg!,
-        _cmpImg!,
-        refPtsRaw,
-        srcPtsRaw,
-      );
-      if (!mounted) return;
-      if (alignResult == null) return;
-
-      // Показываем результат валидации
-      await _showAlignmentValidation(alignResult, confirmOnly: true);
-      if (!mounted) return;
-
-      setState(() {
-        _layoutProfile = profile;
-        _cmpAligned = alignResult.alignedBytes;
-        _refAligned = alignResult.refCanonicalBytes;
-        _refAnchorPts = refPtsRaw;
-        _cmpAnchorPts = srcPtsRaw;
-      });
-    } finally {
-      if (mounted) setState(() => _calibrating = false);
     }
   }
 
@@ -1222,9 +987,6 @@ class _CompareScreenState extends State<CompareScreen>
     CameraCalibrationProfileService.activeProfileNotifier.removeListener(
       _onCameraCalibrationProfile,
     );
-    _tabs.dispose();
-    _overlayCtrl.dispose();
-    _cmp2Ctrl.dispose();
     _workspaceScrollCtrl.dispose();
     _refAlignCtrl.dispose();
     _cmpAlignCtrl.dispose();
@@ -1247,31 +1009,6 @@ class _CompareScreenState extends State<CompareScreen>
     _refAlignCtrl.value = Matrix4.identity();
     _cmpAlignCtrl.value = Matrix4.identity();
     _resultCmpCtrl.value = Matrix4.identity();
-  }
-
-  // ── Второй эталон: выбор ─────────────────────────
-  Future<void> _pickRef2([ImageSource? source]) async {
-    final src = source ?? await _pickSource();
-    if (src == null) return;
-    final x = await _picker.pickImage(source: src, imageQuality: 92);
-    if (x == null) return;
-    final bytes = await x.readAsBytes();
-    if (!mounted) return;
-    setState(() {
-      _ref2Img = bytes;
-      _ref1Sharpness = null;
-      _ref2Sharpness = null;
-    });
-    // Считаем резкость обоих снимков параллельно
-    final results = await Future.wait([
-      compute(_laplacianSharpness, _refImg!),
-      compute(_laplacianSharpness, bytes),
-    ]);
-    if (mounted)
-      setState(() {
-        _ref1Sharpness = results[0];
-        _ref2Sharpness = results[1];
-      });
   }
 
   // ── Выбрать снимок: слить оба → коррекция перспективы → сохранить ──
@@ -1304,109 +1041,11 @@ class _CompareScreenState extends State<CompareScreen>
         _refAligned = null;
         _layoutProfile = null;
         _refAnchorPts = null;
-        _ref2Img = null;
-        _ref1Sharpness = null;
-        _ref2Sharpness = null;
         _result = null;
         _compareStatus = null;
       });
     } finally {
       if (mounted) setState(() => _stacking = false);
-    }
-  }
-
-  // ── Второй образец: выбор ────────────────────────
-  Future<void> _pickCmp2([ImageSource? source]) async {
-    final src = source ?? await _pickSource();
-    if (src == null) return;
-    final x = await _picker.pickImage(source: src, imageQuality: 92);
-    if (x == null) return;
-    final bytes = await x.readAsBytes();
-    if (!mounted) return;
-    setState(() {
-      _cmp2Img = bytes;
-      _cmp2Ctrl.value = Matrix4.identity();
-      _cmp1Sharpness = null;
-      _cmp2Sharpness = null;
-    });
-    final results = await Future.wait([
-      compute(_laplacianSharpness, _cmpImg!),
-      compute(_laplacianSharpness, bytes),
-    ]);
-    if (mounted)
-      setState(() {
-        _cmp1Sharpness = results[0];
-        _cmp2Sharpness = results[1];
-      });
-  }
-
-  Future<void> _selectCmp(Uint8List ref, [Uint8List? src]) async {
-    setState(() => _stacking = true);
-    try {
-      final fused =
-          src != null ? await OpenCvService.fuseImages(ref, src) : ref;
-      if (!mounted) return;
-      final sz = await _readImageSize(fused);
-      if (!mounted) return;
-      setState(() {
-        _cmpImg = fused;
-        _cmpCropApplied = false;
-        _cmpImgSize = sz;
-        _cmpAligned = null;
-        _cmpAnchorPts = null;
-        _cmp2Img = null;
-        _cmp2Ctrl.value = Matrix4.identity();
-        _cmp1Sharpness = null;
-        _cmp2Sharpness = null;
-        _result = null;
-        _compareStatus = null;
-      });
-    } finally {
-      if (mounted) setState(() => _stacking = false);
-    }
-  }
-
-  Future<ImageSource?> _pickSource() async {
-    return showModalBottomSheet<ImageSource>(
-      context: context,
-      backgroundColor: AppTheme.silver,
-      builder: (_) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ListTile(
-            leading: const Text('🖼️', style: TextStyle(fontSize: 20)),
-            title: const Text('Галерея'),
-            onTap: () => Navigator.pop(context, ImageSource.gallery),
-          ),
-          ListTile(
-            leading: const Text('📷', style: TextStyle(fontSize: 20)),
-            title: const Text('Камера'),
-            onTap: () => Navigator.pop(context, ImageSource.camera),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ── AI анализ качества эталона ───────────────────
-  Future<void> _analyzeReferenceWithAi() async {
-    if (!_allows(ProductCapability.aiAnalysis)) {
-      _showPlanRequired('AI-анализ');
-      return;
-    }
-    if (_refImg == null) return;
-    setState(() {
-      _refAiLoading = true;
-      _refAiResult = null;
-    });
-    try {
-      // Отправляем эталон дважды — Claude оценивает его качество как образца
-      final result = await AiCompareService.analyzeReference(_refImg!);
-      if (mounted) setState(() => _refAiResult = result);
-    } catch (e) {
-      if (mounted) xpDlg(context, 'Ошибка AI', e.toString());
-    } finally {
-      if (mounted) setState(() => _refAiLoading = false);
     }
   }
 
@@ -1513,8 +1152,8 @@ class _CompareScreenState extends State<CompareScreen>
       : _requestedCustomerName.trim();
 
   bool get _hasRequiredJobContext {
-    if (_currentJobNumber.isEmpty) return false;
     if (widget.organizationAccess.organizationId == null) return true;
+    if (_currentJobNumber.isEmpty) return false;
     return _currentCustomerName.isNotEmpty;
   }
 
@@ -1597,8 +1236,6 @@ class _CompareScreenState extends State<CompareScreen>
       _aiResult = null;
       _refBarcodes = [];
       _cmpBarcodes = [];
-      _refOcr = null;
-      _cmpOcr = null;
       _textDiff = null;
       _refLabFingerprint = null;
       _cmpLabFingerprint = null;
@@ -1651,7 +1288,6 @@ class _CompareScreenState extends State<CompareScreen>
       });
       _finishTimedStage(label: 'ЧБ геометрия и Delta E (уровень 2)');
       _setCompareStatus(_geometryStatusLine(compareResult));
-      _tabs.animateTo(3);
 
       if (_allows(ProductCapability.barcode)) {
         _startTimedStage('Этап 2/4: проверяю штрихкоды и QR...');
@@ -1697,8 +1333,6 @@ class _CompareScreenState extends State<CompareScreen>
         final ro = ocrResults[0];
         final co = ocrResults[1];
         setState(() {
-          _refOcr = ro;
-          _cmpOcr = co;
           _textDiff = (!ro.isEmpty || !co.isEmpty)
               ? OcrService.compareTexts(ro.fullText, co.fullText)
               : null;
@@ -2290,14 +1924,11 @@ class _CompareScreenState extends State<CompareScreen>
     try {
       final bytes = await x.readAsBytes();
       if (isRef) {
-        // Сбрасываем второй снимок и пропускаем через _selectRef (перспектива)
+        // Подготавливаем новый эталон и сбрасываем прежний результат.
         if (!mounted) return;
         setState(() {
           _workspaceView = _WorkspaceView.reference;
           _refCropApplied = false;
-          _ref2Img = null;
-          _ref1Sharpness = null;
-          _ref2Sharpness = null;
         });
         await _selectRef(bytes);
       } else {
@@ -2452,59 +2083,70 @@ class _CompareScreenState extends State<CompareScreen>
       _aiResult = null;
       _refBarcodes = [];
       _cmpBarcodes = [];
-      _refOcr = null;
-      _cmpOcr = null;
       _textDiff = null;
       _resetZoomControllers();
-      _tabs.animateTo(0);
     });
   }
 
   Widget _workspaceCommandBar() {
     return LayoutBuilder(
-      builder: (context, constraints) {
-        final compact = constraints.maxWidth < 760;
-        final showAllModeLabels = constraints.maxWidth >= 430;
-        return Container(
-          height: 48,
-          padding: const EdgeInsets.symmetric(horizontal: 8),
+      builder: (context, _) {
+        return DecoratedBox(
+          key: const ValueKey('workspace-command-bar'),
           decoration: const BoxDecoration(
-            color: AppTheme.workspaceChrome,
+            gradient: LinearGradient(
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+              colors: [Color(0xFF223238), Color(0xFF30464D)],
+            ),
             border: Border(
-              bottom: BorderSide(color: AppTheme.workspaceChromeLine),
+              bottom: BorderSide(color: Color(0xFF568087)),
             ),
           ),
-          child: Row(
-            children: [
-              if (widget.onBackToWorks != null) ...[
-                IconButton(
-                  key: const ValueKey('back-to-works'),
-                  tooltip: 'Вернуться к работам',
-                  onPressed: widget.onBackToWorks,
-                  icon: const Icon(Icons.arrow_back_rounded, size: 19),
-                ),
-                const SizedBox(width: 3),
-              ],
-              Expanded(
-                child: _workspaceModeSelector(
-                  compact: compact,
-                  showAllLabels: showAllModeLabels,
-                ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            child: SizedBox(
+              height: 38,
+              child: Row(
+                children: [
+                  if (widget.onBackToWorks != null) ...[
+                    IconButton(
+                      key: const ValueKey('back-to-works'),
+                      tooltip: widget.backTooltip,
+                      onPressed: widget.onBackToWorks,
+                      style: _workspaceIconButtonStyle(),
+                      icon: const Icon(Icons.arrow_back_rounded, size: 18),
+                    ),
+                    const SizedBox(width: 4),
+                  ],
+                  Expanded(child: _workspaceModeSelector()),
+                  const SizedBox(width: 5),
+                  if (widget.onNavigate != null) ...[
+                    if (widget.canOpenChat)
+                      _workspaceAppTool(
+                        key: const ValueKey('comparison-open-chat-action'),
+                        icon: Icons.chat_bubble_outline_rounded,
+                        tooltip: 'Чат',
+                        onTap: () => widget.onNavigate!(2),
+                      ),
+                    _workspaceAppTool(
+                      key: const ValueKey('comparison-open-settings-action'),
+                      icon: Icons.tune_rounded,
+                      tooltip: 'Настройки',
+                      onTap: () => widget.onNavigate!(3),
+                    ),
+                  ],
+                  _workspaceOverflowMenu(),
+                ],
               ),
-              const SizedBox(width: 6),
-              ..._workspaceContextTools(compact: compact),
-              _workspaceOverflowMenu(),
-            ],
+            ),
           ),
         );
       },
     );
   }
 
-  Widget _workspaceModeSelector({
-    required bool compact,
-    required bool showAllLabels,
-  }) {
+  Widget _workspaceModeSelector() {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -2512,11 +2154,6 @@ class _CompareScreenState extends State<CompareScreen>
           child: _workspaceModeButton(
             _WorkspaceView.reference,
             'Эталон',
-            Icons.image_outlined,
-            ready: _refImg != null,
-            compact: compact,
-            showLabel:
-                showAllLabels || _workspaceView == _WorkspaceView.reference,
           ),
         ),
         const SizedBox(width: 3),
@@ -2524,10 +2161,6 @@ class _CompareScreenState extends State<CompareScreen>
           child: _workspaceModeButton(
             _WorkspaceView.sample,
             'Образец',
-            Icons.photo_camera_outlined,
-            ready: _cmpImg != null,
-            compact: compact,
-            showLabel: showAllLabels || _workspaceView == _WorkspaceView.sample,
           ),
         ),
         const SizedBox(width: 3),
@@ -2535,11 +2168,6 @@ class _CompareScreenState extends State<CompareScreen>
           child: _workspaceModeButton(
             _WorkspaceView.comparison,
             'Сравнение',
-            Icons.compare_outlined,
-            ready: _result != null,
-            compact: compact,
-            showLabel:
-                showAllLabels || _workspaceView == _WorkspaceView.comparison,
           ),
         ),
       ],
@@ -2549,11 +2177,7 @@ class _CompareScreenState extends State<CompareScreen>
   Widget _workspaceModeButton(
     _WorkspaceView view,
     String label,
-    IconData icon, {
-    required bool ready,
-    required bool compact,
-    required bool showLabel,
-  }) {
+  ) {
     final selected = _workspaceView == view;
     final calibrationView = _calStep == 1
         ? _WorkspaceView.reference
@@ -2564,158 +2188,126 @@ class _CompareScreenState extends State<CompareScreen>
     return Tooltip(
       message: label,
       child: InkWell(
+        key: ValueKey('workspace-mode-${view.name}'),
         onTap: enabled ? () => _selectWorkspace(view) : null,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(10),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 140),
           height: 36,
-          padding: EdgeInsets.symmetric(horizontal: compact ? 5 : 10),
+          padding: const EdgeInsets.symmetric(horizontal: 4),
           decoration: BoxDecoration(
-            color: selected ? const Color(0xFFBEDDE0) : Colors.transparent,
-            borderRadius: BorderRadius.circular(8),
+            color: selected ? const Color(0xA34D747A) : const Color(0x38394F55),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color:
+                  selected ? const Color(0xFF86B5BA) : const Color(0x70677F84),
+            ),
+            boxShadow: [
+              const BoxShadow(
+                color: Color(0x660C171A),
+                blurRadius: 5,
+                offset: Offset(0, 3),
+              ),
+              if (selected)
+                const BoxShadow(
+                  color: Color(0x335EC5CC),
+                  blurRadius: 7,
+                ),
+            ],
           ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  Icon(
-                    icon,
-                    size: 17,
-                    color: selected
-                        ? const Color(0xFF1F747A)
-                        : const Color(0xFF6B7C83),
-                  ),
-                  if (ready)
-                    const Positioned(
-                      right: -4,
-                      top: -3,
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: Color(0xFF55B788),
-                          shape: BoxShape.circle,
-                        ),
-                        child: SizedBox(width: 6, height: 6),
-                      ),
-                    ),
+          child: Center(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 10.5,
+                fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                color: enabled
+                    ? selected
+                        ? const Color(0xFFF3FBFC)
+                        : const Color(0xFFD1DEE1)
+                    : const Color(0xFF7F9298),
+                shadows: const [
+                  Shadow(color: Color(0x88000000), blurRadius: 3),
                 ],
               ),
-              if (showLabel) ...[
-                const SizedBox(width: 6),
-                Flexible(
-                  child: Text(
-                    label,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-                      color: enabled
-                          ? selected
-                              ? const Color(0xFF195F64)
-                              : AppTheme.graphiteSoft
-                          : const Color(0xFF9AA7AC),
-                    ),
-                  ),
-                ),
-              ],
-            ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  List<Widget> _workspaceContextTools({required bool compact}) {
-    final buttons = <Widget>[];
-    void add(IconData icon, String tooltip, VoidCallback? action) {
-      buttons.add(_hudToolButton(icon, tooltip, action));
-    }
-
-    switch (_workspaceView) {
-      case _WorkspaceView.reference:
-        add(Icons.upload_file, 'Загрузить эталон', () => _pickImage(true));
-        add(Icons.crop, 'Рамка эталона',
-            _refImg == null ? null : () => _cropImage(true));
-        if (!compact) {
-          add(Icons.save_outlined, 'Сохранить эталон',
-              _refImg == null ? null : _saveReference);
-        }
-      case _WorkspaceView.sample:
-        add(Icons.add_a_photo_outlined, 'Загрузить образец',
-            () => _pickImage(false));
-        add(Icons.crop, 'Рамка образца',
-            _cmpImg == null ? null : () => _cropImage(false));
-        if (!compact) {
-          add(Icons.control_camera_outlined, 'Совмещение',
-              _refImg != null && _cmpImg != null ? _startCalibration : null);
-        }
-      case _WorkspaceView.comparison:
-        if (_result == null) {
-          add(Icons.compare, 'Запустить сравнение',
-              _canStartCompareAction ? _runCompare : null);
-        }
-    }
-    if (!compact) {
-      final controller = switch (_workspaceView) {
-        _WorkspaceView.reference => _refAlignCtrl,
-        _WorkspaceView.sample => _cmpAlignCtrl,
-        _WorkspaceView.comparison => _resultCmpCtrl,
-      };
-      final hasImage = switch (_workspaceView) {
-        _WorkspaceView.reference => _refImg != null,
-        _WorkspaceView.sample => _cmpImg != null,
-        _WorkspaceView.comparison => _result != null,
-      };
-      add(Icons.remove, 'Уменьшить',
-          hasImage ? () => _zoomWorkspace(controller, 0.8) : null);
-      add(Icons.add, 'Увеличить',
-          hasImage ? () => _zoomWorkspace(controller, 1.25) : null);
-      add(Icons.fit_screen, 'Показать целиком',
-          hasImage ? () => controller.value = Matrix4.identity() : null);
-    }
-    return buttons;
+  ButtonStyle _workspaceIconButtonStyle() {
+    return IconButton.styleFrom(
+      foregroundColor: const Color(0xFFD5E2E5),
+      minimumSize: const Size(38, 38),
+      maximumSize: const Size(38, 38),
+      backgroundColor: const Color(0x4D394F55),
+      side: const BorderSide(color: Color(0x70677F84)),
+      shadowColor: const Color(0xAA0C171A),
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+    );
   }
 
-  Widget _hudToolButton(
-    IconData icon,
-    String tooltip,
-    VoidCallback? onTap,
-  ) {
+  Widget _workspaceAppTool({
+    required Key key,
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback onTap,
+  }) {
     return Tooltip(
       message: tooltip,
       child: IconButton(
+        key: key,
         onPressed: onTap,
+        style: _workspaceIconButtonStyle(),
         icon: Icon(icon, size: 19),
-        color: AppTheme.graphiteSoft,
-        disabledColor: const Color(0xFFADB7BB),
-        style: IconButton.styleFrom(
-          minimumSize: const Size(38, 38),
-          maximumSize: const Size(38, 38),
-          backgroundColor: AppTheme.surfaceMuted,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
-        ),
       ),
     );
   }
 
   Widget _workspaceOverflowMenu() {
-    return PopupMenuButton<String>(
-      tooltip: 'Ещё',
-      color: const Color(0xFFF7FAFC),
-      icon: const Icon(Icons.more_vert, color: AppTheme.graphiteSoft),
-      onSelected: _handleWorkspaceMenu,
-      itemBuilder: (context) => const [
-        PopupMenuItem(value: 'steps', child: Text('Все этапы')),
-        PopupMenuItem(value: 'data', child: Text('Данные и параметры')),
-        PopupMenuDivider(),
-        PopupMenuItem(value: 'new', child: Text('Новая проверка')),
-        PopupMenuItem(value: 'save', child: Text('Сохранить результат')),
-        PopupMenuItem(value: 'export', child: Text('Экспорт…')),
-        PopupMenuItem(value: 'ai', child: Text('AI-анализ')),
-        PopupMenuDivider(),
-        PopupMenuItem(value: 'shortcuts', child: Text('Горячие клавиши')),
-      ],
+    return Container(
+      width: 38,
+      height: 38,
+      margin: const EdgeInsets.only(left: 2),
+      decoration: BoxDecoration(
+        color: const Color(0x4D394F55),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0x70677F84)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x660C171A),
+            blurRadius: 5,
+            offset: Offset(0, 3),
+          ),
+        ],
+      ),
+      child: PopupMenuButton<String>(
+        tooltip: 'Ещё',
+        padding: EdgeInsets.zero,
+        color: const Color(0xFFF7FAFC),
+        icon: const Icon(
+          Icons.more_horiz_rounded,
+          size: 19,
+          color: Color(0xFFD5E2E5),
+        ),
+        onSelected: _handleWorkspaceMenu,
+        itemBuilder: (context) => const [
+          PopupMenuItem(value: 'steps', child: Text('Все этапы')),
+          PopupMenuItem(value: 'data', child: Text('Данные и параметры')),
+          PopupMenuDivider(),
+          PopupMenuItem(value: 'new', child: Text('Новая проверка')),
+          PopupMenuItem(value: 'save', child: Text('Сохранить результат')),
+          PopupMenuItem(value: 'export', child: Text('Экспорт…')),
+          PopupMenuItem(value: 'ai', child: Text('AI-анализ')),
+          PopupMenuDivider(),
+          PopupMenuItem(value: 'shortcuts', child: Text('Горячие клавиши')),
+        ],
+      ),
     );
   }
 
@@ -2778,14 +2370,7 @@ class _CompareScreenState extends State<CompareScreen>
               Positioned(
                 top: 12,
                 left: 12,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _activeWorkflowHud(maxWidth: constraints.maxWidth),
-                    const SizedBox(height: 5),
-                    _activeStatusHud(maxWidth: constraints.maxWidth),
-                  ],
-                ),
+                child: _activeStatusHud(maxWidth: constraints.maxWidth),
               ),
             ],
             if (_workspaceView != _WorkspaceView.comparison || _result == null)
@@ -2910,7 +2495,7 @@ class _CompareScreenState extends State<CompareScreen>
                       shape: BoxShape.circle,
                       boxShadow: [
                         BoxShadow(
-                          color: statusColor.withOpacity(0.55),
+                          color: statusColor.withValues(alpha: 0.55),
                           blurRadius: 8,
                         ),
                       ],
@@ -3012,101 +2597,65 @@ class _CompareScreenState extends State<CompareScreen>
     );
   }
 
-  Widget _activeWorkflowHud({required double maxWidth}) {
+  _WorkflowAction? _primaryScreenAction() {
+    if (_result != null || _calStep != 0) return null;
     final actions = _workflowActions();
     final action = _currentWorkflowAction(actions);
-    final index = actions.indexOf(action) + 1;
-    final narrow = maxWidth < 620;
-    final width = narrow ? min(178.0, (maxWidth - 30) * 0.54) : 264.0;
-    final completed = actions.where((item) => item.done).length;
-
-    return ConstrainedBox(
-      constraints: BoxConstraints(maxWidth: width),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 5),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            TextButton(
-              key: const ValueKey('current-workflow-action'),
-              onPressed: action.onTap,
-              style: TextButton.styleFrom(
-                foregroundColor: const Color(0xFF4F7965),
-                disabledForegroundColor: const Color(0xFF7E8D93),
-                padding: EdgeInsets.zero,
-                minimumSize: const Size(0, 28),
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                alignment: Alignment.centerLeft,
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (action.busy) ...[
-                    const SizedBox(
-                      width: 12,
-                      height: 12,
-                      child: CircularProgressIndicator(strokeWidth: 1.5),
-                    ),
-                    const SizedBox(width: 7),
-                  ],
-                  Flexible(
-                    child: PixelText(
-                      text: action.busy
-                          ? 'ВЫПОЛНЯЕТСЯ…'
-                          : _workflowButtonLabel(action).toUpperCase(),
-                      color: action.onTap == null && !action.busy
-                          ? const Color(0xFF7E8D93)
-                          : _hudGreen,
-                    ),
-                  ),
-                  if (!action.busy) ...[
-                    const SizedBox(width: 6),
-                    const Icon(
-                      Icons.arrow_forward,
-                      size: 13,
-                      color: _hudGreen,
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            const SizedBox(height: 7),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: List.generate(actions.length, (stepIndex) {
-                final isDone = stepIndex < completed;
-                final isCurrent = stepIndex == index - 1;
-                return Container(
-                  key: ValueKey('workflow-progress-${stepIndex + 1}'),
-                  width: narrow ? 12 : 18,
-                  height: 2,
-                  margin: EdgeInsets.only(left: stepIndex == 0 ? 0 : 4),
-                  color: isDone
-                      ? const Color(0xFF4D9D89)
-                      : isCurrent
-                          ? const Color(0xFF2B9DA6)
-                          : const Color(0xFFADB8BC),
-                );
-              }),
-            ),
-          ],
-        ),
-      ),
-    );
+    return action.number == '8' ? null : action;
   }
 
-  String _workflowButtonLabel(_WorkflowAction action) {
+  String _screenActionLabel(_WorkflowAction action) {
     return switch (action.number) {
       '1' => 'Указать работу',
       '2' => 'Загрузить эталон',
-      '3' => 'Настроить рамку эталона',
+      '3' => 'Выделить область эталона',
       '4' => 'Загрузить образец',
-      '5' => 'Настроить рамку отпечатка',
-      '6' => 'Начать совмещение',
-      '7' => _result == null ? 'Сравнить' : 'Сравнить снова',
+      '5' => 'Выделить область образца',
+      '6' => 'Совместить изображения',
+      '7' => 'Запустить сравнение',
       _ => _aiResult == null ? 'Запустить AI' : 'Повторить AI',
     };
+  }
+
+  Widget _screenActionPrompt(_WorkflowAction action) {
+    final enabled = action.onTap != null && !action.busy;
+    final label = action.busy ? 'Выполняется…' : _screenActionLabel(action);
+    return IgnorePointer(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 14,
+              color: enabled ? Colors.white : const Color(0xFFBAC8CC),
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0.2,
+              shadows: const [
+                Shadow(color: Color(0xFF081519), blurRadius: 4),
+                Shadow(color: Color(0xFF081519), blurRadius: 12),
+              ],
+            ),
+          ),
+          if (enabled) ...[
+            const SizedBox(height: 5),
+            const Text(
+              'Нажмите на экран',
+              style: TextStyle(
+                fontSize: 9,
+                color: Color(0xFFD7EDF2),
+                fontFamily: 'monospace',
+                letterSpacing: 0.7,
+                shadows: [
+                  Shadow(color: Color(0xFF081519), blurRadius: 7),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   Widget _activeParameterStrip() {
@@ -3464,24 +3013,35 @@ class _CompareScreenState extends State<CompareScreen>
           child: InkWell(
             key: const ValueKey('result-loupe-control'),
             onTap: _toggleAreaLoupeControl,
-            borderRadius: BorderRadius.circular(3),
+            borderRadius: BorderRadius.circular(12),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 140),
-              width: 44,
-              height: 46,
+              width: 48,
+              height: 50,
               decoration: BoxDecoration(
                 color:
-                    active ? const Color(0xB82A3539) : const Color(0x8230393D),
-                borderRadius: BorderRadius.circular(3),
+                    active ? const Color(0xE0354146) : const Color(0xC52A363A),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: active
+                      ? const Color(0xFFFFA23F)
+                      : const Color(0xFF66858B),
+                ),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x44000000),
+                    blurRadius: 8,
+                    offset: Offset(0, 3),
+                  ),
+                ],
               ),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  CustomPaint(
-                    size: const Size(24, 24),
-                    painter: _HudLoupePainter(
-                      color: active ? const Color(0xFFFFA23F) : _hudGreen,
-                    ),
+                  Icon(
+                    active ? Icons.zoom_out_map_rounded : Icons.zoom_in_rounded,
+                    size: 22,
+                    color: active ? const Color(0xFFFFA23F) : _hudGreen,
                   ),
                   PixelText(
                     text: '$scale%',
@@ -3521,89 +3081,32 @@ class _CompareScreenState extends State<CompareScreen>
     });
   }
 
-  Widget _inspectionToolsHud() {
-    Widget tool(_InspectionTool value, String label, IconData icon) {
-      final selected = _inspectionTool == value;
-      return Expanded(
-        child: Tooltip(
-          message: label,
-          child: InkWell(
-            key: ValueKey('result-tool-${value.name}'),
-            onTap: () => _toggleInspectionTool(value),
-            borderRadius: BorderRadius.circular(9),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 140),
-              height: 40,
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              decoration: BoxDecoration(
-                color: selected ? const Color(0xFFD7E9EA) : Colors.transparent,
-                borderRadius: BorderRadius.circular(9),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    icon,
-                    size: 17,
-                    color: selected
-                        ? const Color(0xFF1F747A)
-                        : const Color(0xFF6B7C83),
-                  ),
-                  const SizedBox(width: 6),
-                  Flexible(
-                    child: Text(
-                      label,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight:
-                            selected ? FontWeight.w800 : FontWeight.w600,
-                        color: selected
-                            ? const Color(0xFF195F64)
-                            : AppTheme.graphiteSoft,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-
-    return Semantics(
-      label: 'Инструменты контроля',
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 5),
-        child: Row(
-          children: [
-            tool(_InspectionTool.point, 'Контроль точки', Icons.gps_fixed),
-            tool(_InspectionTool.loupe, 'Лупа', Icons.zoom_in),
-          ],
-        ),
-      ),
-    );
-  }
-
   List<_WorkflowAction> _workflowActions() {
+    final personal = widget.organizationAccess.organizationId == null;
     final hasJob = _hasRequiredJobContext;
     final hasRef = _refImg != null;
     final hasSample = _cmpImg != null;
     final aligned = _canRunAlignedCompare;
-    final refCropDone =
-        _refCropApplied || hasSample || aligned || _result != null;
+    // Загрузка или обрезка образца не завершает рамку эталона. Иначе при
+    // подготовке файлов в обратном порядке действие «Рамка эталона» исчезало.
+    final refCropDone = _refCropApplied || aligned || _result != null;
     final sampleCropDone = _cmpCropApplied || aligned || _result != null;
     return [
       _WorkflowAction(
         '1',
-        widget.initialJob == null
-            ? 'Работа и заказчик'
-            : 'Работа ${_currentJobNumber.trim()}',
+        personal
+            ? 'Личная проверка'
+            : widget.initialJob == null
+                ? 'Работа и заказчик'
+                : 'Работа ${_currentJobNumber.trim()}',
         Icons.assignment_outlined,
         done: hasJob,
         active: !hasJob,
-        onTap: widget.initialJob == null ? _editJobNumber : null,
+        onTap: personal
+            ? null
+            : widget.initialJob == null
+                ? _editJobNumber
+                : null,
       ),
       _WorkflowAction(
         '2',
@@ -3711,7 +3214,7 @@ class _CompareScreenState extends State<CompareScreen>
             decoration: BoxDecoration(
               color: action.active ? Colors.white : const Color(0xFFF5F7F8),
               border: Border.all(
-                color: color.withOpacity(action.active ? 0.95 : 0.45),
+                color: color.withValues(alpha: action.active ? 0.95 : 0.45),
               ),
               borderRadius: BorderRadius.circular(8),
               boxShadow: action.active ? AppTheme.shadowSubtle : null,
@@ -3809,14 +3312,6 @@ class _CompareScreenState extends State<CompareScreen>
     });
   }
 
-  void _zoomWorkspace(TransformationController controller, double factor) {
-    final matrix = controller.value.clone()
-      ..multiply(Matrix4.diagonal3Values(factor, factor, 1));
-    final scale = matrix.getMaxScaleOnAxis();
-    if (scale < 0.5 || scale > 10.0) return;
-    controller.value = matrix;
-  }
-
   Widget _workspaceBody() {
     if (_calStep != 0) return _calibrationWorkbench();
     return switch (_workspaceView) {
@@ -3834,23 +3329,7 @@ class _CompareScreenState extends State<CompareScreen>
           : (_refImg == null ? 'Загрузите цифровой файл' : 'Эталон готов'),
       bytes: _refImg,
       transformationController: _refAlignCtrl,
-      placeholderIcon: Icons.image_outlined,
-      placeholder: 'Нажмите, чтобы загрузить эталон',
-      onTap: () => _pickImage(true),
       onOpen: _refImg != null ? () => _openFullScreen(_refImg!) : null,
-      actions: [
-        _toolBtn(Icons.upload_file, 'Загрузить', () => _pickImage(true)),
-        _toolBtn(
-          Icons.crop,
-          'Рамка',
-          _refImg != null ? () => _cropImage(true) : null,
-        ),
-        _toolBtn(
-          Icons.save,
-          'Сохранить',
-          _refImg != null ? _saveReference : null,
-        ),
-      ],
     );
   }
 
@@ -3862,31 +3341,9 @@ class _CompareScreenState extends State<CompareScreen>
           : 'Основная зона анализа',
       bytes: _cmpAligned ?? _cmpImg,
       transformationController: _cmpAlignCtrl,
-      placeholderIcon: Icons.photo_camera_outlined,
-      placeholder: 'Нажмите, чтобы загрузить образец',
-      onTap: () => _pickImage(false),
       onOpen: _cmpImg != null
           ? () => _openFullScreen(_cmpAligned ?? _cmpImg!)
           : null,
-      actions: [
-        _toolBtn(Icons.add_a_photo, 'Загрузить', () => _pickImage(false)),
-        if (_cmpImg != null)
-          _toolBtn(
-            Icons.note_add_outlined,
-            'Новый отпечаток',
-            _imageBusy ? null : _newSample,
-          ),
-        _toolBtn(
-          Icons.crop,
-          'Рамка',
-          _cmpImg != null ? () => _cropImage(false) : null,
-        ),
-        _toolBtn(
-          Icons.tune,
-          'Совмещение',
-          _refImg != null && _cmpImg != null ? _startCalibration : null,
-        ),
-      ],
     );
   }
 
@@ -3894,16 +3351,14 @@ class _CompareScreenState extends State<CompareScreen>
     required String title,
     required String subtitle,
     required Uint8List? bytes,
-    required IconData placeholderIcon,
-    required String placeholder,
-    required VoidCallback onTap,
     required TransformationController transformationController,
     VoidCallback? onOpen,
-    List<Widget> actions = const [],
   }) {
     const ratio = 16 / 9;
     final busy = _stacking || _imageBusy;
     final busyLabel = _stacking ? 'Объединение снимков...' : _imageBusyLabel;
+    final action = _primaryScreenAction();
+    final actionTap = action?.busy == false ? action?.onTap : null;
     return Semantics(
       label: '$title. $subtitle',
       child: ClipRRect(
@@ -3934,10 +3389,13 @@ class _CompareScreenState extends State<CompareScreen>
                       ],
                     ),
                   )
-                : bytes != null
-                    ? GestureDetector(
-                        onDoubleTap: onOpen,
-                        child: ClipRect(
+                : Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      if (bytes == null)
+                        const WorkspacePhotoBackground()
+                      else
+                        ClipRect(
                           child: InteractiveViewer(
                             transformationController: transformationController,
                             boundaryMargin: const EdgeInsets.all(80),
@@ -3950,40 +3408,25 @@ class _CompareScreenState extends State<CompareScreen>
                             ),
                           ),
                         ),
-                      )
-                    : InkWell(
-                        onTap: busy ? null : onTap,
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              placeholderIcon,
-                              size: 42,
-                              color: const Color(0xFF526872),
+                      if (action != null)
+                        Positioned.fill(
+                          child: Semantics(
+                            button: true,
+                            label: _screenActionLabel(action),
+                            child: InkWell(
+                              key: const ValueKey('workspace-primary-action'),
+                              onTap: actionTap,
+                              onDoubleTap: onOpen,
+                              child: Center(child: _screenActionPrompt(action)),
                             ),
-                            const SizedBox(height: 10),
-                            Text(
-                              placeholder,
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: Color(0xFFB2C4CB),
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            const Text(
-                              'JPEG · PNG · камера · галерея',
-                              style: TextStyle(
-                                fontSize: 9,
-                                color: Color(0xFF607681),
-                                fontFamily: 'monospace',
-                                letterSpacing: 0.6,
-                              ),
-                            ),
-                          ],
+                          ),
+                        )
+                      else if (onOpen != null)
+                        Positioned.fill(
+                          child: GestureDetector(onDoubleTap: onOpen),
                         ),
-                      ),
+                    ],
+                  ),
           ),
         ),
       ),
@@ -3992,6 +3435,8 @@ class _CompareScreenState extends State<CompareScreen>
 
   Widget _comparisonStage() {
     final r = _result;
+    final action = _primaryScreenAction();
+    final actionTap = action?.busy == false ? action?.onTap : null;
     return LayoutBuilder(
       builder: (context, constraints) {
         final availableWidth = constraints.maxWidth.isFinite
@@ -4074,28 +3519,30 @@ class _CompareScreenState extends State<CompareScreen>
                     )
                   else
                     Expanded(
-                      child: Container(
-                        color: AppTheme.canvas,
-                        child: Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.difference_outlined,
-                                size: 40,
-                                color: Colors.white.withOpacity(0.34),
-                              ),
-                              const SizedBox(height: 8),
-                              const Text(
-                                'После сравнения здесь появится карта отличий',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.white60,
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          if (_refImg == null && _cmpImg == null)
+                            const WorkspacePhotoBackground()
+                          else
+                            const ColoredBox(color: AppTheme.canvas),
+                          if (action != null)
+                            Positioned.fill(
+                              child: Semantics(
+                                button: true,
+                                label: _screenActionLabel(action),
+                                child: InkWell(
+                                  key: const ValueKey(
+                                    'workspace-primary-action',
+                                  ),
+                                  onTap: actionTap,
+                                  child: Center(
+                                    child: _screenActionPrompt(action),
+                                  ),
                                 ),
                               ),
-                            ],
-                          ),
-                        ),
+                            ),
+                        ],
                       ),
                     ),
                 ],
@@ -4284,7 +3731,7 @@ class _CompareScreenState extends State<CompareScreen>
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.62),
+                color: Colors.white.withValues(alpha: 0.62),
                 borderRadius: BorderRadius.circular(7),
                 border: Border.all(color: const Color(0xFFD6E0EA)),
               ),
@@ -4364,152 +3811,6 @@ class _CompareScreenState extends State<CompareScreen>
     );
   }
 
-  Widget _mapModeSelector() {
-    Widget item(_ResultMapMode mode, String label) {
-      final enabled = _inspectionTool != _InspectionTool.point;
-      final selected = enabled && _resultMapMode == mode;
-      const activeColor = Color(0xFFDCEEFF);
-      const inactiveColor = Color(0xFFE5E7EB);
-      return Expanded(
-        child: InkWell(
-          onTap: enabled ? () => _selectResultMapMode(mode) : null,
-          borderRadius: BorderRadius.circular(16),
-          child: Container(
-            height: 46,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: selected ? activeColor : inactiveColor,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: selected
-                    ? const Color(0xFF2563EB)
-                    : const Color(0xFFD1D5DB),
-                width: selected ? 1.5 : 1,
-              ),
-              boxShadow: selected
-                  ? [
-                      const BoxShadow(
-                        color: Color(0x260F172A),
-                        blurRadius: 7,
-                        offset: Offset(0, 3),
-                      ),
-                    ]
-                  : null,
-            ),
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                color: selected
-                    ? const Color(0xFF174EA6)
-                    : enabled
-                        ? const Color(0xFF475569)
-                        : const Color(0xFF9CA3AF),
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-
-    Widget tool(_InspectionTool tool, IconData icon, String label) {
-      final selected = _inspectionTool == tool;
-      const activeColor = Color(0xFF2563EB);
-      const inactiveColor = Color(0xFFE5E7EB);
-      return Expanded(
-        child: InkWell(
-          onTap: () => _toggleInspectionTool(tool),
-          borderRadius: BorderRadius.circular(16),
-          child: Container(
-            height: 46,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: selected ? activeColor : inactiveColor,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: selected
-                    ? const Color(0xFF1D4ED8)
-                    : const Color(0xFFD1D5DB),
-              ),
-              boxShadow: selected
-                  ? [
-                      const BoxShadow(
-                        color: Color(0x260F172A),
-                        blurRadius: 7,
-                        offset: Offset(0, 3),
-                      ),
-                    ]
-                  : null,
-            ),
-            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-              Icon(icon,
-                  size: 18,
-                  color: selected ? Colors.white : const Color(0xFF64748B)),
-              const SizedBox(width: 6),
-              Flexible(
-                child: Text(
-                  label,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: selected ? Colors.white : const Color(0xFF475569),
-                  ),
-                ),
-              ),
-            ]),
-          ),
-        ),
-      );
-    }
-
-    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      const Text(
-        'Инструмент контроля',
-        style: TextStyle(
-          fontSize: 10,
-          color: Color(0xFF64748B),
-          fontWeight: FontWeight.w700,
-        ),
-      ),
-      const SizedBox(height: 5),
-      Row(children: [
-        tool(_InspectionTool.point, Icons.gps_fixed, 'Контроль точки'),
-        const SizedBox(width: 6),
-        tool(_InspectionTool.loupe, Icons.zoom_in, 'Лупа области'),
-      ]),
-      const SizedBox(height: 9),
-      const Text(
-        'Режим изображения',
-        style: TextStyle(
-          fontSize: 10,
-          color: Color(0xFF64748B),
-          fontWeight: FontWeight.w700,
-        ),
-      ),
-      const SizedBox(height: 5),
-      Row(
-        children: [
-          item(
-            _ResultMapMode.deltaE,
-            _exactDeltaEComputing
-                ? 'ΔE: расчёт...'
-                : _exactDeltaERequested
-                    ? 'ΔE: в очереди'
-                    : _exactDeltaEReady
-                        ? 'ΔE точно'
-                        : 'ΔE цвет',
-          ),
-          const SizedBox(width: 6),
-          item(_ResultMapMode.geometry, 'Геометрия ЧБ'),
-          const SizedBox(width: 6),
-          item(_ResultMapMode.overlay, 'Наложение'),
-        ],
-      ),
-    ]);
-  }
-
   void _toggleInspectionTool(_InspectionTool tool) {
     final turningOff = _inspectionTool == tool;
     final resetLoupe = _inspectionTool == _InspectionTool.loupe && turningOff;
@@ -4529,39 +3830,6 @@ class _CompareScreenState extends State<CompareScreen>
         _pointProbe = null;
       }
     });
-  }
-
-  Widget _mapLegend() {
-    if (_inspectionTool == _InspectionTool.point) {
-      return const Text(
-        'Контроль точки: кликните по изображению для измерения выбранной апертурой.',
-        style: TextStyle(fontSize: 10, color: Colors.grey),
-      );
-    }
-    if (_resultMapMode == _ResultMapMode.geometry) {
-      return Row(
-        children: [
-          _legendItem(const Color(0xFF285AFF), 'нет в образце'),
-          const SizedBox(width: 12),
-          _legendItem(const Color(0xFFE61E78), 'лишнее в образце'),
-        ],
-      );
-    }
-    if (_resultMapMode == _ResultMapMode.overlay) {
-      return const Text(
-        'Ползунок показывает эталон ↔ образец без подсветки отличий.',
-        style: TextStyle(fontSize: 10, color: Colors.grey),
-      );
-    }
-    return Row(
-      children: [
-        _legendItem(const Color(0xFF1EC81E), 'ΔE < 3'),
-        const SizedBox(width: 12),
-        _legendItem(const Color(0xFFE8A000), 'ΔE 3–6'),
-        const SizedBox(width: 12),
-        _legendItem(const Color(0xFFDC1414), 'ΔE > 6'),
-      ],
-    );
   }
 
   Widget _resultMapOverlay(CompareResult r) {
@@ -4738,10 +4006,10 @@ class _CompareScreenState extends State<CompareScreen>
             child: Row(children: [
               const Icon(Icons.zoom_in, size: 16, color: Color(0xFF1D6E68)),
               const SizedBox(width: 7),
-              Expanded(
+              const Expanded(
                 child: Text(
                   'Область приближена в окне сравнения. Двигайте ползунок: эталон ↔ образец.',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 11,
                     height: 1.35,
                     color: Colors.black54,
@@ -4801,6 +4069,14 @@ class _CompareScreenState extends State<CompareScreen>
   }
 
   Widget _checkProtocolListPanel() {
+    if (!widget.showStoredHistory) {
+      final current = _result;
+      if (current == null) return const SizedBox.shrink();
+      return _checkProtocolTable(
+        title: 'Текущая проверка',
+        stages: _checkProtocolStages(current),
+      );
+    }
     return ValueListenableBuilder<List<CheckProtocol>>(
       valueListenable: CheckHistoryService.checks,
       builder: (context, protocols, _) {
@@ -4900,7 +4176,7 @@ class _CompareScreenState extends State<CompareScreen>
             color: AppTheme.blueDark,
             child: Text(
               title,
-              style: TextStyle(
+              style: const TextStyle(
                 color: Colors.white,
                 fontSize: 12,
                 fontWeight: FontWeight.bold,
@@ -5090,8 +4366,8 @@ class _CompareScreenState extends State<CompareScreen>
     return Container(
       padding: const EdgeInsets.all(9),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.10),
-        border: Border.all(color: color.withOpacity(0.65)),
+        color: color.withValues(alpha: 0.10),
+        border: Border.all(color: color.withValues(alpha: 0.65)),
       ),
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Icon(Icons.control_camera, size: 16, color: color),
@@ -5184,7 +4460,7 @@ class _CompareScreenState extends State<CompareScreen>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
       decoration: BoxDecoration(
-        color: ok ? AppTheme.simHigh.withOpacity(0.10) : Colors.white,
+        color: ok ? AppTheme.simHigh.withValues(alpha: 0.10) : Colors.white,
         border: Border.all(color: ok ? AppTheme.simHigh : AppTheme.silverDark),
       ),
       child: Text(
@@ -5483,7 +4759,7 @@ class _CompareScreenState extends State<CompareScreen>
 
   void _zoomCalibration(TransformationController ctrl, double factor) {
     final m = ctrl.value.clone();
-    m.scale(factor, factor);
+    m.scaleByDouble(factor, factor, 1, 1);
     final s = m.getMaxScaleOnAxis();
     if (s < 0.8 || s > 10.0) return;
     ctrl.value = m;
@@ -5512,8 +4788,10 @@ class _CompareScreenState extends State<CompareScreen>
             ),
             const SizedBox(height: 10),
             _inspectorStatusCard(),
-            const SizedBox(height: 8),
-            _jobInspectorSection(),
+            if (widget.organizationAccess.organizationId != null) ...[
+              const SizedBox(height: 8),
+              _jobInspectorSection(),
+            ],
             const SizedBox(height: 8),
             _referenceProfilesInspector(),
             const SizedBox(height: 8),
@@ -5593,12 +4871,13 @@ class _CompareScreenState extends State<CompareScreen>
               _compareProgressPanel(compact: true),
             ],
             if (r != null ||
-                CheckHistoryService.checks.value.any(
-                  (protocol) =>
-                      _activeReferenceId == null ||
-                      protocol.referenceId == _activeReferenceId ||
-                      protocol.referenceLabel == _savedRefLabel,
-                )) ...[
+                (widget.showStoredHistory &&
+                    CheckHistoryService.checks.value.any(
+                      (protocol) =>
+                          _activeReferenceId == null ||
+                          protocol.referenceId == _activeReferenceId ||
+                          protocol.referenceLabel == _savedRefLabel,
+                    ))) ...[
               const SizedBox(height: 8),
               _checkProtocolListPanel(),
             ],
@@ -6246,8 +5525,8 @@ class _CompareScreenState extends State<CompareScreen>
     return Container(
       padding: const EdgeInsets.all(9),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.08),
-        border: Border.all(color: color.withOpacity(0.45)),
+        color: color.withValues(alpha: 0.08),
+        border: Border.all(color: color.withValues(alpha: 0.45)),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -6317,8 +5596,8 @@ class _CompareScreenState extends State<CompareScreen>
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.10),
-        border: Border.all(color: color.withOpacity(0.5)),
+        color: color.withValues(alpha: 0.10),
+        border: Border.all(color: color.withValues(alpha: 0.5)),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Text(
@@ -6422,20 +5701,6 @@ class _CompareScreenState extends State<CompareScreen>
     );
   }
 
-  Widget _metricChip(String label, String value) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: AppTheme.silverDark),
-      ),
-      child: Text(
-        '$label: $value',
-        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
-      ),
-    );
-  }
-
   Widget _xpWindow({
     required String title,
     required Widget child,
@@ -6529,2028 +5794,6 @@ class _CompareScreenState extends State<CompareScreen>
     );
   }
 
-  Widget _xpTab(String label, int idx) {
-    return Expanded(
-      child: AnimatedBuilder(
-        animation: _tabs,
-        builder: (_, __) {
-          final active = _tabs.index == idx;
-          return SizedBox(
-            height: 34,
-            child: ElevatedButton(
-              onPressed: () => _tabs.animateTo(idx),
-              style: ElevatedButton.styleFrom(
-                backgroundColor:
-                    active ? Colors.white : const Color(0xFFB8B4A8),
-                foregroundColor: active ? Colors.black : Colors.black54,
-                elevation: 0,
-                padding: const EdgeInsets.symmetric(horizontal: 2),
-                minimumSize: Size.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                textStyle: TextStyle(
-                  fontSize: 10,
-                  fontWeight: active ? FontWeight.bold : FontWeight.normal,
-                ),
-                shape: const RoundedRectangleBorder(
-                  borderRadius: BorderRadius.only(
-                    topLeft: Radius.circular(3),
-                    topRight: Radius.circular(3),
-                  ),
-                ),
-              ),
-              child: Text(label, textAlign: TextAlign.center),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  // ── Таб: Эталон ───────────────────────────────────
-  Widget _tabRef() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        children: [
-          // ── Эталон 1 ─────────────────────────────────
-          XpGroup(
-            label: 'Эталон 1',
-            child: Column(
-              children: [
-                GestureDetector(
-                  onTap: () => _pickImage(true),
-                  onDoubleTap:
-                      _refImg != null ? () => _openFullScreen(_refImg!) : null,
-                  child: Container(
-                    height: 200,
-                    width: double.infinity,
-                    color: Colors.black,
-                    child: _stacking
-                        ? const Center(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                CircularProgressIndicator(color: Colors.white),
-                                SizedBox(height: 8),
-                                Text(
-                                  'Объединение снимков...',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: Colors.white70,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          )
-                        : _refImg != null
-                            ? _uiImage(_refImg!, fit: BoxFit.contain)
-                            : const Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Text('🖼️', style: TextStyle(fontSize: 40)),
-                                  SizedBox(height: 8),
-                                  Text(
-                                    'Нажмите для выбора',
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color: Colors.white54,
-                                    ),
-                                  ),
-                                  Text(
-                                    'JPEG, PNG, TIFF, RAW',
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      color: Colors.white38,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          if (_savedRefLabel != null)
-            Container(
-              margin: const EdgeInsets.only(top: 8),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: AppTheme.simHigh.withOpacity(0.08),
-                border: Border.all(color: AppTheme.simHigh.withOpacity(0.4)),
-              ),
-              child: Row(
-                children: [
-                  const Text('💾', style: TextStyle(fontSize: 14)),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      'Сохранён: $_savedRefLabel',
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: AppTheme.simHigh,
-                      ),
-                    ),
-                  ),
-                  XpBtn(
-                    label: '🗑 Сбросить',
-                    danger: true,
-                    onPressed: _clearReference,
-                  ),
-                ],
-              ),
-            ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: XpBtn(
-                  label: '💾 Сохранить эталон',
-                  primary: true,
-                  onPressed: _refImg != null ? _saveReference : null,
-                ),
-              ),
-              const SizedBox(width: 6),
-              XpBtn(
-                label: '✂ Рамка',
-                onPressed: _refImg != null ? () => _cropImage(true) : null,
-              ),
-            ],
-          ),
-
-          // ── Эталон 2 ─────────────────────────────────
-          const SizedBox(height: 8),
-          XpCollapsible(
-            title: 'Эталон 2 (Склейка кадров)',
-            child: XpGroup(
-              label: 'Эталон 2',
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  if (_refImg == null) ...[
-                    const Text(
-                      'Сначала загрузите Эталон 1.',
-                      style: TextStyle(fontSize: 11, color: Colors.grey),
-                    ),
-                  ] else if (_ref2Img == null) ...[
-                    GestureDetector(
-                      onTap: () => _pickRef2(),
-                      child: Container(
-                        height: 160,
-                        width: double.infinity,
-                        color: Colors.black,
-                        child: const Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text('🖼️', style: TextStyle(fontSize: 40)),
-                            SizedBox(height: 8),
-                            Text(
-                              'Нажмите для выбора второго снимка',
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: Colors.white54,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ] else ...[
-                    // Оверлей: эталон 1 (фон) + эталон 2 (двигается вручную)
-                    ClipRect(
-                      child: Container(
-                        height: 260,
-                        color: Colors.black,
-                        child: LayoutBuilder(
-                          builder: (_, c) {
-                            WidgetsBinding.instance.addPostFrameCallback((_) {
-                              _overlayViewerSize = Size(
-                                c.maxWidth,
-                                c.maxHeight,
-                              );
-                            });
-                            return Stack(
-                              fit: StackFit.expand,
-                              children: [
-                                RepaintBoundary(
-                                  child: Stack(
-                                    fit: StackFit.expand,
-                                    children: [
-                                      _uiImage(
-                                        _refImg!,
-                                        fit: BoxFit.contain,
-                                      ),
-                                      Opacity(
-                                        opacity: _overlayOpacity,
-                                        child: InteractiveViewer(
-                                          transformationController:
-                                              _overlayCtrl,
-                                          boundaryMargin: const EdgeInsets.all(
-                                            double.infinity,
-                                          ),
-                                          minScale: 0.1,
-                                          maxScale: 6.0,
-                                          child: _uiImage(
-                                            _ref2Img!,
-                                            fit: BoxFit.contain,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                const IgnorePointer(
-                                  child: CustomPaint(
-                                    painter: _FramePainter(0.12),
-                                  ),
-                                ),
-                                const Positioned(
-                                  left: 8,
-                                  top: 8,
-                                  child: _ImgLabel('Эталон 1'),
-                                ),
-                                const Positioned(
-                                  right: 8,
-                                  top: 8,
-                                  child: _ImgLabel('Эталон 2 ↕↔'),
-                                ),
-                              ],
-                            );
-                          },
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    // Резкость как справочная информация
-                    if (_ref1Sharpness != null && _ref2Sharpness != null)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 4),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                'Резкость 1: ${_ref1Sharpness!.toStringAsFixed(0)}',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: _ref1Sharpness! >= _ref2Sharpness!
-                                      ? AppTheme.simHigh
-                                      : Colors.grey,
-                                ),
-                              ),
-                            ),
-                            Expanded(
-                              child: Text(
-                                'Резкость 2: ${_ref2Sharpness!.toStringAsFixed(0)}',
-                                textAlign: TextAlign.right,
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: _ref2Sharpness! > _ref1Sharpness!
-                                      ? AppTheme.simHigh
-                                      : Colors.grey,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    Row(
-                      children: [
-                        const SizedBox(
-                          width: 90,
-                          child: Text(
-                            'Прозрачность:',
-                            style: TextStyle(fontSize: 11),
-                          ),
-                        ),
-                        Expanded(
-                          child: Slider(
-                            value: _overlayOpacity,
-                            onChanged: (v) =>
-                                setState(() => _overlayOpacity = v),
-                            activeColor: AppTheme.blue,
-                          ),
-                        ),
-                        SizedBox(
-                          width: 36,
-                          child: Text(
-                            '${(_overlayOpacity * 100).round()}%',
-                            style: const TextStyle(fontSize: 10),
-                          ),
-                        ),
-                      ],
-                    ),
-                    Row(
-                      children: [
-                        XpBtn(
-                          label: '🗑 Убрать',
-                          danger: true,
-                          onPressed: () => setState(() {
-                            _ref2Img = null;
-                            _overlayCtrl.value = Matrix4.identity();
-                          }),
-                        ),
-                        const Spacer(),
-                        XpBtn(
-                          label: _stacking
-                              ? '⏳ Обработка...'
-                              : '🔀 Склейка кадров',
-                          primary: true,
-                          onPressed: _stacking
-                              ? null
-                              : () => _selectRef(_refImg!, _ref2Img),
-                        ),
-                      ],
-                    ),
-                  ],
-
-                  // AI анализ эталона
-                  const SizedBox(height: 8),
-                  const Divider(),
-                  const SizedBox(height: 6),
-                  if (_refAiLoading)
-                    const Center(
-                      child: Padding(
-                        padding: EdgeInsets.symmetric(vertical: 8),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
-                            SizedBox(width: 10),
-                            Text(
-                              'AI анализирует эталон...',
-                              style: TextStyle(fontSize: 11),
-                            ),
-                          ],
-                        ),
-                      ),
-                    )
-                  else if (_refAiResult != null) ...[
-                    _aiVerdictBadge(_refAiResult!),
-                    const SizedBox(height: 6),
-                    if (_refAiResult!.recommendations.isNotEmpty)
-                      ..._refAiResult!.recommendations.map(
-                        (r) => Padding(
-                          padding: const EdgeInsets.only(bottom: 3),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text('• ', style: TextStyle(fontSize: 11)),
-                              Expanded(
-                                child: Text(
-                                  r,
-                                  style: const TextStyle(
-                                    fontSize: 11,
-                                    height: 1.4,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    const SizedBox(height: 6),
-                    XpBtn(
-                      label: '🔄 Повторить AI анализ',
-                      onPressed: _analyzeReferenceWithAi,
-                    ),
-                  ] else
-                    XpBtn(
-                      label: '🤖 AI анализ качества эталона',
-                      onPressed:
-                          _refImg != null ? _analyzeReferenceWithAi : null,
-                    ),
-                ],
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 12),
-          const Divider(),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              XpBtn(
-                label: 'Далее ›',
-                primary: true,
-                onPressed: () => _tabs.animateTo(1),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ── Таб: Образец ─────────────────────────────────
-  Widget _tabCmp() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        children: [
-          // ── Образец 1 ────────────────────────────────
-          XpGroup(
-            label: 'Образец 1',
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                GestureDetector(
-                  onTap: () => _pickImage(false),
-                  onDoubleTap:
-                      _cmpImg != null ? () => _openFullScreen(_cmpImg!) : null,
-                  child: Container(
-                    height: 200,
-                    width: double.infinity,
-                    color: Colors.black,
-                    child: _stacking
-                        ? const Center(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                CircularProgressIndicator(color: Colors.white),
-                                SizedBox(height: 8),
-                                Text(
-                                  'Объединение снимков...',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: Colors.white70,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          )
-                        : _cmpImg != null
-                            ? _uiImage(_cmpImg!, fit: BoxFit.contain)
-                            : const Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Text('📷', style: TextStyle(fontSize: 40)),
-                                  SizedBox(height: 8),
-                                  Text(
-                                    'Нажмите для выбора',
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color: Colors.white54,
-                                    ),
-                                  ),
-                                  Text(
-                                    'JPEG, PNG, TIFF, RAW',
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      color: Colors.white38,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                  ),
-                ),
-
-                // Образец 2 — для объединения
-                if (_cmpImg != null) ...[
-                  const SizedBox(height: 6),
-                  Row(
-                    children: [
-                      XpBtn(
-                        label: '✂ Рамка',
-                        onPressed: () => _cropImage(false),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  const Divider(),
-                  const SizedBox(height: 6),
-                  XpCollapsible(
-                    title: 'Образец 2 (Склейка кадров)',
-                    child: _cmp2Img == null
-                        ? GestureDetector(
-                            onTap: () => _pickCmp2(),
-                            child: Container(
-                              height: 120,
-                              width: double.infinity,
-                              color: Colors.black,
-                              child: const Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Text('📷', style: TextStyle(fontSize: 30)),
-                                  SizedBox(height: 6),
-                                  Text(
-                                    'Нажмите для второго снимка',
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color: Colors.white54,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          )
-                        : Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              ClipRect(
-                                child: Container(
-                                  height: 260,
-                                  color: Colors.black,
-                                  child: Stack(
-                                    fit: StackFit.expand,
-                                    children: [
-                                      _uiImage(
-                                        _cmpImg!,
-                                        fit: BoxFit.contain,
-                                      ),
-                                      Opacity(
-                                        opacity: _cmp2Opacity,
-                                        child: InteractiveViewer(
-                                          transformationController: _cmp2Ctrl,
-                                          boundaryMargin: const EdgeInsets.all(
-                                            double.infinity,
-                                          ),
-                                          minScale: 0.1,
-                                          maxScale: 6.0,
-                                          child: _uiImage(
-                                            _cmp2Img!,
-                                            fit: BoxFit.contain,
-                                          ),
-                                        ),
-                                      ),
-                                      const IgnorePointer(
-                                        child: CustomPaint(
-                                          painter: _FramePainter(0.12),
-                                        ),
-                                      ),
-                                      const Positioned(
-                                        left: 8,
-                                        top: 8,
-                                        child: _ImgLabel('Образец 1'),
-                                      ),
-                                      const Positioned(
-                                        right: 8,
-                                        top: 8,
-                                        child: _ImgLabel('Образец 2 ↕↔'),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 6),
-                              if (_cmp1Sharpness != null &&
-                                  _cmp2Sharpness != null)
-                                Padding(
-                                  padding: const EdgeInsets.only(bottom: 4),
-                                  child: Row(
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          'Резкость 1: ${_cmp1Sharpness!.toStringAsFixed(0)}',
-                                          style: TextStyle(
-                                            fontSize: 10,
-                                            color: _cmp1Sharpness! >=
-                                                    _cmp2Sharpness!
-                                                ? AppTheme.simHigh
-                                                : Colors.grey,
-                                          ),
-                                        ),
-                                      ),
-                                      Expanded(
-                                        child: Text(
-                                          'Резкость 2: ${_cmp2Sharpness!.toStringAsFixed(0)}',
-                                          textAlign: TextAlign.right,
-                                          style: TextStyle(
-                                            fontSize: 10,
-                                            color: _cmp2Sharpness! >
-                                                    _cmp1Sharpness!
-                                                ? AppTheme.simHigh
-                                                : Colors.grey,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              Row(
-                                children: [
-                                  const SizedBox(
-                                    width: 90,
-                                    child: Text(
-                                      'Прозрачность:',
-                                      style: TextStyle(fontSize: 11),
-                                    ),
-                                  ),
-                                  Expanded(
-                                    child: Slider(
-                                      value: _cmp2Opacity,
-                                      onChanged: (v) =>
-                                          setState(() => _cmp2Opacity = v),
-                                      activeColor: AppTheme.blue,
-                                    ),
-                                  ),
-                                  SizedBox(
-                                    width: 36,
-                                    child: Text(
-                                      '${(_cmp2Opacity * 100).round()}%',
-                                      style: const TextStyle(fontSize: 10),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              Row(
-                                children: [
-                                  XpBtn(
-                                    label: '🗑 Убрать',
-                                    danger: true,
-                                    onPressed: () => setState(() {
-                                      _cmp2Img = null;
-                                      _cmp2Ctrl.value = Matrix4.identity();
-                                      _cmp1Sharpness = null;
-                                      _cmp2Sharpness = null;
-                                    }),
-                                  ),
-                                  const Spacer(),
-                                  XpBtn(
-                                    label: _stacking
-                                        ? '⏳ Обработка...'
-                                        : '🔀 Склейка кадров',
-                                    primary: true,
-                                    onPressed: _stacking
-                                        ? null
-                                        : () => _selectCmp(_cmpImg!, _cmp2Img),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 12),
-          const Divider(),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              XpBtn(label: '‹ Эталон', onPressed: () => _tabs.animateTo(0)),
-              XpBtn(
-                label: 'Далее ›',
-                primary: true,
-                onPressed: _refImg != null && _cmpImg != null
-                    ? () => _tabs.animateTo(2)
-                    : null,
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ── Таб: Совмещение ───────────────────────────────
-  Widget _tabAlign() {
-    if (_refImg == null || _cmpImg == null) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Text('🎯', style: TextStyle(fontSize: 40)),
-            const SizedBox(height: 12),
-            const Text(
-              'Сначала загрузите эталон и образец',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12, color: Colors.grey),
-            ),
-            const SizedBox(height: 16),
-            XpBtn(label: '‹ Образец', onPressed: () => _tabs.animateTo(1)),
-          ],
-        ),
-      );
-    }
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        children: [
-          // ── Два окна предпросмотра ─────────────────────
-          LayoutBuilder(
-            builder: (_, constraints) {
-              final wide = constraints.maxWidth > 480;
-              final panels = [
-                _alignPanel(
-                  label: 'Эталон',
-                  bytes: _refImg!,
-                  imgSize: _refImgSize,
-                  anchorPts: _refAnchorPts,
-                  ctrl: _refAlignCtrl,
-                  availableWidth: wide
-                      ? (constraints.maxWidth - 8) / 2
-                      : constraints.maxWidth,
-                  placing: _calStep == 1,
-                  tempPts: _tempRefPts,
-                  onTap: _calStep == 1 ? _addPanelPoint : null,
-                  onUndo: _calStep == 1 ? _undoLastPoint : null,
-                  minPts: _minAnchorPts,
-                ),
-                _alignPanel(
-                  label: 'Образец',
-                  bytes: _cmpAligned ?? _cmpImg!,
-                  imgSize: _cmpImgSize,
-                  anchorPts: _cmpAnchorPts,
-                  ctrl: _cmpAlignCtrl,
-                  availableWidth: wide
-                      ? (constraints.maxWidth - 8) / 2
-                      : constraints.maxWidth,
-                  placing: _calStep == 2,
-                  tempPts: _tempCmpPts,
-                  onTap: _calStep == 2 ? _addPanelPoint : null,
-                  onUndo: _calStep == 2 ? _undoLastPoint : null,
-                  minPts: _minAnchorPts,
-                ),
-              ];
-              if (wide) {
-                return Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(child: panels[0]),
-                    const SizedBox(width: 8),
-                    Expanded(child: panels[1]),
-                  ],
-                );
-              }
-              return Column(
-                children: [panels[0], const SizedBox(height: 8), panels[1]],
-              );
-            },
-          ),
-
-          const SizedBox(height: 12),
-          // ── Инструкция / Статус профиля ───────────────
-          if (_calStep == 0 && _layoutProfile != null)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Row(
-                children: [
-                  const Icon(Icons.tune, size: 14, color: Colors.green),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Text(
-                      'Профиль: ${_layoutProfile!.name}  ·  ош. ${_layoutProfile!.reprojError.toStringAsFixed(1)} пкс',
-                      style: const TextStyle(fontSize: 11, color: Colors.green),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  TextButton(
-                    onPressed: () => setState(() {
-                      _layoutProfile = null;
-                      _cmpAligned = null;
-                      _refAnchorPts = null;
-                      _cmpAnchorPts = null;
-                    }),
-                    style: TextButton.styleFrom(
-                      padding: EdgeInsets.zero,
-                      minimumSize: Size.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    child: const Text(
-                      '✕',
-                      style: TextStyle(fontSize: 11, color: Colors.grey),
-                    ),
-                  ),
-                ],
-              ),
-            )
-          else if (_calStep == 0)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.orange.withOpacity(0.12),
-                  border: Border.all(color: Colors.orange),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: const Row(
-                  children: [
-                    Icon(Icons.warning_amber, size: 16, color: Colors.orange),
-                    SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        'Нажмите «🔧 Калибровка» и расставьте точки на эталоне и образце.',
-                        style: TextStyle(fontSize: 11, color: Colors.orange),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            )
-          else if (_calStep == 1)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.blue.withOpacity(0.10),
-                  border: Border.all(color: Colors.blue),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.touch_app, size: 16, color: Colors.blue),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        'Шаг 1 / 2 — ЭТАЛОН: нажмите $_minAnchorPts–$_maxAnchorPts точек  (${_tempRefPts.length} из $_minAnchorPts мин.)',
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: Colors.blue,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            )
-          else if (_calStep == 2)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.teal.withOpacity(0.10),
-                  border: Border.all(color: Colors.teal),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.touch_app, size: 16, color: Colors.teal),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        'Шаг 2 / 2 — ОБРАЗЕЦ: те же ${_tempRefPts.length} точек в том же порядке  (${_tempCmpPts.length} / ${_tempRefPts.length})',
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: Colors.teal,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            )
-          else if (_calStep == 3)
-            const Padding(
-              padding: EdgeInsets.only(bottom: 8),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                  SizedBox(width: 10),
-                  Text('Расчёт совмещения...', style: TextStyle(fontSize: 12)),
-                ],
-              ),
-            ),
-          const Divider(),
-          if (_calStep == 0)
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                XpBtn(label: '‹ Образец', onPressed: () => _tabs.animateTo(1)),
-                Row(
-                  children: [
-                    XpBtn(
-                      label: '🔧 Калибровка',
-                      primary: _layoutProfile == null,
-                      onPressed: () => _startCalibration(),
-                    ),
-                    const SizedBox(width: 8),
-                    if (_result != null) ...[
-                      SimBadge(value: _result!.score),
-                      const SizedBox(width: 8),
-                    ],
-                    _comparing
-                        ? const SizedBox(
-                            width: 24,
-                            height: 24,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : XpBtn(
-                            label: 'Сравнить ›',
-                            primary: true,
-                            onPressed:
-                                _canStartCompareAction ? _runCompare : null,
-                          ),
-                  ],
-                ),
-              ],
-            )
-          else if (_calStep == 1)
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                XpBtn(
-                  label: 'Отмена',
-                  danger: true,
-                  onPressed: _cancelCalibration,
-                ),
-                XpBtn(
-                  label: 'Далее ›',
-                  primary: true,
-                  onPressed: _tempRefPts.length >= _minAnchorPts
-                      ? () => _advanceToStep2()
-                      : null,
-                ),
-              ],
-            )
-          else if (_calStep == 2)
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                XpBtn(
-                  label: '← Назад',
-                  onPressed: () => setState(() {
-                    _calStep = 1;
-                    _tempCmpPts = [];
-                  }),
-                ),
-                XpBtn(
-                  label: 'Рассчитать →',
-                  primary: true,
-                  onPressed: _tempCmpPts.length == _tempRefPts.length &&
-                          _tempRefPts.isNotEmpty
-                      ? _runAlignmentFromPoints
-                      : null,
-                ),
-              ],
-            )
-          else
-            const SizedBox.shrink(),
-        ],
-      ),
-    );
-  }
-
-  // Панель предпросмотра с зумом и якорными точками
-  Widget _alignPanel({
-    required String label,
-    required Uint8List bytes,
-    required Size? imgSize,
-    required List<Offset>? anchorPts,
-    required TransformationController ctrl,
-    required double availableWidth,
-    bool placing = false,
-    List<Offset> tempPts = const [],
-    void Function(Offset)? onTap,
-    VoidCallback? onUndo,
-    int minPts = 4,
-  }) {
-    // Вычисляем высоту контейнера по аспекту изображения (без чёрных полос)
-    double panelHeight = 220;
-    if (imgSize != null && imgSize.width > 0 && imgSize.height > 0) {
-      panelHeight = (availableWidth * imgSize.height / imgSize.width).clamp(
-        120.0,
-        340.0,
-      );
-    }
-
-    void zoom(double factor) {
-      final m = ctrl.value.clone();
-      m.scale(factor, factor);
-      final s = m.getMaxScaleOnAxis();
-      if (s < 0.2 || s > 8.0) return;
-      ctrl.value = m;
-    }
-
-    List<Widget> buildDots(List<Offset> pts, Color color) {
-      if (imgSize == null) return [];
-      final ratio = min(
-        availableWidth / imgSize.width,
-        panelHeight / imgSize.height,
-      );
-      final offX = (availableWidth - imgSize.width * ratio) / 2;
-      final offY = (panelHeight - imgSize.height * ratio) / 2;
-      return pts.asMap().entries.map((e) {
-        final px = e.value.dx * ratio + offX;
-        final py = e.value.dy * ratio + offY;
-        return Positioned.fill(
-          child: _AnchorPointMarker(
-            ctrl: ctrl,
-            x: px,
-            y: py,
-            index: e.key + 1,
-            color: color,
-            viewportSize: Size(availableWidth, panelHeight),
-          ),
-        );
-      }).toList();
-    }
-
-    final stackContent = Stack(
-      children: [
-        _uiImage(
-          bytes,
-          width: availableWidth,
-          height: panelHeight,
-          fit: BoxFit.contain,
-        ),
-        ...buildDots(anchorPts ?? [], Colors.red),
-        ...buildDots(tempPts, Colors.amber),
-        if (placing)
-          Positioned.fill(
-            child: IgnorePointer(
-              child: Container(
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.blue, width: 2),
-                ),
-              ),
-            ),
-          ),
-      ],
-    );
-
-    final viewerChild = onTap != null
-        ? GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onTapUp: (d) {
-              if (imgSize == null) return;
-              final local = d.localPosition;
-              final ratio = min(
-                availableWidth / imgSize.width,
-                panelHeight / imgSize.height,
-              );
-              final offX = (availableWidth - imgSize.width * ratio) / 2;
-              final offY = (panelHeight - imgSize.height * ratio) / 2;
-              final imgX = (local.dx - offX) / ratio;
-              final imgY = (local.dy - offY) / ratio;
-              if (imgX >= 0 &&
-                  imgY >= 0 &&
-                  imgX <= imgSize.width &&
-                  imgY <= imgSize.height) {
-                onTap(Offset(imgX, imgY));
-              }
-            },
-            child: stackContent,
-          )
-        : stackContent;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        // Заголовок панели
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          color: placing ? const Color(0xFF0055BB) : AppTheme.blue,
-          child: Text(
-            label,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
-        // Область изображения. Зум/панорамирование колесом или драгом —
-        // только при зажатом Ctrl, иначе блокируется скролл страницы.
-        ClipRect(
-          child: SizedBox(
-            height: panelHeight,
-            child: InteractiveViewer(
-              transformationController: ctrl,
-              boundaryMargin: const EdgeInsets.all(80),
-              minScale: 0.2,
-              maxScale: 8.0,
-              panEnabled: _ctrlHeld,
-              scaleEnabled: _ctrlHeld,
-              child: viewerChild,
-            ),
-          ),
-        ),
-        // Зум + счётчик точек + ⌫
-        Container(
-          color: AppTheme.silver,
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-          child: Row(
-            children: [
-              _ZoomBtn(label: '−', onTap: () => zoom(0.77)),
-              const SizedBox(width: 4),
-              _ZoomBtn(label: '+', onTap: () => zoom(1.3)),
-              const SizedBox(width: 6),
-              _ZoomBtn(
-                label: '⊡',
-                onTap: () => ctrl.value = Matrix4.identity(),
-              ),
-              if (!placing) ...[
-                const SizedBox(width: 8),
-                const Text(
-                  'Ctrl+скролл/драг — зум и перемещение',
-                  style: TextStyle(fontSize: 9, color: Colors.grey),
-                ),
-              ],
-              if (placing) ...[
-                const Spacer(),
-                Text(
-                  '${tempPts.length} / $minPts',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color:
-                        tempPts.length >= minPts ? Colors.green : Colors.blue,
-                  ),
-                ),
-                const SizedBox(width: 6),
-                GestureDetector(
-                  onTap: tempPts.isNotEmpty ? onUndo : null,
-                  child: Opacity(
-                    opacity: tempPts.isNotEmpty ? 1.0 : 0.35,
-                    child: Container(
-                      width: 26,
-                      height: 22,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        border: Border.all(color: Colors.grey.shade400),
-                      ),
-                      child: const Text(
-                        '⌫',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  // ── Таб: Результат ────────────────────────────────
-  Widget _tabResult() {
-    if (_result == null) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Text('📊', style: TextStyle(fontSize: 40)),
-            const SizedBox(height: 12),
-            const Text(
-              'Загрузите оба фото, расставьте точки (🔧 Калибровка)\n'
-              'и нажмите «Сравнить ›» на вкладке Совмещение',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12, color: Colors.grey),
-            ),
-            const SizedBox(height: 16),
-            XpBtn(label: '‹ К совмещению', onPressed: () => _tabs.animateTo(2)),
-          ],
-        ),
-      );
-    }
-
-    final r = _result!;
-    final now = DateTime.now();
-    final dateStr =
-        '${now.day.toString().padLeft(2, '0')}.${now.month.toString().padLeft(2, '0')}.${now.year} '
-        '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
-
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        children: [
-          const SizedBox(height: 10),
-          const Center(
-            child: Text(
-              'РЕЗУЛЬТАТ СРАВНЕНИЯ',
-              style: TextStyle(fontSize: 10, color: Colors.grey),
-            ),
-          ),
-          const SizedBox(height: 6),
-          Center(child: SimBadge(value: r.score, fontSize: 26)),
-          Center(
-            child: Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text(
-                r.labScore != null
-                    ? 'Lab: ${r.labScore!.toStringAsFixed(1)}%  ·  MAE: ${r.similarity.toStringAsFixed(1)}%'
-                    : 'MAE: ${r.similarity.toStringAsFixed(1)}%',
-                style: const TextStyle(fontSize: 10, color: Colors.grey),
-              ),
-            ),
-          ),
-          const SizedBox(height: 6),
-          Center(
-            child: Text(
-              r.score >= 80
-                  ? r.score >= 90
-                      ? 'Высокая схожесть'
-                      : 'Проверить по допускам'
-                  : r.score >= 65
-                      ? 'Требует проверки'
-                      : 'Критичные отклонения',
-              style: TextStyle(
-                color: AppTheme.simColor(r.score),
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          if (_compareStatus != null) ...[
-            _compareProgressPanel(),
-            const SizedBox(height: 12),
-          ],
-          XpGroup(
-            label: 'Детали',
-            child: Table(
-              columnWidths: const {
-                0: IntrinsicColumnWidth(),
-                1: FlexColumnWidth(),
-              },
-              children: [
-                _tableRow('Эталон:', r.refSize),
-                _tableRow('Фото:', r.cmpSize),
-                _tableRow('Итераций:', '${AppConfig.comparisonIter}'),
-                _tableRow(
-                  'Отличий:',
-                  '${r.diffPixels} px (${r.diffPercent.toStringAsFixed(1)}%)',
-                ),
-                _tableRow('Дата:', dateStr),
-              ],
-            ),
-          ),
-          // ── Анализ цвета (уровень 0 — глобальный) ──
-          if (r.shiftDL != null || r.shiftDA != null)
-            XpGroup(
-              label: 'Цветовой анализ',
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _colorComment(r.shiftDL, r.shiftDA, r.shiftDB),
-                    style: const TextStyle(fontSize: 12, height: 1.5),
-                  ),
-                ],
-              ),
-            ),
-
-          if (r.geometryScore != null)
-            XpGroup(
-              label: 'Геометрия текста и штрихов',
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _geometryVerdict(r),
-                    style: const TextStyle(fontSize: 12, height: 1.5),
-                  ),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
-                    children: [
-                      _metricChip(
-                        'Контуры',
-                        '${r.geometryScore!.toStringAsFixed(1)}%',
-                      ),
-                      if (r.geometryShiftPx != null)
-                        _metricChip(
-                          'Смещение',
-                          '${r.geometryShiftPx!.toStringAsFixed(1)} px',
-                        ),
-                      if (r.geometryMissingPercent != null)
-                        _metricChip(
-                          'Потери',
-                          '${r.geometryMissingPercent!.toStringAsFixed(1)}%',
-                        ),
-                      if (r.geometryExtraPercent != null)
-                        _metricChip(
-                          'Лишнее',
-                          '${r.geometryExtraPercent!.toStringAsFixed(1)}%',
-                        ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-
-          // ── Карта различий (уровень 3: 27×27 детали) ──
-          if (r.diffL3 != null || r.geometryDiff != null)
-            XpGroup(
-              label: 'Карта различий',
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _mapModeSelector(),
-                  if (_showAreaLoupePanel) ...[
-                    const SizedBox(height: 8),
-                    _areaLoupePanel(),
-                  ],
-                  const SizedBox(height: 8),
-                  _mapLegend(),
-                  const SizedBox(height: 8),
-                  _resultMapOverlay(r),
-                  const SizedBox(height: 2),
-                  const Text(
-                    'Ctrl+скролл/драг — зум и перемещение',
-                    style: TextStyle(fontSize: 9, color: Colors.grey),
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      const Text('🖼 Эталон', style: TextStyle(fontSize: 11)),
-                      Expanded(
-                        child: Slider(
-                          value: _diffSlider,
-                          onChanged: (v) => setState(() => _diffSlider = v),
-                        ),
-                      ),
-                      const Text('📷 Образец', style: TextStyle(fontSize: 11)),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          if (_refBarcodes.isNotEmpty || _cmpBarcodes.isNotEmpty)
-            XpGroup(
-              label: 'Штрихкоды / QR',
-              child: Column(
-                children: [
-                  if (_refBarcodes.isNotEmpty) ...[
-                    const Text(
-                      'Эталон:',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    ..._refBarcodes.map(_barcodeTile),
-                    const SizedBox(height: 6),
-                  ],
-                  if (_cmpBarcodes.isNotEmpty) ...[
-                    const Text(
-                      'Фото:',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    ..._cmpBarcodes.map(_barcodeTile),
-                  ],
-                  if (_refBarcodes.isNotEmpty && _cmpBarcodes.isNotEmpty)
-                    _barcodeMatchSummary(),
-                ],
-              ),
-            ),
-          if (_refBarcodes.isEmpty && _cmpBarcodes.isEmpty && _result != null)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: Row(
-                children: [
-                  const Icon(Icons.qr_code, size: 14, color: Colors.grey),
-                  const SizedBox(width: 6),
-                  const Text(
-                    'Штрихкоды не обнаружены',
-                    style: TextStyle(fontSize: 11, color: Colors.grey),
-                  ),
-                ],
-              ),
-            ),
-          if (_refOcr != null || _cmpOcr != null)
-            XpGroup(label: 'Текст (OCR)', child: _ocrSection()),
-          XpGroup(
-            label: 'AI Анализ',
-            child: Column(
-              children: [
-                if (_aiResult == null && !_aiLoading) ...[
-                  const Text(
-                    'Claude Vision анализирует оба изображения и находит конкретные проблемы печати.',
-                    style: TextStyle(
-                      fontSize: 11,
-                      height: 1.6,
-                      color: Colors.grey,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: double.infinity,
-                    child: XpBtn(
-                      label: '🤖 Запустить AI анализ',
-                      primary: true,
-                      onPressed: _runAiAnalysis,
-                    ),
-                  ),
-                ],
-                if (_aiLoading)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 12),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                        SizedBox(width: 10),
-                        Text(
-                          'Claude анализирует...',
-                          style: TextStyle(fontSize: 12),
-                        ),
-                      ],
-                    ),
-                  ),
-                if (_aiResult != null) ...[
-                  _aiVerdictBadge(_aiResult!),
-                  const SizedBox(height: 8),
-                  if (_aiResult!.hasIssues) ...[
-                    ..._aiResult!.issues.map(_aiIssueTile),
-                    const SizedBox(height: 8),
-                  ],
-                  if (_aiResult!.recommendations.isNotEmpty) ...[
-                    const Text(
-                      'Рекомендации:',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    ..._aiResult!.recommendations.map(
-                      (r) => Padding(
-                        padding: const EdgeInsets.only(bottom: 3),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('• ', style: TextStyle(fontSize: 11)),
-                            Expanded(
-                              child: Text(
-                                r,
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  height: 1.5,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                  ],
-                  SizedBox(
-                    width: double.infinity,
-                    child: XpBtn(
-                      label: '🔄 Повторить анализ',
-                      onPressed: _runAiAnalysis,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          const Divider(),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              XpBtn(label: '‹ Назад', onPressed: () => _tabs.animateTo(2)),
-              Row(
-                children: [
-                  XpBtn(
-                    label: '📤',
-                    onPressed: () =>
-                        xpDlg(context, 'Экспорт', 'PNG / PDF / CSV'),
-                  ),
-                  const SizedBox(width: 4),
-                  XpBtn(
-                    label: '🆕 Новое',
-                    primary: true,
-                    onPressed: () {
-                      setState(() {
-                        _refImg = null;
-                        _refCropApplied = false;
-                        _cmpImg = null;
-                        _cmpCropApplied = false;
-                        _result = null;
-                        _compareStatus = null;
-                        _aiResult = null;
-                        _refAligned = null;
-                        _cmpAligned = null;
-                        _layoutProfile = null;
-                        _resetZoomControllers();
-                      });
-                      _tabs.animateTo(0);
-                    },
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ── Helpers ───────────────────────────────────────
-  TableRow _tableRow(String key, String val) => TableRow(
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 3, horizontal: 4),
-            child: Text(
-              key,
-              style: const TextStyle(fontSize: 11, color: Colors.grey),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 3, horizontal: 4),
-            child: Text(val, style: const TextStyle(fontSize: 11)),
-          ),
-        ],
-      );
-
-  Widget _barcodeTile(BarcodeResult b) {
-    final verdictColor = Color(b.verdictColor);
-    final hasDims = b.widthPx > 0 && b.heightPx > 0;
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(6),
-        side: BorderSide(color: verdictColor, width: 2),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Формат — крупно
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 3,
-                  ),
-                  decoration: BoxDecoration(
-                    color: verdictColor,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(
-                    b.displayFormat,
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
-                const Spacer(),
-                if (hasDims)
-                  Text(
-                    '${b.widthPx}×${b.heightPx} px',
-                    style: const TextStyle(fontSize: 11, color: Colors.grey),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            // Значение — крупно
-            Text(
-              b.value,
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 1.2,
-              ),
-            ),
-            const SizedBox(height: 8),
-            const Divider(height: 1),
-            const SizedBox(height: 8),
-            // Масштаб
-            Row(
-              children: [
-                Icon(Icons.straighten, size: 16, color: verdictColor),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    b.scalePct > 0
-                        ? 'Масштаб ${b.scalePct.toStringAsFixed(0)}%'
-                            '  (норма ${b.minPct.toInt()}–${b.maxPct.toInt()}%)'
-                        : 'Масштаб не определён',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: verdictColor,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              b.scaleVerdict,
-              style: TextStyle(fontSize: 12, color: verdictColor),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _ocrSection() {
-    final diff = _textDiff;
-    final refText = _refOcr?.fullText.trim() ?? '';
-    final cmpText = _cmpOcr?.fullText.trim() ?? '';
-    final refErr = _refOcr?.error;
-    final cmpErr = _cmpOcr?.error;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        // Ошибка OCR
-        if (refErr != null || cmpErr != null)
-          Container(
-            padding: const EdgeInsets.all(8),
-            color: AppTheme.simLow.withOpacity(0.08),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Row(
-                  children: [
-                    Icon(Icons.error_outline, size: 14, color: AppTheme.simLow),
-                    SizedBox(width: 6),
-                    Text(
-                      'Ошибка OCR',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: AppTheme.simLow,
-                      ),
-                    ),
-                  ],
-                ),
-                if (refErr != null) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    'Эталон: $refErr',
-                    style: const TextStyle(fontSize: 10, color: Colors.black54),
-                  ),
-                ],
-                if (cmpErr != null) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    'Фото: $cmpErr',
-                    style: const TextStyle(fontSize: 10, color: Colors.black54),
-                  ),
-                ],
-                if (!kIsWeb) ...[
-                  const SizedBox(height: 6),
-                  const Text(
-                    'Добавьте в AndroidManifest.xml внутри <application>:\n'
-                    '<meta-data android:name="com.google.mlkit.vision.DEPENDENCIES" android:value="ocr"/>',
-                    style: TextStyle(
-                      fontSize: 9,
-                      color: Colors.black45,
-                      fontFamily: 'monospace',
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        // Нет текста (OCR сработал но ничего не нашёл)
-        if (refErr == null &&
-            cmpErr == null &&
-            refText.isEmpty &&
-            cmpText.isEmpty)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 4),
-            child: Row(
-              children: [
-                Icon(Icons.text_fields, size: 14, color: Colors.grey),
-                SizedBox(width: 6),
-                Text(
-                  'Текст на изображениях не обнаружен',
-                  style: TextStyle(fontSize: 11, color: Colors.grey),
-                ),
-              ],
-            ),
-          ),
-        // Совпадение
-        if (diff != null) ...[
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            color: diff.allOk
-                ? AppTheme.simHigh.withOpacity(0.08)
-                : diff.similarity >= 80
-                    ? AppTheme.simMid.withOpacity(0.08)
-                    : AppTheme.simLow.withOpacity(0.08),
-            child: Row(
-              children: [
-                Icon(
-                  diff.allOk ? Icons.check_circle : Icons.warning,
-                  size: 16,
-                  color: diff.allOk
-                      ? AppTheme.simHigh
-                      : diff.similarity >= 80
-                          ? AppTheme.simMid
-                          : AppTheme.simLow,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    diff.allOk
-                        ? 'Текст совпадает полностью'
-                        : 'Совпадение текста: ${diff.similarity.toStringAsFixed(0)}%',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                      color: diff.allOk
-                          ? AppTheme.simHigh
-                          : diff.similarity >= 80
-                              ? AppTheme.simMid
-                              : AppTheme.simLow,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 6),
-          // Отсутствующие слова
-          if (diff.missing.isNotEmpty)
-            _ocrDiffChips('🔴 Нет на фото', diff.missing, AppTheme.simLow),
-          // Лишние слова
-          if (diff.extra.isNotEmpty)
-            _ocrDiffChips('🟡 Лишнее на фото', diff.extra, AppTheme.simMid),
-          const SizedBox(height: 4),
-        ],
-        // Распознанный текст
-        if (refText.isNotEmpty) _ocrTextBlock('Текст эталона', refText),
-        if (cmpText.isNotEmpty) _ocrTextBlock('Текст фото', cmpText),
-      ],
-    );
-  }
-
-  Widget _ocrDiffChips(String label, List<String> words, Color color) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.bold,
-              color: color,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Wrap(
-            spacing: 4,
-            runSpacing: 4,
-            children: words
-                .take(30)
-                .map(
-                  (w) => Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: color.withOpacity(0.12),
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(color: color.withOpacity(0.4)),
-                    ),
-                    child: Text(
-                      w,
-                      style: TextStyle(fontSize: 10, color: color),
-                    ),
-                  ),
-                )
-                .toList(),
-          ),
-          if (words.length > 30)
-            Padding(
-              padding: const EdgeInsets.only(top: 2),
-              child: Text(
-                '...и ещё ${words.length - 30}',
-                style: TextStyle(fontSize: 9, color: Colors.grey.shade500),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _ocrTextBlock(String label, String text) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.bold,
-              color: Colors.black54,
-            ),
-          ),
-          const SizedBox(height: 2),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: Colors.grey.shade50,
-              border: Border.all(color: Colors.grey.shade200),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Text(
-              text.length > 500 ? '${text.substring(0, 500)}…' : text,
-              style: const TextStyle(fontSize: 10, fontFamily: 'monospace'),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _barcodeMatchSummary() {
-    final refVals = {for (final b in _refBarcodes) b.value: b};
-    final cmpVals = {for (final b in _cmpBarcodes) b.value: b};
-
-    final issues = <_BarcodeIssue>[];
-
-    // Коды есть в эталоне но нет в фото — ошибка
-    for (final v in refVals.keys) {
-      if (!cmpVals.containsKey(v)) {
-        issues.add(
-          _BarcodeIssue.error(
-            'Код отсутствует на фото',
-            'Значение: $v (${refVals[v]!.displayFormat})',
-          ),
-        );
-      }
-    }
-
-    // Коды есть в фото но нет в эталоне — предупреждение
-    for (final v in cmpVals.keys) {
-      if (!refVals.containsKey(v)) {
-        issues.add(
-          _BarcodeIssue.warning(
-            'Лишний код на фото',
-            'Значение: $v (${cmpVals[v]!.displayFormat})',
-          ),
-        );
-      }
-    }
-
-    // Масштаб вне нормы — предупреждение
-    for (final b in [..._refBarcodes, ..._cmpBarcodes]) {
-      if (b.scalePct > 0 && b.scalePct < b.minPct) {
-        issues.add(
-          _BarcodeIssue.warning(
-            'Масштаб ниже минимума',
-            '${b.displayFormat}: ${b.scalePct.toStringAsFixed(0)}% '
-                '(мин. ${b.minPct.toInt()}%) — камера может не считать',
-          ),
-        );
-      }
-      if (b.scalePct > 0 && b.scalePct > b.maxPct) {
-        issues.add(
-          _BarcodeIssue.warning(
-            'Масштаб выше максимума',
-            '${b.displayFormat}: ${b.scalePct.toStringAsFixed(0)}% '
-                '(макс. ${b.maxPct.toInt()}%)',
-          ),
-        );
-      }
-    }
-
-    final hasErrors = issues.any((i) => i.isError);
-    final hasWarnings = issues.any((i) => !i.isError);
-    final allOk = issues.isEmpty;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const SizedBox(height: 6),
-        // Общий статус
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          color: allOk
-              ? AppTheme.simHigh.withOpacity(0.08)
-              : hasErrors
-                  ? AppTheme.simLow.withOpacity(0.08)
-                  : AppTheme.simMid.withOpacity(0.08),
-          child: Row(
-            children: [
-              Icon(
-                allOk
-                    ? Icons.check_circle
-                    : hasErrors
-                        ? Icons.error
-                        : Icons.warning,
-                size: 16,
-                color: allOk
-                    ? AppTheme.simHigh
-                    : hasErrors
-                        ? AppTheme.simLow
-                        : AppTheme.simMid,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  allOk
-                      ? '✅ Все коды совпадают, масштаб в норме'
-                      : hasErrors
-                          ? '🔴 Обнаружены ошибки в кодах'
-                          : '🟡 Предупреждения',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: allOk
-                        ? AppTheme.simHigh
-                        : hasErrors
-                            ? AppTheme.simLow
-                            : AppTheme.simMid,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        // Список проблем
-        ...issues.map(
-          (issue) => Container(
-            margin: const EdgeInsets.only(top: 4),
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              border: Border(
-                left: BorderSide(
-                  color: issue.isError ? AppTheme.simLow : AppTheme.simMid,
-                  width: 3,
-                ),
-              ),
-              color: (issue.isError ? AppTheme.simLow : AppTheme.simMid)
-                  .withOpacity(0.05),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Text(
-                      issue.isError ? '🔴 ОШИБКА' : '🟡 ПРЕДУПРЕЖДЕНИЕ',
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                        color:
-                            issue.isError ? AppTheme.simLow : AppTheme.simMid,
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        issue.title,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  issue.detail,
-                  style: const TextStyle(fontSize: 10, color: Colors.black54),
-                ),
-              ],
-            ),
-          ),
-        ),
-        if (!allOk && !hasErrors && hasWarnings)
-          Padding(
-            padding: const EdgeInsets.only(top: 6),
-            child: Text(
-              'Коды совпадают, но есть предупреждения по масштабу.',
-              style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
-            ),
-          ),
-      ],
-    );
-  }
-
   Widget _aiVerdictBadge(AiAnalysis ai) {
     final colors = {
       'отлично': AppTheme.simHigh,
@@ -8563,8 +5806,8 @@ class _CompareScreenState extends State<CompareScreen>
       width: double.infinity,
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.08),
-        border: Border.all(color: color.withOpacity(0.4)),
+        color: color.withValues(alpha: 0.08),
+        border: Border.all(color: color.withValues(alpha: 0.4)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -8604,7 +5847,7 @@ class _CompareScreenState extends State<CompareScreen>
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
         border: Border(left: BorderSide(color: color, width: 3)),
-        color: color.withOpacity(0.05),
+        color: color.withValues(alpha: 0.05),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -8643,14 +5886,6 @@ class _CompareScreenState extends State<CompareScreen>
       ),
     );
   }
-
-  Widget _legendItem(Color color, String label) => Row(
-        children: [
-          Container(width: 12, height: 12, color: color),
-          const SizedBox(width: 4),
-          Text(label, style: const TextStyle(fontSize: 10)),
-        ],
-      );
 
   // Карта ΔE поверх канонического ref/cmp — оба в одной системе координат,
   // что и diffL3 (см. compareImages в OpenCvPlugin.kt), наложение точное.
@@ -8992,8 +6227,8 @@ class _CompareScreenState extends State<CompareScreen>
     final tx = viewportSize.width / 2 - target.center.dx * scale;
     final ty = viewportSize.height / 2 - target.center.dy * scale;
     ctrl.value = Matrix4.identity()
-      ..translate(tx, ty)
-      ..scale(scale);
+      ..translateByDouble(tx, ty, 0, 1)
+      ..scaleByDouble(scale, scale, scale, 1);
   }
 
   Offset? _normalizedOverlayPoint({
@@ -9065,7 +6300,7 @@ class _CompareScreenState extends State<CompareScreen>
   String _colorComment(double? dL, double? da, double? db) {
     if (dL == null && da == null && db == null) return 'Нет данных';
     final parts = <String>[];
-    final thresh = 3.0; // порог значимости в единицах OpenCV Lab
+    const thresh = 3.0; // порог значимости в единицах OpenCV Lab
     if (dL != null && dL.abs() > 2.0) {
       parts.add(
         dL > 0
@@ -9091,20 +6326,6 @@ class _CompareScreenState extends State<CompareScreen>
     return parts.join(' · ');
   }
 
-  String _geometryVerdict(CompareResult r) {
-    final score = r.geometryScore ?? 0;
-    final shift = r.geometryShiftPx ?? 0;
-    final missing = r.geometryMissingPercent ?? 0;
-    final extra = r.geometryExtraPercent ?? 0;
-    if (score >= 96 && shift <= 1.2 && missing <= 2.5 && extra <= 2.5) {
-      return 'Геометрия в норме: контуры текста и штрихов совпадают, цветовые отличия не влияют на этот вывод.';
-    }
-    if (score >= 90 && shift <= 2.5) {
-      return 'Есть небольшие геометрические отклонения: стоит проверить зоны с потерянными или лишними штрихами.';
-    }
-    return 'Геометрия требует проверки: возможны смещение текста, непопадание белой краски/чёрных чернил или потеря элементов.';
-  }
-
   String _geometryStatusLine(CompareResult r) {
     final score = r.geometryScore;
     if (score == null) return 'Геометрия текста и штрихов: нет данных.';
@@ -9117,30 +6338,6 @@ class _CompareScreenState extends State<CompareScreen>
     }
     return 'Геометрия текста и штрихов требует проверки.';
   }
-}
-
-// Резкость по дисперсии Лапласиана (выше = резче)
-double _laplacianSharpness(Uint8List bytes) {
-  final src = img.decodeImage(bytes);
-  if (src == null) return 0;
-  final small = img.copyResize(img.grayscale(src), width: 512);
-  final w = small.width, h = small.height;
-  double sum = 0, sumSq = 0;
-  int n = 0;
-  for (int y = 1; y < h - 1; y++) {
-    for (int x = 1; x < w - 1; x++) {
-      final v = small.getPixel(x, y).r.toInt() * 4 -
-          small.getPixel(x - 1, y).r.toInt() -
-          small.getPixel(x + 1, y).r.toInt() -
-          small.getPixel(x, y - 1).r.toInt() -
-          small.getPixel(x, y + 1).r.toInt();
-      sum += v;
-      sumSq += v * v;
-      n++;
-    }
-  }
-  final mean = sum / n;
-  return sumSq / n - mean * mean; // дисперсия
 }
 
 // Полноэкранный просмотр с зумом
@@ -9164,168 +6361,6 @@ class _FullScreenViewer extends StatelessWidget {
       ),
     );
   }
-}
-
-// Карточка выбора снимка с показателем резкости
-class _SharpnessCard extends StatelessWidget {
-  final Uint8List bytes;
-  final String label;
-  final double? sharpness;
-  final double? other; // резкость второго снимка для сравнения
-  final VoidCallback onSelect;
-
-  const _SharpnessCard({
-    required this.bytes,
-    required this.label,
-    required this.sharpness,
-    required this.other,
-    required this.onSelect,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final isBetter = sharpness != null && other != null && sharpness! >= other!;
-    final loading = sharpness == null;
-
-    return GestureDetector(
-      onTap: onSelect,
-      child: Container(
-        decoration: BoxDecoration(
-          border: Border.all(
-            color: isBetter ? AppTheme.simHigh : AppTheme.silver,
-            width: isBetter ? 2 : 1,
-          ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Stack(
-              children: [
-                Image.memory(
-                  bytes,
-                  height: 140,
-                  fit: BoxFit.cover,
-                  width: double.infinity,
-                  cacheWidth: 1000,
-                  filterQuality: FilterQuality.medium,
-                ),
-                if (isBetter)
-                  const Positioned(
-                    top: 6,
-                    right: 6,
-                    child: _ImgLabel('✓ Резче'),
-                  ),
-              ],
-            ),
-            Container(
-              color: AppTheme.silver,
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    label,
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  if (loading)
-                    const Text(
-                      'Анализ...',
-                      style: TextStyle(fontSize: 10, color: Colors.grey),
-                    )
-                  else ...[
-                    Text(
-                      'Резкость: ${sharpness!.toStringAsFixed(0)}',
-                      style: const TextStyle(fontSize: 10),
-                    ),
-                  ],
-                  const SizedBox(height: 6),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: onSelect,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor:
-                            isBetter ? AppTheme.simHigh : AppTheme.blue,
-                        padding: const EdgeInsets.symmetric(vertical: 6),
-                        minimumSize: Size.zero,
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                      child: const Text(
-                        'Выбрать',
-                        style: TextStyle(fontSize: 11, color: Colors.white),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// Рамка: затемняет края (cropMargin с каждой стороны), центр прозрачный
-class _FramePainter extends CustomPainter {
-  final double margin;
-  const _FramePainter(this.margin);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final shadow = Paint()..color = const Color(0xAA000000);
-    final ml = size.width * margin;
-    final mt = size.height * margin;
-    final mr = size.width - ml;
-    final mb = size.height - mt;
-
-    canvas.drawRect(Rect.fromLTRB(0, 0, size.width, mt), shadow);
-    canvas.drawRect(Rect.fromLTRB(0, mb, size.width, size.height), shadow);
-    canvas.drawRect(Rect.fromLTRB(0, mt, ml, mb), shadow);
-    canvas.drawRect(Rect.fromLTRB(mr, mt, size.width, mb), shadow);
-
-    // Белые уголки
-    final line = Paint()
-      ..color = Colors.white
-      ..strokeWidth = 2.0
-      ..style = PaintingStyle.stroke;
-    final arm = size.width * 0.06;
-
-    void corner(double x, double y, double dx, double dy) {
-      canvas.drawLine(Offset(x, y), Offset(x + dx * arm, y), line);
-      canvas.drawLine(Offset(x, y), Offset(x, y + dy * arm), line);
-    }
-
-    corner(ml, mt, 1, 1);
-    corner(mr, mt, -1, 1);
-    corner(ml, mb, 1, -1);
-    corner(mr, mb, -1, -1);
-  }
-
-  @override
-  bool shouldRepaint(_FramePainter old) => old.margin != margin;
-}
-
-class _ImgLabel extends StatelessWidget {
-  final String text;
-  const _ImgLabel(this.text);
-  @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-        color: Colors.black54,
-        child: Text(
-          text,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 10,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      );
 }
 
 // Якорная точка с цифрой рядом. Размер точки и подписи остаётся
@@ -9386,7 +6421,7 @@ class _AnchorPointMarker extends StatelessWidget {
                 scale: inv,
                 child: Container(
                   decoration: BoxDecoration(
-                    color: color.withOpacity(0.14),
+                    color: color.withValues(alpha: 0.14),
                     shape: BoxShape.circle,
                     border: Border.all(
                       color: color,
@@ -9551,7 +6586,7 @@ class _ImageBoundsPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = Colors.white.withOpacity(0.22)
+      ..color = Colors.white.withValues(alpha: 0.22)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1;
     canvas.drawRect(rect, paint);
@@ -9570,6 +6605,7 @@ class ReferencePointHelperDialog extends StatefulWidget {
   final int activeIndex;
 
   const ReferencePointHelperDialog({
+    super.key,
     required this.bytes,
     required this.imageSize,
     required this.points,
@@ -10083,7 +7119,7 @@ class _AnchorLoupePainter extends CustomPainter {
     canvas.drawImageRect(image, previewSource, dest, paint);
 
     final gridPaint = Paint()
-      ..color = Colors.white.withOpacity(0.14)
+      ..color = Colors.white.withValues(alpha: 0.14)
       ..strokeWidth = 1;
     if (source.width <= 120) {
       final startX = source.left.ceil();
@@ -10238,8 +7274,8 @@ class _LoupeSelectionPainter extends CustomPainter {
     if (rect.width <= 1 || rect.height <= 1) return;
 
     final fill = Paint()
-      ..color =
-          (active ? AppTheme.blue : const Color(0xFF1D6E68)).withOpacity(0.13)
+      ..color = (active ? AppTheme.blue : const Color(0xFF1D6E68))
+          .withValues(alpha: 0.13)
       ..style = PaintingStyle.fill;
     final outer = Paint()
       ..color = Colors.black
@@ -10275,36 +7311,6 @@ class _LoupeSelectionPainter extends CustomPainter {
   }
 }
 
-class _HudLoupePainter extends CustomPainter {
-  final Color color;
-
-  const _HudLoupePainter({required this.color});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = color
-      ..style = PaintingStyle.fill
-      ..isAntiAlias = false;
-    const pixel = 2.0;
-    canvas.drawRect(const Rect.fromLTWH(6, 2, 10, pixel), paint);
-    canvas.drawRect(const Rect.fromLTWH(4, 4, 2, 2), paint);
-    canvas.drawRect(const Rect.fromLTWH(16, 4, 2, 2), paint);
-    canvas.drawRect(const Rect.fromLTWH(2, 6, pixel, 10), paint);
-    canvas.drawRect(const Rect.fromLTWH(18, 6, pixel, 10), paint);
-    canvas.drawRect(const Rect.fromLTWH(4, 16, 2, 2), paint);
-    canvas.drawRect(const Rect.fromLTWH(16, 16, 2, 2), paint);
-    canvas.drawRect(const Rect.fromLTWH(6, 18, 10, pixel), paint);
-    canvas.drawRect(const Rect.fromLTWH(17, 17, 3, 3), paint);
-    canvas.drawRect(const Rect.fromLTWH(19, 19, 3, 3), paint);
-    canvas.drawRect(const Rect.fromLTWH(21, 21, 3, 3), paint);
-  }
-
-  @override
-  bool shouldRepaint(covariant _HudLoupePainter oldDelegate) =>
-      oldDelegate.color != color;
-}
-
 class _ZoomBtn extends StatelessWidget {
   final String label;
   final VoidCallback onTap;
@@ -10326,12 +7332,4 @@ class _ZoomBtn extends StatelessWidget {
           ),
         ),
       );
-}
-
-class _BarcodeIssue {
-  final bool isError;
-  final String title;
-  final String detail;
-  const _BarcodeIssue.error(this.title, this.detail) : isError = true;
-  const _BarcodeIssue.warning(this.title, this.detail) : isError = false;
 }

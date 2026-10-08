@@ -1,10 +1,10 @@
 class ComparisonResult {
-  final String   id;
-  final String   referencePath;
-  final String   comparePath;
-  final double   similarity;
-  final String?  diffImagePath;
-  final String?  aiAnalysis;
+  final String id;
+  final String referencePath;
+  final String comparePath;
+  final double similarity;
+  final String? diffImagePath;
+  final String? aiAnalysis;
   final DateTime createdAt;
   final List<String> iterations;
 
@@ -26,25 +26,29 @@ class ComparisonResult {
   }
 
   Map<String, dynamic> toMap() => {
-    'id': id,
-    'reference_path': referencePath,
-    'compare_path': comparePath,
-    'similarity': similarity,
-    'diff_image_path': diffImagePath,
-    'ai_analysis': aiAnalysis,
-    'created_at': createdAt.toIso8601String(),
-    'iterations': iterations.join(','),
-    'updated_at': DateTime.now().toIso8601String(),
-  };
+        'id': id,
+        'reference_path': referencePath,
+        'compare_path': comparePath,
+        'similarity': similarity,
+        'diff_image_path': diffImagePath,
+        'ai_analysis': aiAnalysis,
+        'created_at': createdAt.toIso8601String(),
+        'iterations': iterations.join(','),
+        'updated_at': DateTime.now().toIso8601String(),
+      };
 
   factory ComparisonResult.fromMap(Map<String, dynamic> m) => ComparisonResult(
-    id: m['id'],
-    referencePath: m['reference_path'],
-    comparePath: m['compare_path'],
-    similarity: (m['similarity'] as num).toDouble(),
-    diffImagePath: m['diff_image_path'],
-    aiAnalysis: m['ai_analysis'],
-    createdAt: DateTime.parse(m['created_at']),
-    iterations: (m['iterations'] as String?)?.split(',').where((s) => s.isNotEmpty).toList() ?? [],
-  );
+        id: m['id'],
+        referencePath: m['reference_path'],
+        comparePath: m['compare_path'],
+        similarity: (m['similarity'] as num).toDouble(),
+        diffImagePath: m['diff_image_path'],
+        aiAnalysis: m['ai_analysis'],
+        createdAt: DateTime.parse(m['created_at']),
+        iterations: (m['iterations'] as String?)
+                ?.split(',')
+                .where((s) => s.isNotEmpty)
+                .toList() ??
+            [],
+      );
 }

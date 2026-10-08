@@ -1725,7 +1725,7 @@ class _ChatScreenState extends State<ChatScreen> {
               color: AppTheme.surfaceMuted,
               border: Border(top: BorderSide(color: AppTheme.line)),
             ),
-            child: Text(
+            child: const Text(
               'Команда в архиве · переписка сохранена',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 10, color: Colors.black54),
@@ -2595,7 +2595,7 @@ class _ChatScreenState extends State<ChatScreen> {
     } on FormatException {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
+        const SnackBar(
           content: Text('Выбранный файл пустой и не может быть отправлен.'),
         ),
       );

@@ -41,12 +41,20 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home: StartScreen()));
     await tester.pumpAndSettle();
 
+    expect(find.text('ДОБРО ПОЖАЛОВАТЬ'), findsOneWidget);
+    expect(find.text('Помогаем вам\nразличить важное'), findsOneWidget);
+    expect(find.textContaining('Начните базовую проверку'), findsNothing);
+    expect(
+        find.byKey(const ValueKey('start-guest-comparison')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('open-login')));
+    await tester.pumpAndSettle();
+
     expect(find.text('С возвращением'), findsOneWidget);
     expect(find.byKey(const ValueKey('login-identity')), findsOneWidget);
     expect(find.byKey(const ValueKey('login-password')), findsOneWidget);
     expect(find.byKey(const ValueKey('login-submit')), findsOneWidget);
 
-    await tester.tap(find.text('Регистрация'));
+    await tester.tap(find.text('Регистрация').last);
     await tester.pumpAndSettle();
 
     expect(find.text('Создайте аккаунт'), findsOneWidget);
@@ -84,6 +92,8 @@ void main() {
         ),
       ),
     );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('open-login')));
     await tester.pumpAndSettle();
 
     await tester.enterText(
@@ -131,6 +141,8 @@ void main() {
         home: StartScreen(passwordRecoveryService: service),
       ),
     );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('open-login')));
     await tester.pumpAndSettle();
 
     await tester.ensureVisible(find.text('Забыли пароль?'));
@@ -181,6 +193,8 @@ void main() {
         home: StartScreen(passwordRecoveryService: service),
       ),
     );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('open-login')));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Забыли пароль?'));
     await tester.tap(find.text('Забыли пароль?'));

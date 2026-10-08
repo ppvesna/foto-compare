@@ -13,10 +13,10 @@ class ApiService {
   void clearToken() => _token = null;
 
   Map<String, String> get _headers => {
-    'Content-Type': 'application/json',
-    'Accept':       'application/json',
-    if (_token != null) 'Authorization': 'Bearer $_token',
-  };
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        if (_token != null) 'Authorization': 'Bearer $_token',
+      };
 
   // ── GET ───────────────────────────────────────────
 
@@ -25,51 +25,59 @@ class ApiService {
     var uri = Uri.parse('${AppConfig.baseUrl}$path');
     if (params != null) uri = uri.replace(queryParameters: params);
 
-    final res = await http.get(uri, headers: _headers)
+    final res = await http
+        .get(uri, headers: _headers)
         .timeout(const Duration(seconds: 15));
     return _handle(res);
   }
 
   // ── POST ──────────────────────────────────────────
 
-  Future<Map<String, dynamic>> post(String path,
-      Map<String, dynamic> body) async {
-    final res = await http.post(
-      Uri.parse('${AppConfig.baseUrl}$path'),
-      headers: _headers,
-      body: jsonEncode(body),
-    ).timeout(const Duration(seconds: 15));
+  Future<Map<String, dynamic>> post(
+      String path, Map<String, dynamic> body) async {
+    final res = await http
+        .post(
+          Uri.parse('${AppConfig.baseUrl}$path'),
+          headers: _headers,
+          body: jsonEncode(body),
+        )
+        .timeout(const Duration(seconds: 15));
     return _handle(res);
   }
 
   // ── PUT ───────────────────────────────────────────
 
-  Future<Map<String, dynamic>> put(String path,
-      Map<String, dynamic> body) async {
-    final res = await http.put(
-      Uri.parse('${AppConfig.baseUrl}$path'),
-      headers: _headers,
-      body: jsonEncode(body),
-    ).timeout(const Duration(seconds: 15));
+  Future<Map<String, dynamic>> put(
+      String path, Map<String, dynamic> body) async {
+    final res = await http
+        .put(
+          Uri.parse('${AppConfig.baseUrl}$path'),
+          headers: _headers,
+          body: jsonEncode(body),
+        )
+        .timeout(const Duration(seconds: 15));
     return _handle(res);
   }
 
   // ── DELETE ────────────────────────────────────────
 
   Future<Map<String, dynamic>> delete(String path) async {
-    final res = await http.delete(
-      Uri.parse('${AppConfig.baseUrl}$path'),
-      headers: _headers,
-    ).timeout(const Duration(seconds: 15));
+    final res = await http
+        .delete(
+          Uri.parse('${AppConfig.baseUrl}$path'),
+          headers: _headers,
+        )
+        .timeout(const Duration(seconds: 15));
     return _handle(res);
   }
 
   // ── Multipart (загрузка файлов) ───────────────────
 
-  Future<Map<String, dynamic>> upload(String path, List<http.MultipartFile> files,
+  Future<Map<String, dynamic>> upload(
+      String path, List<http.MultipartFile> files,
       {Map<String, String>? fields}) async {
-    final req = http.MultipartRequest('POST',
-        Uri.parse('${AppConfig.baseUrl}$path'));
+    final req =
+        http.MultipartRequest('POST', Uri.parse('${AppConfig.baseUrl}$path'));
     req.headers.addAll(_headers..remove('Content-Type'));
     req.files.addAll(files);
     if (fields != null) req.fields.addAll(fields);
@@ -91,7 +99,7 @@ class ApiService {
 }
 
 class ApiException implements Exception {
-  final int    statusCode;
+  final int statusCode;
   final String body;
   ApiException(this.statusCode, this.body);
 
@@ -99,6 +107,6 @@ class ApiException implements Exception {
   String toString() => 'ApiException($statusCode): $body';
 
   bool get isUnauthorized => statusCode == 401;
-  bool get isNotFound     => statusCode == 404;
-  bool get isServerError  => statusCode >= 500;
+  bool get isNotFound => statusCode == 404;
+  bool get isServerError => statusCode >= 500;
 }

@@ -6,16 +6,19 @@ import '../features/auth/auth.dart';
 import '../services/browser_auth_url.dart';
 import '../widgets/auth_page_backdrop.dart';
 import '../widgets/auth_text_field.dart';
+import '../widgets/workspace_photo_background.dart';
 import '../widgets/xp_widgets.dart';
 
 class StartScreen extends StatefulWidget {
   final PasswordRecoveryService? passwordRecoveryService;
   final Future<void> Function(String login, String password)? signInOverride;
+  final VoidCallback? onStartGuest;
 
   const StartScreen({
     super.key,
     this.passwordRecoveryService,
     this.signInOverride,
+    this.onStartGuest,
   });
 
   @override
@@ -25,6 +28,7 @@ class StartScreen extends StatefulWidget {
 class _StartScreenState extends State<StartScreen>
     with SingleTickerProviderStateMixin {
   bool _isLogin = true;
+  bool _showAuth = false;
   bool _remember = false;
   bool _authBusy = false;
   late AnimationController _ctrl;
@@ -68,147 +72,160 @@ class _StartScreenState extends State<StartScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF111827),
-      body: AuthPageBackdrop(
-        child: SafeArea(
-          child: FadeTransition(
-            opacity: _fade,
-            child: LayoutBuilder(builder: (context, constraints) {
-              final wide = constraints.maxWidth >= 920;
-              return SingleChildScrollView(
-                padding: EdgeInsets.symmetric(
-                  horizontal: wide ? 48 : 18,
-                  vertical: wide ? 44 : 18,
-                ),
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    minHeight: constraints.maxHeight - (wide ? 84 : 48),
-                  ),
-                  child: Center(
-                    child: wide
-                        ? Row(
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
-                              _authPanel(width: 420),
-                              const SizedBox(width: 52),
-                              Expanded(child: _brandHero(wide: true)),
-                            ],
-                          )
-                        : Column(
-                            children: [
-                              _mobileBrand(),
-                              const SizedBox(height: 16),
-                              _authPanel(width: double.infinity),
-                            ],
+      body: Stack(
+        children: [
+          const Positioned.fill(child: WorkspacePhotoBackground()),
+          SafeArea(
+            child: FadeTransition(
+              opacity: _fade,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final compact = constraints.maxWidth < 620;
+                  return Stack(
+                    children: [
+                      Column(
+                        children: [
+                          Padding(
+                            padding: EdgeInsets.fromLTRB(
+                              compact ? 14 : 24,
+                              12,
+                              compact ? 14 : 24,
+                              8,
+                            ),
+                            child: Row(
+                              children: [
+                                if (!compact) const AuthBrandMark(),
+                                const Spacer(),
+                                OutlinedButton(
+                                  key: const ValueKey('open-login'),
+                                  onPressed: () => setState(() {
+                                    _isLogin = true;
+                                    _showAuth = true;
+                                  }),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: Colors.white,
+                                    side: const BorderSide(
+                                      color: Color(0x80FFFFFF),
+                                    ),
+                                  ),
+                                  child: const Text('Войти'),
+                                ),
+                                const SizedBox(width: 8),
+                                FilledButton(
+                                  key: const ValueKey('open-registration'),
+                                  onPressed: () => setState(() {
+                                    _isLogin = false;
+                                    _showAuth = true;
+                                  }),
+                                  child: Text(
+                                    compact
+                                        ? 'Регистрация'
+                                        : 'Зарегистрироваться',
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
-                  ),
-                ),
-              );
-            }),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _mobileBrand() {
-    return const Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        AuthBrandMark(),
-        SizedBox(height: 11),
-        Text(
-          'Проверяйте цвет и качество уверенно',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: Color(0xFFF8FAFC),
-            fontSize: 22,
-            fontWeight: FontWeight.w900,
-            height: 1.15,
-            shadows: [
-              Shadow(
-                color: Color(0xAA000000),
-                blurRadius: 14,
-                offset: Offset(0, 3),
+                          Expanded(
+                            child: Center(
+                              child: SingleChildScrollView(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: compact ? 18 : 48,
+                                  vertical: 24,
+                                ),
+                                child: ConstrainedBox(
+                                  constraints: const BoxConstraints(
+                                    maxWidth: 660,
+                                  ),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const Text(
+                                        'ДОБРО ПОЖАЛОВАТЬ',
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(
+                                          color: Color(0xFFD6E7EA),
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w800,
+                                          letterSpacing: 1.8,
+                                          shadows: [
+                                            Shadow(
+                                              color: Color(0xBB000000),
+                                              blurRadius: 12,
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      const SizedBox(height: 10),
+                                      Text(
+                                        'Помогаем вам\nразличить важное',
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: compact ? 31 : 48,
+                                          height: 1.05,
+                                          fontWeight: FontWeight.w900,
+                                          shadows: const [
+                                            Shadow(
+                                              color: Color(0xBB000000),
+                                              blurRadius: 18,
+                                              offset: Offset(0, 5),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      const SizedBox(height: 28),
+                                      SizedBox(
+                                        height: 52,
+                                        child: FilledButton.icon(
+                                          key: const ValueKey(
+                                            'start-guest-comparison',
+                                          ),
+                                          onPressed: widget.onStartGuest,
+                                          icon: const Icon(
+                                            Icons.compare_outlined,
+                                          ),
+                                          label: const Text(
+                                            'Начать сравнение',
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (_showAuth) ...[
+                        Positioned.fill(
+                          child: GestureDetector(
+                            onTap: () => setState(() => _showAuth = false),
+                            child: const ColoredBox(
+                              color: Color(0x99030A0E),
+                            ),
+                          ),
+                        ),
+                        Positioned.fill(
+                          child: Center(
+                            child: SingleChildScrollView(
+                              padding: const EdgeInsets.all(18),
+                              child: _authPanel(
+                                width: compact ? double.infinity : 440,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  );
+                },
               ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _brandHero({required bool wide}) {
-    return Column(
-      crossAxisAlignment:
-          wide ? CrossAxisAlignment.start : CrossAxisAlignment.center,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        SizedBox(
-          width: wide ? 560 : 340,
-          child: const Text(
-            'Photo Compare',
-            textAlign: TextAlign.left,
-            style: TextStyle(
-              color: Color(0xFFF8FAFC),
-              fontSize: 18,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0,
-              shadows: [
-                Shadow(
-                  color: Color(0xAA000000),
-                  blurRadius: 16,
-                  offset: Offset(0, 4),
-                ),
-              ],
             ),
           ),
-        ),
-        const SizedBox(height: 16),
-        _DimensionalTitle(
-          text: 'Помогаем вам\nразличить важное',
-          align: wide ? TextAlign.left : TextAlign.center,
-          fontSize: wide ? 46 : 30,
-        ),
-        const SizedBox(height: 18),
-        Container(
-          width: wide ? 540 : 330,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
-          decoration: BoxDecoration(
-            color: const Color(0x66111827),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: const Color(0x24FFFFFF)),
-          ),
-          child: Text(
-            'Просмотровый стол, спектрофотометр, лупа печатника и цветовые различия — в одном спокойном рабочем пространстве.',
-            textAlign: wide ? TextAlign.left : TextAlign.center,
-            style: const TextStyle(
-              color: Color(0xFFE2E8F0),
-              fontSize: 15,
-              height: 1.5,
-              letterSpacing: 0,
-              shadows: [
-                Shadow(
-                  color: Color(0x99000000),
-                  blurRadius: 10,
-                  offset: Offset(0, 2),
-                ),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 18),
-        Wrap(
-          alignment: wide ? WrapAlignment.start : WrapAlignment.center,
-          spacing: 8,
-          runSpacing: 8,
-          children: const [
-            _SoftChip('RGB'),
-            _SoftChip('CMY'),
-            _SoftChip('Delta E'),
-            _SoftChip('Print inspection'),
-          ],
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -274,6 +291,15 @@ class _StartScreenState extends State<StartScreen>
                 ),
               ),
               const _MiniPrismMark(),
+              const SizedBox(width: 6),
+              IconButton(
+                tooltip: 'Закрыть',
+                onPressed: () => setState(() => _showAuth = false),
+                icon: const Icon(
+                  Icons.close_rounded,
+                  color: Color(0xFF475569),
+                ),
+              ),
             ]),
           ),
           Padding(
@@ -988,96 +1014,6 @@ class _RecoveryIcon extends StatelessWidget {
         Icons.lock_reset_rounded,
         color: Color(0xFF2563EB),
         size: 23,
-      ),
-    );
-  }
-}
-
-class _DimensionalTitle extends StatelessWidget {
-  final String text;
-  final TextAlign align;
-  final double fontSize;
-
-  const _DimensionalTitle({
-    required this.text,
-    required this.align,
-    required this.fontSize,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Stack(children: [
-      Transform.translate(
-        offset: const Offset(0, 4),
-        child: Text(
-          text,
-          textAlign: align,
-          style: TextStyle(
-            color: const Color(0x7A000000),
-            fontSize: fontSize,
-            fontWeight: FontWeight.w900,
-            height: 1.03,
-            letterSpacing: 0,
-          ),
-        ),
-      ),
-      Text(
-        text,
-        textAlign: align,
-        style: TextStyle(
-          foreground: Paint()
-            ..shader = const LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                Color(0xFFFFFFFF),
-                Color(0xFFE7EEF8),
-                Color(0xFFB8C7DB),
-              ],
-            ).createShader(const Rect.fromLTWH(0, 0, 700, 140)),
-          fontSize: fontSize,
-          fontWeight: FontWeight.w900,
-          height: 1.03,
-          letterSpacing: 0,
-          shadows: const [
-            Shadow(
-              color: Color(0xCC000000),
-              blurRadius: 20,
-              offset: Offset(0, 8),
-            ),
-            Shadow(
-              color: Color(0x667DD3FC),
-              blurRadius: 18,
-              offset: Offset(0, -1),
-            ),
-          ],
-        ),
-      ),
-    ]);
-  }
-}
-
-class _SoftChip extends StatelessWidget {
-  final String label;
-  const _SoftChip(this.label);
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-      decoration: BoxDecoration(
-        color: const Color(0x1CFFFFFF),
-        border: Border.all(color: const Color(0x2EFFFFFF)),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(
-          color: Color(0xFFD7E1F0),
-          fontSize: 11,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 0,
-        ),
       ),
     );
   }

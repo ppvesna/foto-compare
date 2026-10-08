@@ -56,7 +56,7 @@ void main() {
       find.widgetWithText(TextField, 'Имя'),
       'Олег',
     );
-    await tester.tap(find.text('Сохранить профиль'));
+    await tester.tap(find.text('Сохранить изменения'));
     await tester.pumpAndSettle();
 
     expect(profileService.profile.nickname, 'owner_vesna');
@@ -64,6 +64,52 @@ void main() {
     expect(profileService.saveCount, 1);
     expect(refreshCount, 1);
     expect(find.text('Профиль сохранён'), findsOneWidget);
+  });
+
+  testWidgets('account section exposes an explicit sign out action',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    var signedOut = false;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SettingsScreen(
+            entitlements: EntitlementSnapshot.forPlan(PlanTier.pro),
+            organizationAccess: OrganizationAccess.legacyPersonal(),
+            accountProfileService: MockAccountProfileService(
+              profile: const AccountProfile(
+                userId: 'user-1',
+                email: 'user@example.com',
+                nickname: 'user_one',
+              ),
+            ),
+            onAccessChanged: () async {},
+            onSignOut: () async => signedOut = true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Аккаунт'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Файл'), findsNothing);
+    expect(find.text('Профили'), findsNothing);
+    expect(find.text('Сохранить изменения'), findsOneWidget);
+    expect(find.text('Изменить пароль'), findsOneWidget);
+    expect(find.text('Выйти'), findsOneWidget);
+    final saveButton = tester.widget<FilledButton>(
+      find.byKey(const ValueKey('save-account-profile')),
+    );
+    expect(saveButton.onPressed, isNull);
+    final signOut = find.byKey(const ValueKey('sign-out-account'));
+    expect(signOut, findsOneWidget);
+    await tester.ensureVisible(signOut);
+    await tester.tap(signOut);
+    await tester.pump();
+    expect(signedOut, isTrue);
   });
 
   testWidgets('user confirms the current password before changing it',

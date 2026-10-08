@@ -18,7 +18,10 @@ class LayoutProfileStorage {
       if (!await f.exists()) return [];
       final raw = await f.readAsString();
       final list = jsonDecode(raw) as List;
-      return list.map((e) => LayoutProfile.fromJson(Map<String, dynamic>.from(e as Map))).toList();
+      return list
+          .map((e) =>
+              LayoutProfile.fromJson(Map<String, dynamic>.from(e as Map)))
+          .toList();
     } catch (_) {
       return [];
     }

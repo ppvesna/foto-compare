@@ -70,6 +70,17 @@ Rule: every step must preserve the working application and be independently reve
 - Migration `033` keeps internal and customer work channels protected independently
   while presenting one chronological timeline to staff. The sender explicitly selects
   the audience, and only an administrator may connect the external customer.
+- The application shell now uses one workspace instead of a post-login Home page and
+  four competing navigation destinations. Guest and personal checks omit job metadata;
+  organization users start on the photographic comparison surface and open the work
+  register on demand through `Inspection / Archive`; `New work` is available inside
+  the inspection list only to an inspection specialist. Chat and settings use
+  floating actions rather than a permanent rail and open as overlays without resetting
+  an active comparison. `Inspection` and `Archive` open separate searchable lists without
+  a duplicated switcher; an active row opens comparison directly and secondary actions
+  remain in the role-aware overflow menu. Migration `038` records the
+  agreed rule that only an inspection specialist enters a new work; it is applied
+  pointwise to the test remote and the public-schema lint is clean.
 - The `vesna-test` employee and customer job sharing/revocation gate has passed. The
   remote ledger is still empty because historical migrations were applied pointwise;
   the next release task is to repair/audit that ledger before production deployment.

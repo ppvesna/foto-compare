@@ -20,9 +20,9 @@ class OcrResult {
 }
 
 class TextDiff {
-  final List<String> missing;   // есть в эталоне, нет в фото
-  final List<String> extra;     // есть в фото, нет в эталоне
-  final double similarity;      // 0–100%
+  final List<String> missing; // есть в эталоне, нет в фото
+  final List<String> extra; // есть в фото, нет в эталоне
+  final double similarity; // 0–100%
 
   const TextDiff({
     required this.missing,
@@ -37,13 +37,15 @@ class OcrService {
   static Future<OcrResult> recognize(Uint8List bytes) async {
     // ML Kit — нативный плагин (Android/iOS), в браузере нет реализации
     if (kIsWeb) {
-      return const OcrResult('', [], error: 'Распознавание текста недоступно в веб-версии');
+      return const OcrResult('', [],
+          error: 'Распознавание текста недоступно в веб-версии');
     }
     File? tmp;
     TextRecognizer? recognizer;
     try {
       final dir = await getTemporaryDirectory();
-      tmp = File('${dir.path}/ocr_${DateTime.now().millisecondsSinceEpoch}.jpg');
+      tmp =
+          File('${dir.path}/ocr_${DateTime.now().millisecondsSinceEpoch}.jpg');
       await tmp.writeAsBytes(bytes);
 
       // latin охватывает латиницу + кириллицу в ML Kit v2
@@ -51,13 +53,15 @@ class OcrService {
       final inputImage = InputImage.fromFilePath(tmp.path);
       final recognized = await recognizer.processImage(inputImage);
 
-      final blocks = recognized.blocks.map((b) => OcrBlock(
-            b.text,
-            b.boundingBox.left.toDouble(),
-            b.boundingBox.top.toDouble(),
-            b.boundingBox.right.toDouble(),
-            b.boundingBox.bottom.toDouble(),
-          )).toList();
+      final blocks = recognized.blocks
+          .map((b) => OcrBlock(
+                b.text,
+                b.boundingBox.left.toDouble(),
+                b.boundingBox.top.toDouble(),
+                b.boundingBox.right.toDouble(),
+                b.boundingBox.bottom.toDouble(),
+              ))
+          .toList();
 
       return OcrResult(recognized.text, blocks);
     } catch (e) {
@@ -65,7 +69,13 @@ class OcrService {
       return OcrResult('', [], error: e.toString());
     } finally {
       await recognizer?.close();
-      await tmp?.delete().catchError((_) {});
+      if (tmp != null) {
+        try {
+          await tmp.delete();
+        } catch (_) {
+          // Temporary cleanup must not replace the OCR result with an error.
+        }
+      }
     }
   }
 
@@ -85,8 +95,12 @@ class OcrService {
 
     final refFreq = <String, int>{};
     final cmpFreq = <String, int>{};
-    for (final w in refWords) refFreq[w] = (refFreq[w] ?? 0) + 1;
-    for (final w in cmpWords) cmpFreq[w] = (cmpFreq[w] ?? 0) + 1;
+    for (final w in refWords) {
+      refFreq[w] = (refFreq[w] ?? 0) + 1;
+    }
+    for (final w in cmpWords) {
+      cmpFreq[w] = (cmpFreq[w] ?? 0) + 1;
+    }
 
     int matched = 0;
     for (final w in refFreq.keys) {
@@ -96,13 +110,17 @@ class OcrService {
     final missing = <String>[];
     for (final w in refFreq.keys) {
       final diff = refFreq[w]! - (cmpFreq[w] ?? 0);
-      for (int i = 0; i < diff; i++) missing.add(w);
+      for (int i = 0; i < diff; i++) {
+        missing.add(w);
+      }
     }
 
     final extra = <String>[];
     for (final w in cmpFreq.keys) {
       final diff = cmpFreq[w]! - (refFreq[w] ?? 0);
-      for (int i = 0; i < diff; i++) extra.add(w);
+      for (int i = 0; i < diff; i++) {
+        extra.add(w);
+      }
     }
 
     final total = refWords.length + cmpWords.length;
