@@ -59,6 +59,8 @@ class SettingsScreen extends StatefulWidget {
   final PrintConditionService? printConditionService;
   final ChatRepository? chatRepository;
   final int checkUsageRevision;
+  final String historyOwnerId;
+  final Future<void> Function()? onChangeWorkspace;
   final Future<void> Function()? onSignOut;
 
   const SettingsScreen({
@@ -76,6 +78,8 @@ class SettingsScreen extends StatefulWidget {
     this.printConditionService,
     this.chatRepository,
     this.checkUsageRevision = 0,
+    this.historyOwnerId = 'guest',
+    this.onChangeWorkspace,
     this.onSignOut,
   });
 
@@ -730,9 +734,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     side: const BorderSide(color: Color(0xFFD9AAA6)),
                   ),
                 );
+                final changeWorkspace = OutlinedButton.icon(
+                  key: const ValueKey('change-workspace'),
+                  onPressed: widget.onChangeWorkspace,
+                  icon: const Icon(Icons.swap_horiz_rounded),
+                  label: const Text('Сменить пространство'),
+                );
                 final actions = <Widget>[
                   save,
                   password,
+                  if (widget.onChangeWorkspace != null) changeWorkspace,
                   if (widget.onSignOut != null) signOut,
                 ];
                 if (constraints.maxWidth < 520) {
@@ -742,16 +753,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     children: actions,
                   );
                 }
-                return Row(
-                  children: [
-                    Expanded(flex: 5, child: save),
-                    const SizedBox(width: 8),
-                    Expanded(flex: 4, child: password),
-                    if (widget.onSignOut != null) ...[
-                      const SizedBox(width: 8),
-                      Expanded(flex: 3, child: signOut),
-                    ],
-                  ],
+                return Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: actions,
                 );
               },
             ),
@@ -5658,9 +5663,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _lastCheckHistoryGroup() {
-    return ValueListenableBuilder<CheckProtocol?>(
-      valueListenable: CheckHistoryService.lastCheck,
-      builder: (context, protocol, _) {
+    return ValueListenableBuilder<List<CheckProtocol>>(
+      valueListenable: CheckHistoryService.checks,
+      builder: (context, _, child) {
+        final scopedChecks = CheckHistoryService.forScope(
+          ownerUserId: widget.historyOwnerId,
+          organizationId: widget.organizationAccess.organizationId,
+        );
+        final protocol = scopedChecks.isEmpty ? null : scopedChecks.first;
         return _settingsPanel(
           title: 'История проверок',
           child: protocol == null
@@ -5689,7 +5699,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             'Очистить историю?',
                             'Удалить локальный протокол последней проверки?',
                           );
-                          if (ok) await CheckHistoryService.clearLast();
+                          if (ok) {
+                            await CheckHistoryService.clearScope(
+                              ownerUserId: widget.historyOwnerId,
+                              organizationId:
+                                  widget.organizationAccess.organizationId,
+                            );
+                          }
                         },
                       ),
                     ]),

@@ -209,6 +209,171 @@ void main() {
     expect(find.text('Продолжить проверку'), findsNothing);
     expect(find.text('Результаты и история'), findsOneWidget);
   });
+
+  testWidgets(
+      'repeat inspection creates a fresh unit before opening comparison',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(900, 680));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final service = _RepeatWorkflowService();
+    ProductionComparisonTarget? openedComparison;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: WorksScreen(
+            organizationId: 'org-1',
+            currentUserId: 'admin-1',
+            organizationAccess: OrganizationAccess.forRole(
+              organizationId: 'org-1',
+              role: OrganizationRole.admin,
+            ),
+            workflowService: service,
+            initialView: ProductionWorkView.archived,
+            overlayMode: true,
+            onOpenComparison: (target) => openedComparison = target,
+            onOpenChat: (_) {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('work-menu-job-repeat')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Повторная проверка'));
+    await tester.pumpAndSettle();
+
+    expect(service.restored, isTrue);
+    expect(service.createdBatch, isTrue);
+    expect(service.createdUnit, isTrue);
+    expect(openedComparison?.work.jobStatus, 'active');
+    expect(openedComparison?.unit.id, 'unit-repeat');
+  });
+}
+
+class _RepeatWorkflowService extends _FakeWorkflowService {
+  bool restored = false;
+  bool createdBatch = false;
+  bool createdUnit = false;
+
+  @override
+  ProductionWorkSummary get work => ProductionWorkSummary(
+        jobId: 'job-repeat',
+        jobNumber: 'test 111',
+        customerId: 'customer-1',
+        customerName: 'VESNA-CLIENT-TEST',
+        jobStatus: restored ? 'active' : 'completed',
+        stage: ProductionStage.qualityControl,
+        flowState: restored
+            ? ProductionFlowState.ready
+            : ProductionFlowState.completed,
+        activeBlockCount: 0,
+        updatedAt: DateTime.utc(2026, 10, 9),
+        canAdvance: true,
+        canAssignControllers: false,
+        canBlock: true,
+        canUnblock: true,
+        isCustomerView: false,
+        canCreateBatch: true,
+        canComplete: true,
+        canRestore: !restored,
+      );
+
+  @override
+  Future<ProductionWorkPage> listWorks({
+    required String organizationId,
+    String search = '',
+    ProductionWorkView view = ProductionWorkView.active,
+    DateTime? cursorUpdatedAt,
+    String? cursorId,
+    int pageSize = 50,
+  }) async =>
+      ProductionWorkPage(
+        items: view == ProductionWorkView.archived && !restored ? [work] : [],
+        hasMore: false,
+      );
+
+  @override
+  Future<void> restoreWork(String jobId) async => restored = true;
+
+  @override
+  Future<String> createBatch({
+    required String jobId,
+    String? employeeUserId,
+    required String reason,
+    String machine = '',
+    String material = '',
+    String format = '',
+    String inks = '',
+  }) async {
+    expect(restored, isTrue);
+    expect(employeeUserId, 'admin-1');
+    expect(reason, 'Повторная проверка образца');
+    createdBatch = true;
+    return 'batch-repeat';
+  }
+
+  @override
+  Future<String> createUnit({
+    required String batchId,
+    required ProductionUnitType type,
+  }) async {
+    expect(batchId, 'batch-repeat');
+    expect(type, ProductionUnitType.stack);
+    createdUnit = true;
+    return 'unit-repeat';
+  }
+
+  @override
+  Future<ProductionWorkDetail> loadWork(String jobId) async =>
+      ProductionWorkDetail(
+        summary: work,
+        blocks: const [],
+        history: const [],
+        batches: [
+          ProductionBatch(
+            id: 'batch-legacy',
+            number: 1,
+            employeeName: 'Маша',
+            reason: 'Работа создана',
+            machine: '',
+            material: '',
+            format: '',
+            inks: '',
+            createdAt: DateTime.utc(2026, 10, 3),
+          ),
+          if (createdBatch)
+            ProductionBatch(
+              id: 'batch-repeat',
+              number: 2,
+              employeeUserId: 'admin-1',
+              employeeName: 'Анна',
+              reason: 'Повторная проверка образца',
+              machine: '',
+              material: '',
+              format: '',
+              inks: '',
+              createdAt: DateTime.utc(2026, 10, 9),
+              units: createdUnit
+                  ? [
+                      ProductionWorkUnit(
+                        id: 'unit-repeat',
+                        batchId: 'batch-repeat',
+                        batchNumber: 2,
+                        number: 1,
+                        type: ProductionUnitType.stack,
+                        state: ProductionUnitState.checking,
+                        inspectionCount: 0,
+                        attemptCount: 0,
+                        latestScore: null,
+                        createdAt: DateTime.utc(2026, 10, 9),
+                      ),
+                    ]
+                  : const [],
+            ),
+        ],
+      );
 }
 
 class _FakeWorkflowService implements ProductionWorkflowService {

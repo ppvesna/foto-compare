@@ -1,6 +1,8 @@
 class CheckProtocol {
   final String id;
   final DateTime createdAt;
+  final String ownerUserId;
+  final String organizationId;
   final String jobId;
   final String jobNumber;
   final String customerId;
@@ -26,6 +28,8 @@ class CheckProtocol {
   const CheckProtocol({
     required this.id,
     required this.createdAt,
+    this.ownerUserId = '',
+    this.organizationId = '',
     this.jobId = '',
     this.jobNumber = '',
     this.customerId = '',
@@ -52,6 +56,8 @@ class CheckProtocol {
   factory CheckProtocol.fromJson(Map<String, dynamic> json) => CheckProtocol(
         id: json['id'] as String,
         createdAt: DateTime.parse(json['createdAt'] as String),
+        ownerUserId: json['ownerUserId'] as String? ?? '',
+        organizationId: json['organizationId'] as String? ?? '',
         jobId: json['jobId'] as String? ?? '',
         jobNumber: json['jobNumber'] as String? ?? '',
         customerId: json['customerId'] as String? ?? '',
@@ -86,6 +92,8 @@ class CheckProtocol {
   Map<String, dynamic> toJson() => {
         'id': id,
         'createdAt': createdAt.toIso8601String(),
+        'ownerUserId': ownerUserId,
+        'organizationId': organizationId,
         'jobId': jobId,
         'jobNumber': jobNumber,
         'customerId': customerId,

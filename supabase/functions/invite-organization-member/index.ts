@@ -129,7 +129,9 @@ Deno.serve(async (request: Request) => {
                 ...metadata,
                 nickname: metadata.nickname || effectiveNickname,
                 display_name: metadata.display_name || displayName,
-                organization_invite_setup: true,
+                // A registered account already owns its credentials and
+                // profile. The invitation must add membership only.
+                organization_invite_setup: false,
               },
             });
           deliveryError = updateUserError;

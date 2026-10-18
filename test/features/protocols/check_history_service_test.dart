@@ -29,6 +29,66 @@ void main() {
     expect(CheckHistoryService.lastCheck.value?.customerConfirmed, isTrue);
     expect(CheckHistoryService.checks.value, hasLength(1));
     expect(CheckHistoryService.checks.value.single.stages.single.name, 'Цвет');
+    expect(
+      CheckHistoryService.forScope(ownerUserId: 'user-1'),
+      isEmpty,
+      reason: 'Старая общая история не должна приписываться '
+          'вошедшему пользователю.',
+    );
+  });
+
+  test('separates personal and organization history by user and workspace',
+      () async {
+    await CheckHistoryService.saveLast(
+      _protocol(id: 'personal', ownerUserId: 'user-1'),
+    );
+    await CheckHistoryService.saveLast(
+      _protocol(
+        id: 'organization',
+        ownerUserId: 'user-1',
+        organizationId: 'organization-1',
+      ),
+    );
+    await CheckHistoryService.saveLast(
+      _protocol(id: 'other-user', ownerUserId: 'user-2'),
+    );
+
+    expect(
+      CheckHistoryService.forScope(ownerUserId: 'user-1')
+          .map((protocol) => protocol.id),
+      ['personal'],
+    );
+    expect(
+      CheckHistoryService.forScope(
+        ownerUserId: 'user-1',
+        organizationId: 'organization-1',
+      ).map((protocol) => protocol.id),
+      ['organization'],
+    );
+  });
+
+  test('clearing one workspace preserves other workspace history', () async {
+    await CheckHistoryService.saveLast(
+      _protocol(id: 'personal', ownerUserId: 'user-1'),
+    );
+    await CheckHistoryService.saveLast(
+      _protocol(
+        id: 'organization',
+        ownerUserId: 'user-1',
+        organizationId: 'organization-1',
+      ),
+    );
+
+    await CheckHistoryService.clearScope(ownerUserId: 'user-1');
+
+    expect(CheckHistoryService.forScope(ownerUserId: 'user-1'), isEmpty);
+    expect(
+      CheckHistoryService.forScope(
+        ownerUserId: 'user-1',
+        organizationId: 'organization-1',
+      ).single.id,
+      'organization',
+    );
   });
 
   test('cloud preview keeps detail within the 1280 pixel boundary', () async {
@@ -59,9 +119,16 @@ void main() {
   });
 }
 
-CheckProtocol _protocol() => CheckProtocol(
-      id: 'protocol-1',
+CheckProtocol _protocol({
+  String id = 'protocol-1',
+  String ownerUserId = '',
+  String organizationId = '',
+}) =>
+    CheckProtocol(
+      id: id,
       createdAt: DateTime.utc(2026, 7, 18, 10, 30),
+      ownerUserId: ownerUserId,
+      organizationId: organizationId,
       jobId: 'job-1',
       jobNumber: '1001',
       customerId: 'customer-1',

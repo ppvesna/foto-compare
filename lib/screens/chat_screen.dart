@@ -901,7 +901,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final hasVisibleSelection = visibleIndexes.contains(_activeChat);
       if (compact) {
         return Column(children: [
-          SizedBox(height: 204, child: _chatStrip()),
+          _chatStrip(),
           Expanded(
             child:
                 hasVisibleSelection ? _chatPane() : _filteredChatsEmptyState(),
@@ -975,10 +975,13 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _chatStrip() {
     return Container(
       color: AppTheme.surfaceMuted,
-      child: Column(children: [
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
         _listHeader(compact: true),
         _chatNavigationControls(compact: true),
-        Expanded(child: _chatNavigationBody(compact: true)),
+        SizedBox(
+          height: 86,
+          child: _chatNavigationBody(compact: true),
+        ),
       ]),
     );
   }
@@ -1034,7 +1037,7 @@ class _ChatScreenState extends State<ChatScreen> {
         }
         final threadIndex = indexes[adjusted - contactCount];
         return SizedBox(
-          width: compact ? 218 : null,
+          width: compact ? 252 : null,
           child: _chatTile(threadIndex),
         );
       },
@@ -1141,21 +1144,30 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             if (_chatSection == _ChatSection.works) ...[
               const SizedBox(width: 5),
-              IconButton.filledTonal(
-                key: const ValueKey('chat-only-unread'),
-                tooltip: 'Только непрочитанные',
-                onPressed: () =>
-                    setState(() => _onlyUnreadWorks = !_onlyUnreadWorks),
-                style: IconButton.styleFrom(
-                  backgroundColor:
-                      _onlyUnreadWorks ? AppTheme.blue : AppTheme.surfaceMuted,
-                  foregroundColor:
-                      _onlyUnreadWorks ? Colors.white : AppTheme.graphite,
-                ),
-                icon: Badge(
-                  isLabelVisible: _unreadThreadCount > 0,
-                  label: Text('$_unreadThreadCount'),
-                  child: const Icon(Icons.mark_email_unread_outlined, size: 18),
+              SizedBox.square(
+                dimension: 28,
+                child: IconButton.filledTonal(
+                  key: const ValueKey('chat-only-unread'),
+                  tooltip: 'Только непрочитанные',
+                  onPressed: () =>
+                      setState(() => _onlyUnreadWorks = !_onlyUnreadWorks),
+                  style: IconButton.styleFrom(
+                    padding: EdgeInsets.zero,
+                    minimumSize: const Size.square(28),
+                    maximumSize: const Size.square(28),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    backgroundColor: _onlyUnreadWorks
+                        ? AppTheme.blue
+                        : AppTheme.surfaceMuted,
+                    foregroundColor:
+                        _onlyUnreadWorks ? Colors.white : AppTheme.graphite,
+                  ),
+                  icon: Badge(
+                    isLabelVisible: _unreadThreadCount > 0,
+                    label: Text('$_unreadThreadCount'),
+                    child:
+                        const Icon(Icons.mark_email_unread_outlined, size: 16),
+                  ),
                 ),
               ),
             ],
@@ -1523,6 +1535,7 @@ class _ChatScreenState extends State<ChatScreen> {
         ? chat!.color
         : _serverThreadColor(serverThread.kind);
     return InkWell(
+      key: ValueKey('chat-thread-${serverThread?.id ?? index}'),
       onTap: () => _selectChat(index),
       borderRadius: BorderRadius.circular(16),
       child: Container(
@@ -1546,6 +1559,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 Expanded(
                   child: Text(
                     title,
+                    maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       fontSize: 12,
@@ -1567,6 +1581,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 Expanded(
                   child: Text(
                     subtitle,
+                    maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontSize: 10, color: Colors.black54),
                   ),
@@ -1863,12 +1878,13 @@ class _ChatScreenState extends State<ChatScreen> {
 
   _ChatMessage _serverMessageView(ChatMessage message) {
     final nickname = message.senderNickname.trim();
-    final messageThread = _serverThreads
-        .where((thread) => thread.id == message.threadId)
-        .firstOrNull;
-    final customerAudience = _activeWorkGroup != null &&
-        messageThread?.kind == ChatThreadKind.jobCustomer &&
-        _canChooseWorkAudience;
+    final audienceLabel = _activeWorkGroup != null && _canChooseWorkAudience
+        ? switch (_messageChannelKind(message)) {
+            ChatThreadKind.jobCustomer => 'Заказчику',
+            ChatThreadKind.jobInternal => 'Команде',
+            _ => null,
+          }
+        : null;
     return _ChatMessage(
       author: message.senderLabel,
       role: nickname.isEmpty ? 'участник' : '@$nickname',
@@ -1876,8 +1892,22 @@ class _ChatScreenState extends State<ChatScreen> {
       text: message.text,
       isMine: message.senderId == widget.currentUserId,
       attachment: message.attachment,
-      audienceLabel: customerAudience ? 'Заказчику' : null,
+      audienceLabel: audienceLabel,
     );
+  }
+
+  ChatThreadKind? _messageChannelKind(ChatMessage message) {
+    for (final channel in _activeMessageChannels) {
+      final channelMessages =
+          _messagesByThread[channel.thread.id] ?? const <ChatMessage>[];
+      if (channelMessages.any((candidate) => candidate.id == message.id)) {
+        return channel.thread.kind;
+      }
+    }
+    return _serverThreads
+        .where((thread) => thread.id == message.threadId)
+        .firstOrNull
+        ?.kind;
   }
 
   Widget _messageBubble(_ChatMessage message) {
@@ -1885,83 +1915,88 @@ class _ChatScreenState extends State<ChatScreen> {
     final color = message.isMine ? const Color(0xFFDFF7D9) : Colors.white;
     final border = message.isMine ? const Color(0xFFA7D79D) : AppTheme.border;
     final author = message.isMine ? _userName : message.author;
-    return Align(
-      alignment: align,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 640),
-        child: Container(
-          margin: const EdgeInsets.only(bottom: 10),
-          padding: const EdgeInsets.fromLTRB(11, 9, 11, 8),
-          decoration: BoxDecoration(
-            color: color,
-            border: Border.all(color: border),
-            borderRadius: BorderRadius.circular(18),
-            boxShadow: AppTheme.shadowSubtle,
-          ),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              _avatar(author, message.isMine ? AppTheme.simHigh : AppTheme.blue,
-                  size: 26),
-              const SizedBox(width: 7),
-              Expanded(
-                child: Text(
-                  '$author · ${message.role}',
-                  style: const TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.black87,
-                  ),
-                ),
-              ),
-              Text(
-                message.time,
-                style: const TextStyle(fontSize: 9, color: Colors.black45),
-              ),
-            ]),
-            if (message.audienceLabel != null) ...[
-              const SizedBox(height: 5),
-              DecoratedBox(
-                decoration: BoxDecoration(
-                  color: const Color(0xFFE8F7EE),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+    return LayoutBuilder(builder: (_, constraints) {
+      final responsiveWidth = constraints.maxWidth * 0.82;
+      final bubbleWidth = responsiveWidth > 640 ? 640.0 : responsiveWidth;
+      return Align(
+        alignment: align,
+        child: SizedBox(
+          width: bubbleWidth,
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.fromLTRB(11, 9, 11, 8),
+            decoration: BoxDecoration(
+              color: color,
+              border: Border.all(color: border),
+              borderRadius: BorderRadius.circular(18),
+              boxShadow: AppTheme.shadowSubtle,
+            ),
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                _avatar(
+                    author, message.isMine ? AppTheme.simHigh : AppTheme.blue,
+                    size: 26),
+                const SizedBox(width: 7),
+                Expanded(
                   child: Text(
-                    message.audienceLabel!,
+                    '$author · ${message.role}',
                     style: const TextStyle(
-                      fontSize: 9,
+                      fontSize: 10,
                       fontWeight: FontWeight.w800,
-                      color: Color(0xFF137A45),
+                      color: Colors.black87,
                     ),
                   ),
                 ),
-              ),
-            ],
-            const SizedBox(height: 7),
-            if (message.text.isNotEmpty)
-              Text(
-                message.text,
-                style: const TextStyle(fontSize: 12, height: 1.35),
-              ),
-            if (message.attachment != null) ...[
-              if (message.text.isNotEmpty) const SizedBox(height: 9),
-              _attachmentCard(message.attachment!),
-            ],
-            if (message.card != null) ...[
-              const SizedBox(height: 9),
-              _checkCard(message.card!),
-            ],
-            if (message.approvalCard != null) ...[
-              const SizedBox(height: 9),
-              _approvalCard(message.approvalCard!),
-            ],
-          ]),
+                Text(
+                  message.time,
+                  style: const TextStyle(fontSize: 9, color: Colors.black45),
+                ),
+              ]),
+              if (message.audienceLabel != null) ...[
+                const SizedBox(height: 5),
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE8F7EE),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                    child: Text(
+                      message.audienceLabel!,
+                      style: const TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF137A45),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 7),
+              if (message.text.isNotEmpty)
+                Text(
+                  message.text,
+                  style: const TextStyle(fontSize: 12, height: 1.35),
+                ),
+              if (message.attachment != null) ...[
+                if (message.text.isNotEmpty) const SizedBox(height: 9),
+                _attachmentCard(message.attachment!),
+              ],
+              if (message.card != null) ...[
+                const SizedBox(height: 9),
+                _checkCard(message.card!),
+              ],
+              if (message.approvalCard != null) ...[
+                const SizedBox(height: 9),
+                _approvalCard(message.approvalCard!),
+              ],
+            ]),
+          ),
         ),
-      ),
-    );
+      );
+    });
   }
 
   Widget _checkCard(_SharedCheckCard card) {

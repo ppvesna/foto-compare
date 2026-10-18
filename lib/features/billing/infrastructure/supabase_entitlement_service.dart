@@ -56,6 +56,47 @@ class SupabaseEntitlementService implements EntitlementService {
     return _fromMetadata(metadata);
   }
 
+  Future<EntitlementSnapshot> loadPersonal() async {
+    final user = client.auth.currentUser;
+    if (user == null) return EntitlementSnapshot.forPlan(PlanTier.free);
+
+    try {
+      final assignment = await client
+          .from('access_assignments')
+          .select(
+            'plan_id, status, valid_until, entitlement_overrides, '
+            'limit_overrides, access_plans(entitlements, limits)',
+          )
+          .eq('user_id', user.id)
+          .maybeSingle();
+      if (assignment == null) {
+        return EntitlementSnapshot.forPlan(PlanTier.free);
+      }
+      final planId = assignment['plan_id'] as String? ?? 'free';
+      final plan = assignment['access_plans'] as Map?;
+      final planLimits = Map<String, dynamic>.from(
+        plan?['limits'] as Map? ?? const {},
+      );
+      planLimits.addAll(
+        Map<String, dynamic>.from(
+          assignment['limit_overrides'] as Map? ?? const {},
+        ),
+      );
+      return _fromMetadata({
+        'plan': planId,
+        'personal_plan': planId,
+        'entitlement_scope': 'personal',
+        'subscription_status': assignment['status'] ?? 'active',
+        'access_valid_until': assignment['valid_until'],
+        'entitlements':
+            assignment['entitlement_overrides'] ?? plan?['entitlements'],
+        'limits': planLimits,
+      });
+    } catch (_) {
+      return EntitlementSnapshot.forPlan(PlanTier.free);
+    }
+  }
+
   Map<String, dynamic>? _metadataFromResponse(Object? response) {
     Object? value = response;
     if (value is String) {

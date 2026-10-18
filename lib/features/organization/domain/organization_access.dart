@@ -75,6 +75,11 @@ class OrganizationAccess {
     );
   }
 
+  factory OrganizationAccess.personal() => OrganizationAccess.forRole(
+        organizationId: null,
+        role: OrganizationRole.personal,
+      );
+
   bool allows(OrganizationPermission permission) =>
       permissions.contains(permission);
 

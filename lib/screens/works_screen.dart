@@ -890,27 +890,34 @@ class _WorksScreenState extends State<WorksScreen> {
     try {
       await widget.workflowService.restoreWork(work.jobId);
       if (!mounted) return;
-      final restored = ProductionWorkSummary(
+      final batchId = await widget.workflowService.createBatch(
         jobId: work.jobId,
-        jobNumber: work.jobNumber,
-        customerId: work.customerId,
-        customerName: work.customerName,
-        jobStatus: 'active',
-        stage: work.stage,
-        flowState: ProductionFlowState.ready,
-        activeBlockCount: 0,
-        updatedAt: DateTime.now(),
-        canAdvance: work.canAdvance,
-        canAssignControllers: work.canAssignControllers,
-        canBlock: work.canBlock,
-        canUnblock: work.canUnblock,
-        isCustomerView: work.isCustomerView,
-        canCreateBatch: work.canCreateBatch,
-        canComplete: work.canComplete,
-        canRestore: false,
+        employeeUserId:
+            widget.currentUserId.isEmpty ? null : widget.currentUserId,
+        reason: 'Повторная проверка образца',
       );
-      await _openLatestCheck(restored);
-      if (mounted) await _loadFirstPage();
+      final unitId = await widget.workflowService.createUnit(
+        batchId: batchId,
+        type: ProductionUnitType.stack,
+      );
+      final detail = await widget.workflowService.loadWork(work.jobId);
+      if (!mounted) return;
+      ProductionWorkUnit? unit;
+      for (final batch in detail.batches) {
+        for (final candidate in batch.units) {
+          if (candidate.id == unitId) {
+            unit = candidate;
+            break;
+          }
+        }
+        if (unit != null) break;
+      }
+      if (unit == null) {
+        throw StateError('Новая попытка проверки не найдена');
+      }
+      widget.onOpenComparison(
+        ProductionComparisonTarget(work: detail.summary, unit: unit),
+      );
     } catch (error) {
       if (mounted) {
         setState(() => _error = 'Не удалось начать повторную проверку: $error');

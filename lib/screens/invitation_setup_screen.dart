@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -21,6 +23,8 @@ class _InvitationSetupScreenState extends State<InvitationSetupScreen> {
   late final TextEditingController _displayNameController;
   final _passwordController = TextEditingController();
   final _passwordConfirmationController = TextEditingController();
+  bool _checkingExistingAccount = true;
+  bool _existingAccountCheckFailed = false;
   bool _busy = false;
   String? _error;
 
@@ -35,6 +39,46 @@ class _InvitationSetupScreenState extends State<InvitationSetupScreen> {
     _displayNameController = TextEditingController(
       text: (metadata['display_name'] as String?) ?? '',
     );
+    unawaited(_continueExistingAccount());
+  }
+
+  Future<void> _continueExistingAccount() async {
+    if (mounted) {
+      setState(() {
+        _checkingExistingAccount = true;
+        _existingAccountCheckFailed = false;
+      });
+    }
+    try {
+      final client = Supabase.instance.client;
+      final user = client.auth.currentUser;
+      if (user == null) throw StateError('Сессия приглашения не найдена');
+      final profile = await client
+          .from('user_profiles')
+          .select('user_id')
+          .eq('user_id', user.id)
+          .maybeSingle();
+      if (profile == null) {
+        if (mounted) {
+          setState(() {
+            _checkingExistingAccount = false;
+            _existingAccountCheckFailed = false;
+          });
+        }
+        return;
+      }
+      await client.auth.updateUser(
+        UserAttributes(data: {'organization_invite_setup': false}),
+      );
+      if (mounted) widget.onCompleted();
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _checkingExistingAccount = false;
+          _existingAccountCheckFailed = true;
+        });
+      }
+    }
   }
 
   @override
@@ -128,6 +172,95 @@ class _InvitationSetupScreenState extends State<InvitationSetupScreen> {
   @override
   Widget build(BuildContext context) {
     final email = Supabase.instance.client.auth.currentUser?.email ?? '';
+    if (_checkingExistingAccount) {
+      return const Scaffold(
+        backgroundColor: Color(0xFF111827),
+        body: AuthPageBackdrop(
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(color: Colors.white),
+                SizedBox(height: 16),
+                Text(
+                  'Проверяем аккаунт…',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+    if (_existingAccountCheckFailed) {
+      return Scaffold(
+        backgroundColor: const Color(0xFF111827),
+        body: AuthPageBackdrop(
+          child: SafeArea(
+            child: Center(
+              child: Container(
+                width: 460,
+                margin: const EdgeInsets.all(20),
+                padding: const EdgeInsets.all(28),
+                decoration: BoxDecoration(
+                  color: const Color(0xFAFFFFFF),
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x1F0F172A),
+                      blurRadius: 36,
+                      offset: Offset(0, 18),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const AuthBrandMark(light: false),
+                    const SizedBox(height: 20),
+                    const Icon(
+                      Icons.cloud_off_rounded,
+                      size: 42,
+                      color: Color(0xFFB45309),
+                    ),
+                    const SizedBox(height: 14),
+                    const Text(
+                      'Не удалось проверить аккаунт',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 21,
+                        fontWeight: FontWeight.w900,
+                        color: Color(0xFF0F172A),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Проверьте соединение и повторите попытку. Данные аккаунта и пароль не изменены.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        height: 1.45,
+                        color: Color(0xFF64748B),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    FilledButton.icon(
+                      key: const ValueKey('retry-account-check'),
+                      onPressed: _continueExistingAccount,
+                      icon: const Icon(Icons.refresh_rounded),
+                      label: const Text('Повторить'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
     return Scaffold(
       backgroundColor: const Color(0xFF111827),
       body: AuthPageBackdrop(

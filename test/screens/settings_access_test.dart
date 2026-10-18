@@ -112,6 +112,46 @@ void main() {
     expect(signedOut, isTrue);
   });
 
+  testWidgets('account section changes workspace without signing out',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    var workspaceChanged = false;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SettingsScreen(
+            entitlements: EntitlementSnapshot.forPlan(PlanTier.pro),
+            organizationAccess: OrganizationAccess.personal(),
+            accountProfileService: MockAccountProfileService(
+              profile: const AccountProfile(
+                userId: 'user-1',
+                email: 'user@example.com',
+                nickname: 'user_one',
+              ),
+            ),
+            onAccessChanged: () async {},
+            onChangeWorkspace: () async => workspaceChanged = true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Аккаунт'));
+    await tester.pumpAndSettle();
+
+    final changeWorkspace = find.byKey(
+      const ValueKey('change-workspace'),
+    );
+    expect(changeWorkspace, findsOneWidget);
+    await tester.ensureVisible(changeWorkspace);
+    await tester.tap(changeWorkspace);
+    await tester.pump();
+
+    expect(workspaceChanged, isTrue);
+  });
+
   testWidgets('user confirms the current password before changing it',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(1440, 1000));

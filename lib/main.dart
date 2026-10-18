@@ -381,12 +381,22 @@ class MainShell extends StatefulWidget {
 
 enum _WorkspaceSidePanelKind { chat, settings }
 
+enum _WorkspaceKind { personal, organization }
+
+enum _AccountAction { personal, organization, account, signOut }
+
 class _MainShellState extends State<MainShell> {
   _WorkspaceSidePanelKind? _sidePanel;
-  final int _settingsAccessRequest = 0;
-  final int _settingsInitialSection = 1;
+  int _settingsAccessRequest = 0;
+  int _settingsInitialSection = 1;
   EntitlementSnapshot _entitlements = EntitlementSnapshot.legacyCompatible();
   OrganizationAccess _organizationAccess = OrganizationAccess.legacyPersonal();
+  EntitlementSnapshot _personalEntitlements =
+      EntitlementSnapshot.forPlan(PlanTier.free);
+  EntitlementSnapshot? _organizationEntitlements;
+  OrganizationAccess? _membershipAccess;
+  _WorkspaceKind? _selectedWorkspace;
+  bool _accessLoaded = false;
   AccountProfile? _accountProfile;
   bool _accountProfileResolved = false;
   CloudStorage? _cloudStorage;
@@ -434,10 +444,26 @@ class _MainShellState extends State<MainShell> {
     final organizationService =
         SupabaseOrganizationAdministrationService(client);
     final pendingInvitation = await organizationService.currentInvitation();
-    final entitlements = await SupabaseEntitlementService(client).load();
-    final organizationAccess =
-        await SupabaseOrganizationAccessService(client).load();
+    final entitlementService = SupabaseEntitlementService(client);
+    final entitlements = await entitlementService.load();
+    final personalEntitlements = await entitlementService.loadPersonal();
+    final loadedAccess = await SupabaseOrganizationAccessService(client).load();
     if (!mounted) return;
+    final membershipAccess =
+        loadedAccess.organizationId == null ? null : loadedAccess;
+    var selectedWorkspace = _selectedWorkspace;
+    if (membershipAccess == null) {
+      selectedWorkspace = _WorkspaceKind.personal;
+    } else if (!_accessLoaded || _membershipAccess == null) {
+      selectedWorkspace = null;
+    }
+    final effectiveAccess = selectedWorkspace == _WorkspaceKind.organization
+        ? membershipAccess!
+        : OrganizationAccess.personal();
+    final effectiveEntitlements =
+        selectedWorkspace == _WorkspaceKind.organization
+            ? entitlements
+            : personalEntitlements;
     final currentUser = client.auth.currentUser;
     final cloudStorage = currentUser == null
         ? null
@@ -446,8 +472,14 @@ class _MainShellState extends State<MainShell> {
             ownerUserId: currentUser.id,
           );
     setState(() {
-      _entitlements = entitlements;
-      _organizationAccess = organizationAccess;
+      _personalEntitlements = personalEntitlements;
+      _organizationEntitlements =
+          membershipAccess == null ? null : entitlements;
+      _membershipAccess = membershipAccess;
+      _selectedWorkspace = selectedWorkspace;
+      _entitlements = effectiveEntitlements;
+      _organizationAccess = effectiveAccess;
+      _accessLoaded = true;
       _accountProfile = accountProfile;
       _accountProfileResolved = true;
       _cloudStorage = cloudStorage;
@@ -457,7 +489,7 @@ class _MainShellState extends State<MainShell> {
               client,
               storage: cloudStorage,
               ownerUserId: currentUser.id,
-              organizationId: organizationAccess.organizationId,
+              organizationId: effectiveAccess.organizationId,
             );
       _chatRepository = currentUser == null
           ? null
@@ -470,6 +502,103 @@ class _MainShellState extends State<MainShell> {
           currentUser == null ? null : SupabaseCheckUsageService(client);
     });
     _scheduleInvitationDialog(pendingInvitation, organizationService);
+  }
+
+  void _selectWorkspace(_WorkspaceKind workspace) {
+    final membership = _membershipAccess;
+    final organizationEntitlements = _organizationEntitlements;
+    if (workspace == _WorkspaceKind.organization &&
+        (membership == null || organizationEntitlements == null)) {
+      return;
+    }
+    final access = workspace == _WorkspaceKind.organization
+        ? membership!
+        : OrganizationAccess.personal();
+    final entitlements = workspace == _WorkspaceKind.organization
+        ? organizationEntitlements!
+        : _personalEntitlements;
+    final user = Supabase.instance.client.auth.currentUser;
+    final storage = _cloudStorage;
+    setState(() {
+      _selectedWorkspace = workspace;
+      _organizationAccess = access;
+      _entitlements = entitlements;
+      _showComparison = false;
+      _comparisonWork = null;
+      _comparisonUnit = null;
+      _workRegisterView = null;
+      _openCreateWorkOnMount = false;
+      _sidePanel = null;
+      _requestedChatJobId = null;
+      _requestedChatKind = null;
+      _protocolCloudRepository = user == null || storage == null
+          ? null
+          : SupabaseProtocolCloudRepository(
+              Supabase.instance.client,
+              storage: storage,
+              ownerUserId: user.id,
+              organizationId: access.organizationId,
+            );
+    });
+  }
+
+  Future<void> _requestWorkspaceChoice() async {
+    if (_membershipAccess == null) return;
+    if (_showComparison) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Сменить рабочее пространство?'),
+          content: const Text(
+            'Несохранённая проверка будет закрыта.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Отменить'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Продолжить'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+    }
+    setState(() {
+      _selectedWorkspace = null;
+      _showComparison = false;
+      _comparisonWork = null;
+      _comparisonUnit = null;
+      _workRegisterView = null;
+      _sidePanel = null;
+    });
+  }
+
+  void _openAccountSettings() {
+    setState(() {
+      _settingsInitialSection = 0;
+      _settingsAccessRequest++;
+      _sidePanel = _WorkspaceSidePanelKind.settings;
+    });
+  }
+
+  void _handleAccountAction(_AccountAction action) {
+    switch (action) {
+      case _AccountAction.personal:
+        _selectWorkspace(_WorkspaceKind.personal);
+        return;
+      case _AccountAction.organization:
+        _selectWorkspace(_WorkspaceKind.organization);
+        return;
+      case _AccountAction.account:
+        _openAccountSettings();
+        return;
+      case _AccountAction.signOut:
+        _signOut();
+        return;
+    }
   }
 
   void _scheduleInvitationDialog(
@@ -562,9 +691,13 @@ class _MainShellState extends State<MainShell> {
             ? null
             : _WorkspaceSidePanelKind.chat;
       } else if (i == 3) {
-        _sidePanel = _sidePanel == _WorkspaceSidePanelKind.settings
-            ? null
-            : _WorkspaceSidePanelKind.settings;
+        if (_sidePanel == _WorkspaceSidePanelKind.settings) {
+          _sidePanel = null;
+        } else {
+          _settingsInitialSection = 1;
+          _settingsAccessRequest++;
+          _sidePanel = _WorkspaceSidePanelKind.settings;
+        }
       }
     });
   }
@@ -652,7 +785,58 @@ class _MainShellState extends State<MainShell> {
         offset: Offset(0, 2),
       ),
     ];
-    return IgnorePointer(
+    return PopupMenuButton<_AccountAction>(
+      key: const ValueKey('workspace-account-menu'),
+      tooltip: 'Аккаунт и рабочее пространство',
+      onSelected: _handleAccountAction,
+      itemBuilder: (_) => [
+        PopupMenuItem(
+          value: _AccountAction.personal,
+          child: ListTile(
+            dense: true,
+            leading: Icon(
+              _selectedWorkspace == _WorkspaceKind.personal
+                  ? Icons.check_circle_rounded
+                  : Icons.person_outline_rounded,
+            ),
+            title: const Text('Личное пространство'),
+            subtitle: Text(_personalEntitlements.plan.label),
+          ),
+        ),
+        if (_membershipAccess != null)
+          PopupMenuItem(
+            value: _AccountAction.organization,
+            child: ListTile(
+              dense: true,
+              leading: Icon(
+                _selectedWorkspace == _WorkspaceKind.organization
+                    ? Icons.check_circle_rounded
+                    : Icons.apartment_rounded,
+              ),
+              title: Text(
+                _membershipAccess!.organizationName ?? 'Организация',
+              ),
+              subtitle: Text(_membershipAccess!.role.label),
+            ),
+          ),
+        const PopupMenuDivider(),
+        const PopupMenuItem(
+          value: _AccountAction.account,
+          child: ListTile(
+            dense: true,
+            leading: Icon(Icons.manage_accounts_outlined),
+            title: Text('Настройки аккаунта'),
+          ),
+        ),
+        const PopupMenuItem(
+          value: _AccountAction.signOut,
+          child: ListTile(
+            dense: true,
+            leading: Icon(Icons.logout_rounded),
+            title: Text('Выйти из аккаунта'),
+          ),
+        ),
+      ],
       child: Row(
         children: [
           const Icon(
@@ -674,6 +858,13 @@ class _MainShellState extends State<MainShell> {
                 shadows: textShadow,
               ),
             ),
+          ),
+          const SizedBox(width: 3),
+          const Icon(
+            Icons.expand_more_rounded,
+            size: 16,
+            color: Color(0xFFF5F9FA),
+            shadows: textShadow,
           ),
           const SizedBox(width: 12),
           Flexible(
@@ -714,8 +905,9 @@ class _MainShellState extends State<MainShell> {
             '';
     final profileOrganizationName =
         (metadata['organization_name'] as String?)?.trim() ?? '';
-    final organizationName =
-        _organizationAccess.organizationName ?? profileOrganizationName;
+    final organizationName = _organizationAccess.organizationId == null
+        ? ''
+        : _organizationAccess.organizationName ?? profileOrganizationName;
     final userLabel = !_accountProfileResolved
         ? 'Загрузка…'
         : nickname.isNotEmpty
@@ -723,6 +915,25 @@ class _MainShellState extends State<MainShell> {
             : displayName.isNotEmpty
                 ? displayName
                 : 'Пользователь';
+    if (!_accessLoaded) {
+      return const Scaffold(
+        body: _WorkspaceLoading(),
+      );
+    }
+    final membershipAccess = _membershipAccess;
+    if (_selectedWorkspace == null && membershipAccess != null) {
+      return _WorkspaceChoice(
+        userLabel: userLabel,
+        personalPlan: _personalEntitlements.plan.label,
+        organizationName: membershipAccess.organizationName ?? 'Организация',
+        organizationRole: membershipAccess.role.label,
+        organizationPlan:
+            (_organizationEntitlements ?? _entitlements).plan.label,
+        onPersonal: () => _selectWorkspace(_WorkspaceKind.personal),
+        onOrganization: () => _selectWorkspace(_WorkspaceKind.organization),
+        onSignOut: _signOut,
+      );
+    }
     final organizationId = _organizationAccess.organizationId;
     final canUseChat = _entitlements.allows(ProductCapability.collaboration) &&
         _chatRepository != null;
@@ -738,6 +949,7 @@ class _MainShellState extends State<MainShell> {
             ),
             entitlements: _entitlements,
             organizationAccess: _organizationAccess,
+            historyOwnerId: user?.id ?? 'guest',
             initialJob: _comparisonWork == null
                 ? null
                 : ProductionJobContext(
@@ -818,6 +1030,7 @@ class _MainShellState extends State<MainShell> {
         key: ValueKey('settings-access-$_settingsAccessRequest'),
         entitlements: _entitlements,
         organizationAccess: _organizationAccess,
+        historyOwnerId: user?.id ?? 'guest',
         initialSection: _settingsInitialSection,
         cloudStorage: _cloudStorage,
         printConditionService: SupabasePrintConditionService(
@@ -827,6 +1040,8 @@ class _MainShellState extends State<MainShell> {
         checkUsageService: _checkUsageService,
         checkUsageRevision: _checkUsageRevision,
         onAccessChanged: _loadAccess,
+        onChangeWorkspace:
+            _membershipAccess == null ? null : _requestWorkspaceChoice,
         onSignOut: _signOut,
       );
     }
@@ -1037,6 +1252,181 @@ class _WorkspaceSidePanel extends StatelessWidget {
             ),
           ),
           Expanded(child: child),
+        ],
+      ),
+    );
+  }
+}
+
+class _WorkspaceLoading extends StatelessWidget {
+  const _WorkspaceLoading();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Stack(
+      children: [
+        Positioned.fill(child: WorkspacePhotoBackground()),
+        Center(child: CircularProgressIndicator(color: Colors.white)),
+      ],
+    );
+  }
+}
+
+class _WorkspaceChoice extends StatelessWidget {
+  final String userLabel;
+  final String personalPlan;
+  final String organizationName;
+  final String organizationRole;
+  final String organizationPlan;
+  final VoidCallback onPersonal;
+  final VoidCallback onOrganization;
+  final Future<void> Function() onSignOut;
+
+  const _WorkspaceChoice({
+    required this.userLabel,
+    required this.personalPlan,
+    required this.organizationName,
+    required this.organizationRole,
+    required this.organizationPlan,
+    required this.onPersonal,
+    required this.onOrganization,
+    required this.onSignOut,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    Widget option({
+      required Key key,
+      required IconData icon,
+      required String title,
+      required String subtitle,
+      required VoidCallback onPressed,
+    }) {
+      return SizedBox(
+        width: 270,
+        height: 126,
+        child: FilledButton.tonal(
+          key: key,
+          onPressed: onPressed,
+          style: FilledButton.styleFrom(
+            padding: const EdgeInsets.all(20),
+            backgroundColor: const Color(0xECF8FAFC),
+            foregroundColor: AppTheme.graphite,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(18),
+              side: const BorderSide(color: Color(0xCCFFFFFF)),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, size: 30, color: const Color(0xFF267982)),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      subtitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.graphiteSoft,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.arrow_forward_rounded, size: 20),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Scaffold(
+      body: Stack(
+        children: [
+          const Positioned.fill(child: WorkspacePhotoBackground()),
+          Positioned.fill(
+            child: Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      userLabel,
+                      style: const TextStyle(
+                        color: Color(0xFFB9EEF0),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w900,
+                        shadows: [
+                          Shadow(color: Colors.black, blurRadius: 10),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Куда войти?',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 34,
+                        fontWeight: FontWeight.w900,
+                        shadows: [
+                          Shadow(color: Colors.black, blurRadius: 16),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 22),
+                    Wrap(
+                      alignment: WrapAlignment.center,
+                      spacing: 14,
+                      runSpacing: 14,
+                      children: [
+                        option(
+                          key: const ValueKey('choose-personal-workspace'),
+                          icon: Icons.person_outline_rounded,
+                          title: 'Личное пространство',
+                          subtitle: 'Тариф: $personalPlan',
+                          onPressed: onPersonal,
+                        ),
+                        option(
+                          key: const ValueKey('choose-organization-workspace'),
+                          icon: Icons.apartment_rounded,
+                          title: organizationName,
+                          subtitle: '$organizationRole · $organizationPlan',
+                          onPressed: onOrganization,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    TextButton.icon(
+                      key: const ValueKey('workspace-choice-sign-out'),
+                      onPressed: onSignOut,
+                      style: TextButton.styleFrom(
+                        foregroundColor: Colors.white,
+                      ),
+                      icon: const Icon(Icons.logout_rounded, size: 18),
+                      label: const Text('Выйти из аккаунта'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );

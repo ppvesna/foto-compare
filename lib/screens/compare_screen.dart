@@ -3,7 +3,8 @@ import 'dart:math';
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show HardwareKeyboard, KeyEvent;
+import 'package:flutter/services.dart'
+    show Clipboard, ClipboardData, HardwareKeyboard, KeyEvent;
 import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -68,6 +69,7 @@ class CompareScreen extends StatefulWidget {
   final String backTooltip;
   final bool canOpenChat;
   final bool showStoredHistory;
+  final String historyOwnerId;
   // App navigation lives in MainShell; the restricted role view uses this to
   // send customer representatives back to their job chat.
   final ValueChanged<int>? onNavigate;
@@ -88,6 +90,7 @@ class CompareScreen extends StatefulWidget {
     this.backTooltip = 'Вернуться к работам',
     this.canOpenChat = true,
     this.showStoredHistory = true,
+    this.historyOwnerId = 'guest',
     this.onNavigate,
   });
 
@@ -124,6 +127,11 @@ class _CompareScreenState extends State<CompareScreen> {
 
   bool _allows(ProductCapability capability) =>
       widget.entitlements.allows(capability);
+
+  List<CheckProtocol> get _scopedCheckHistory => CheckHistoryService.forScope(
+        ownerUserId: widget.historyOwnerId,
+        organizationId: widget.organizationAccess.organizationId,
+      );
 
   void _showPlanRequired(String feature) {
     xpDlg(
@@ -163,9 +171,7 @@ class _CompareScreenState extends State<CompareScreen> {
         return false;
       }
     }
-    final used = CheckHistoryService.checks.value
-        .where((p) => _isToday(p.createdAt))
-        .length;
+    final used = _scopedCheckHistory.where((p) => _isToday(p.createdAt)).length;
     if (used < limit) return true;
     xpDlg(
       context,
@@ -236,6 +242,7 @@ class _CompareScreenState extends State<CompareScreen> {
   DateTime? _activeProtocolCreatedAt;
   String? _activeProtocolSampleImageId;
   int? _activeProtocolSampleNo;
+  CheckProtocol? _currentProtocol;
   Future<void> _cloudProtocolSyncQueue = Future<void>.value();
 
   static const int _uiImageCacheWidth = 1600;
@@ -430,12 +437,10 @@ class _CompareScreenState extends State<CompareScreen> {
       _cmpAligned = null;
       _refAligned = null;
       _cmpAnchorPts = null;
-      _result = null;
-      _pointProbe = null;
-      _areaLoupe = null;
-      _loupeDraftRect = null;
-      _loupeDragStart = null;
-      _compareStatus = null;
+      _calStep = 0;
+      _tempRefPts = [];
+      _tempCmpPts = [];
+      _clearComputedResultState();
       _sampleNo = _nextSampleNumberFor(
         referenceId: item.id,
         referenceLabel: item.label,
@@ -485,6 +490,7 @@ class _CompareScreenState extends State<CompareScreen> {
       _activeProtocolCreatedAt = null;
       _activeProtocolSampleImageId = null;
       _activeProtocolSampleNo = null;
+      _currentProtocol = null;
       _pointProbe = null;
       _areaLoupe = null;
       _loupeDraftRect = null;
@@ -1011,6 +1017,38 @@ class _CompareScreenState extends State<CompareScreen> {
     _resultCmpCtrl.value = Matrix4.identity();
   }
 
+  void _clearComputedResultState() {
+    _comparing = false;
+    _result = null;
+    _compareStatus = null;
+    _compareSteps.clear();
+    _timedSteps.clear();
+    _stageWatch = null;
+    _exactDeltaEReady = false;
+    _exactDeltaEComputing = false;
+    _exactDeltaERequested = false;
+    _activeProtocolId = null;
+    _activeProtocolCreatedAt = null;
+    _activeProtocolSampleImageId = null;
+    _activeProtocolSampleNo = null;
+    _currentProtocol = null;
+    _aiResult = null;
+    _refBarcodes = [];
+    _cmpBarcodes = [];
+    _textDiff = null;
+    _refLabFingerprint = null;
+    _cmpLabFingerprint = null;
+    _labFingerprintMatch = null;
+    _inspectionTool = null;
+    _pointProbe = null;
+    _areaLoupe = null;
+    _loupeDraftRect = null;
+    _loupeDragStart = null;
+    _loupeImageSize = null;
+    _diffSlider = 0.5;
+    _resultMapMode = _ResultMapMode.geometry;
+  }
+
   // ── Выбрать снимок: слить оба → коррекция перспективы → сохранить ──
   // ref = выбранный (лучший), src = второй; если src == null — только коррекция
   void _openFullScreen(Uint8List bytes) {
@@ -1039,10 +1077,14 @@ class _CompareScreenState extends State<CompareScreen> {
         _savedRefLabel = null;
         _activeReferenceId = null;
         _refAligned = null;
+        _cmpAligned = null;
         _layoutProfile = null;
         _refAnchorPts = null;
-        _result = null;
-        _compareStatus = null;
+        _cmpAnchorPts = null;
+        _calStep = 0;
+        _tempRefPts = [];
+        _tempCmpPts = [];
+        _clearComputedResultState();
       });
     } finally {
       if (mounted) setState(() => _stacking = false);
@@ -1168,7 +1210,7 @@ class _CompareScreenState extends State<CompareScreen> {
     final refLabel = referenceLabel ?? _savedRefLabel ?? '';
     final jobNumber = _currentJobNumber;
     var maxNo = 0;
-    for (final p in CheckHistoryService.checks.value) {
+    for (final p in _scopedCheckHistory) {
       final sameJob =
           jobNumber.isEmpty ? p.jobNumber.isEmpty : p.jobNumber == jobNumber;
       final sameRef = refId.isNotEmpty
@@ -1248,6 +1290,7 @@ class _CompareScreenState extends State<CompareScreen> {
       _activeProtocolCreatedAt = null;
       _activeProtocolSampleImageId = null;
       _activeProtocolSampleNo = null;
+      _currentProtocol = null;
       _pointProbe = null;
       _areaLoupe = null;
       _loupeDraftRect = null;
@@ -1694,10 +1737,11 @@ class _CompareScreenState extends State<CompareScreen> {
     final protocolId = replacingCurrent
         ? _activeProtocolId!
         : now.millisecondsSinceEpoch.toString();
-    if (mounted) setState(() => _sampleNo = sampleNumber);
     final protocol = CheckProtocol(
       id: protocolId,
       createdAt: now,
+      ownerUserId: widget.historyOwnerId,
+      organizationId: widget.organizationAccess.organizationId ?? '',
       jobId: _currentJobId,
       jobNumber: jobNumber,
       customerId: _selectedCustomerId ?? '',
@@ -1720,6 +1764,11 @@ class _CompareScreenState extends State<CompareScreen> {
       apertureMm: _measurementSettings.aperture.diameterMm,
       stages: _checkProtocolStages(r),
     );
+    if (!mounted) return;
+    setState(() {
+      _sampleNo = sampleNumber;
+      _currentProtocol = protocol;
+    });
     if (!replacingCurrent && widget.checkUsageService != null) {
       await widget.checkUsageService!.recordCompletedCheck(
         checkId: protocol.id,
@@ -1853,6 +1902,8 @@ class _CompareScreenState extends State<CompareScreen> {
             _activeReferenceId = null;
             _refAligned = null;
             _refAnchorPts = null;
+            _cmpAligned = null;
+            _cmpAnchorPts = null;
           } else {
             _workspaceView = _WorkspaceView.sample;
             _cmpCropApplied = true;
@@ -1861,6 +1912,7 @@ class _CompareScreenState extends State<CompareScreen> {
             _cmpAligned = null;
             _cmpAnchorPts = null;
           }
+          _clearComputedResultState();
         });
         cropCompleted = true;
       } catch (error) {
@@ -1941,12 +1993,112 @@ class _CompareScreenState extends State<CompareScreen> {
           _cmpImgSize = sz;
           _cmpAligned = null;
           _cmpAnchorPts = null;
-          _result = null;
-          _compareStatus = null;
+          _calStep = 0;
+          _tempRefPts = [];
+          _tempCmpPts = [];
+          _clearComputedResultState();
         });
       }
     } finally {
       if (mounted) setState(() => _imageBusy = false);
+    }
+  }
+
+  Future<void> _startNextSample() async {
+    final nextSampleNumber = _nextSampleNumberFor(
+      referenceId: _activeReferenceId,
+      referenceLabel: _savedRefLabel,
+      minValue: _sampleNo + 1,
+    );
+    setState(() {
+      _workspaceView = _WorkspaceView.sample;
+      _sampleNo = nextSampleNumber;
+      _cmpImg = null;
+      _cmpCropApplied = false;
+      _cmpImgSize = null;
+      _cmpAligned = null;
+      _cmpAnchorPts = null;
+      _calStep = 0;
+      _tempRefPts = [];
+      _tempCmpPts = [];
+      _clearComputedResultState();
+    });
+    _cmpAlignCtrl.value = Matrix4.identity();
+    _resultCmpCtrl.value = Matrix4.identity();
+    await _pickImage(false);
+  }
+
+  void _finishInspection() {
+    final back = widget.onBackToWorks;
+    if (back != null) {
+      back();
+      return;
+    }
+    _resetComparison();
+  }
+
+  Future<void> _showSavedReferencePicker() async {
+    if (_savedReferences.isEmpty) {
+      await xpDlg(
+        context,
+        'Сохранённые эталоны',
+        'Пока нет сохранённых эталонов.',
+      );
+      return;
+    }
+    final selected = await showModalBottomSheet<SavedReferenceProfile>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(18, 4, 18, 8),
+              child: Text(
+                'Выберите эталон',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+              ),
+            ),
+            Flexible(
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: _savedReferences.length,
+                itemBuilder: (context, index) {
+                  final reference = _savedReferences[index];
+                  return ListTile(
+                    title: Text(reference.label),
+                    subtitle: Text(
+                      reference.layoutProfile == null
+                          ? 'Без сохранённых точек'
+                          : 'Точек: ${reference.layoutProfile!.refAnchors.length}',
+                    ),
+                    onTap: () => Navigator.pop(context, reference),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (selected != null && mounted) {
+      await _activateSavedReference(selected);
+    }
+  }
+
+  Future<void> _handleModeMenu(
+    _WorkspaceView view,
+    String value,
+  ) async {
+    switch (value) {
+      case 'replace':
+        await _pickImage(view == _WorkspaceView.reference);
+      case 'crop':
+        await _cropImage(view == _WorkspaceView.reference);
+      case 'saved':
+        await _showSavedReferencePicker();
     }
   }
 
@@ -2078,12 +2230,12 @@ class _CompareScreenState extends State<CompareScreen> {
       _layoutProfile = null;
       _refAnchorPts = null;
       _cmpAnchorPts = null;
-      _result = null;
-      _compareStatus = null;
-      _aiResult = null;
-      _refBarcodes = [];
-      _cmpBarcodes = [];
-      _textDiff = null;
+      _calStep = 0;
+      _tempRefPts = [];
+      _tempCmpPts = [];
+      _savedRefLabel = null;
+      _activeReferenceId = null;
+      _clearComputedResultState();
       _resetZoomControllers();
     });
   }
@@ -2185,55 +2337,106 @@ class _CompareScreenState extends State<CompareScreen> {
             ? _WorkspaceView.sample
             : null;
     final enabled = _calStep == 0 || calibrationView == view;
+    final hasContextMenu = view != _WorkspaceView.comparison;
+    final menuEnabled = _calStep == 0 && !_comparing && !_imageBusy;
     return Tooltip(
       message: label,
-      child: InkWell(
-        key: ValueKey('workspace-mode-${view.name}'),
-        onTap: enabled ? () => _selectWorkspace(view) : null,
-        borderRadius: BorderRadius.circular(10),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 140),
-          height: 36,
-          padding: const EdgeInsets.symmetric(horizontal: 4),
-          decoration: BoxDecoration(
-            color: selected ? const Color(0xA34D747A) : const Color(0x38394F55),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color:
-                  selected ? const Color(0xFF86B5BA) : const Color(0x70677F84),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 140),
+        height: 36,
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xA34D747A) : const Color(0x38394F55),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: selected ? const Color(0xFF86B5BA) : const Color(0x70677F84),
+          ),
+          boxShadow: [
+            const BoxShadow(
+              color: Color(0x660C171A),
+              blurRadius: 5,
+              offset: Offset(0, 3),
             ),
-            boxShadow: [
+            if (selected)
               const BoxShadow(
-                color: Color(0x660C171A),
-                blurRadius: 5,
-                offset: Offset(0, 3),
+                color: Color(0x335EC5CC),
+                blurRadius: 7,
               ),
-              if (selected)
-                const BoxShadow(
-                  color: Color(0x335EC5CC),
-                  blurRadius: 7,
+          ],
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Row(
+          children: [
+            Expanded(
+              child: InkWell(
+                key: ValueKey('workspace-mode-${view.name}'),
+                onTap: enabled ? () => _selectWorkspace(view) : null,
+                child: Center(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                      color: enabled
+                          ? selected
+                              ? const Color(0xFFF3FBFC)
+                              : const Color(0xFFD1DEE1)
+                          : const Color(0xFF7F9298),
+                      shadows: const [
+                        Shadow(color: Color(0x88000000), blurRadius: 3),
+                      ],
+                    ),
+                  ),
                 ),
-            ],
-          ),
-          child: Center(
-            child: Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 10.5,
-                fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-                color: enabled
-                    ? selected
-                        ? const Color(0xFFF3FBFC)
-                        : const Color(0xFFD1DEE1)
-                    : const Color(0xFF7F9298),
-                shadows: const [
-                  Shadow(color: Color(0x88000000), blurRadius: 3),
-                ],
               ),
             ),
-          ),
+            if (hasContextMenu)
+              SizedBox(
+                width: 26,
+                child: PopupMenuButton<String>(
+                  key: ValueKey('workspace-mode-${view.name}-menu'),
+                  tooltip: 'Действия: $label',
+                  enabled: menuEnabled,
+                  padding: EdgeInsets.zero,
+                  color: const Color(0xFFF7FAFC),
+                  onSelected: (value) => _handleModeMenu(view, value),
+                  itemBuilder: (context) => [
+                    PopupMenuItem(
+                      value: 'replace',
+                      child: Text(
+                        view == _WorkspaceView.reference
+                            ? 'Другой эталон'
+                            : 'Другой образец',
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: 'crop',
+                      enabled: view == _WorkspaceView.reference
+                          ? _refImg != null
+                          : _cmpImg != null,
+                      child: const Text('Изменить рамку'),
+                    ),
+                    if (view == _WorkspaceView.reference)
+                      const PopupMenuItem(
+                        value: 'saved',
+                        child: Text('Выбрать сохранённый'),
+                      ),
+                  ],
+                  child: const Center(
+                    child: Text(
+                      '⋮',
+                      style: TextStyle(
+                        fontSize: 17,
+                        height: 1,
+                        color: Color(0xFFD1DEE1),
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
     );
@@ -2270,6 +2473,10 @@ class _CompareScreenState extends State<CompareScreen> {
   }
 
   Widget _workspaceOverflowMenu() {
+    final hasResult = _result != null;
+    final hasBothImages = _refImg != null && _cmpImg != null;
+    final showShortProtocol =
+        widget.organizationAccess.organizationId == null && hasResult;
     return Container(
       width: 38,
       height: 38,
@@ -2296,17 +2503,55 @@ class _CompareScreenState extends State<CompareScreen> {
           color: Color(0xFFD5E2E5),
         ),
         onSelected: _handleWorkspaceMenu,
-        itemBuilder: (context) => const [
-          PopupMenuItem(value: 'steps', child: Text('Все этапы')),
-          PopupMenuItem(value: 'data', child: Text('Данные и параметры')),
-          PopupMenuDivider(),
-          PopupMenuItem(value: 'new', child: Text('Новая проверка')),
-          PopupMenuItem(value: 'save', child: Text('Сохранить результат')),
-          PopupMenuItem(value: 'export', child: Text('Экспорт…')),
-          PopupMenuItem(value: 'ai', child: Text('AI-анализ')),
-          PopupMenuDivider(),
-          PopupMenuItem(value: 'shortcuts', child: Text('Горячие клавиши')),
-        ],
+        itemBuilder: (context) => hasResult
+            ? [
+                const PopupMenuItem(
+                  value: 'data',
+                  child: Text('Результат и параметры'),
+                ),
+                const PopupMenuItem(
+                  value: 'steps',
+                  child: Text('Все этапы'),
+                ),
+                const PopupMenuItem(
+                  value: 'ai',
+                  child: Text('AI-анализ'),
+                ),
+                if (showShortProtocol)
+                  const PopupMenuItem(
+                    value: 'shortProtocol',
+                    child: Text('Краткий протокол'),
+                  ),
+                const PopupMenuDivider(),
+                const PopupMenuItem(
+                  value: 'new',
+                  child: Text('Начать заново'),
+                ),
+              ]
+            : [
+                const PopupMenuItem(
+                  value: 'steps',
+                  child: Text('Все этапы'),
+                ),
+                const PopupMenuItem(
+                  value: 'data',
+                  child: Text('Данные и параметры'),
+                ),
+                const PopupMenuItem(
+                  value: 'savedReference',
+                  child: Text('Выбрать сохранённый эталон'),
+                ),
+                if (hasBothImages)
+                  const PopupMenuItem(
+                    value: 'ai',
+                    child: Text('AI-анализ'),
+                  ),
+                const PopupMenuDivider(),
+                const PopupMenuItem(
+                  value: 'new',
+                  child: Text('Начать заново'),
+                ),
+              ],
       ),
     );
   }
@@ -2317,31 +2562,14 @@ class _CompareScreenState extends State<CompareScreen> {
         _showWorkflowSheet();
       case 'data':
         _showInspectorSheet();
+      case 'savedReference':
+        await _showSavedReferencePicker();
+      case 'ai':
+        await _runAiAnalysis();
+      case 'shortProtocol':
+        await _showPersonalShortProtocol();
       case 'new':
         _resetComparison();
-      case 'save':
-        if (_result == null) {
-          xpDlg(context, 'Ошибка', 'Сначала выполните сравнение');
-          return;
-        }
-        try {
-          await _saveCheckResult();
-          if (mounted) {
-            xpDlg(context, 'Сохранено', 'Результат сохранён в историю');
-          }
-        } catch (error) {
-          if (mounted) xpDlg(context, 'Ошибка сохранения', error.toString());
-        }
-      case 'export':
-        xpDlg(context, 'Экспорт', 'Форматы: PNG, PDF, CSV');
-      case 'ai':
-        _runAiAnalysis();
-      case 'shortcuts':
-        xpDlg(
-          context,
-          'Горячие клавиши',
-          'Ctrl+N — Новое\nCtrl+S — Сохранить\nCtrl+E — Экспорт\nCtrl+R — Повернуть\nCtrl+T — Захватить\nCtrl++/- — Зум',
-        );
     }
   }
 
@@ -3054,6 +3282,60 @@ class _CompareScreenState extends State<CompareScreen> {
           ),
         );
       },
+    );
+  }
+
+  Widget _comparisonResultActions() {
+    Widget action({
+      required Key key,
+      required String tooltip,
+      required IconData icon,
+      required VoidCallback onTap,
+    }) {
+      return Tooltip(
+        message: tooltip,
+        child: InkWell(
+          key: key,
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(11),
+          child: Container(
+            width: 44,
+            height: 42,
+            decoration: BoxDecoration(
+              color: const Color(0xC52A363A),
+              borderRadius: BorderRadius.circular(11),
+              border: Border.all(color: const Color(0xFF66858B)),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x44000000),
+                  blurRadius: 8,
+                  offset: Offset(0, 3),
+                ),
+              ],
+            ),
+            child: Icon(icon, size: 21, color: _hudGreen),
+          ),
+        ),
+      );
+    }
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        action(
+          key: const ValueKey('comparison-next-sample'),
+          tooltip: 'Следующий образец',
+          icon: Icons.add_photo_alternate_outlined,
+          onTap: _startNextSample,
+        ),
+        const SizedBox(width: 6),
+        action(
+          key: const ValueKey('comparison-finish'),
+          tooltip: 'Завершить проверку',
+          icon: Icons.outlined_flag_rounded,
+          onTap: _finishInspection,
+        ),
+      ],
     );
   }
 
@@ -3862,6 +4144,11 @@ class _CompareScreenState extends State<CompareScreen> {
           top: 10,
           child: _comparisonLoupeControl(),
         ),
+        Positioned(
+          right: 10,
+          bottom: 10,
+          child: _comparisonResultActions(),
+        ),
       ],
     );
   }
@@ -4068,7 +4355,142 @@ class _CompareScreenState extends State<CompareScreen> {
     );
   }
 
+  CheckProtocol _currentProtocolForSharing(CompareResult result) {
+    return _currentProtocol ??
+        CheckProtocol(
+          id: 'current-${DateTime.now().millisecondsSinceEpoch}',
+          createdAt: DateTime.now(),
+          ownerUserId: widget.historyOwnerId,
+          organizationId: widget.organizationAccess.organizationId ?? '',
+          jobId: _currentJobId,
+          jobNumber: _currentJobNumber,
+          customerId: _selectedCustomerId ?? '',
+          customerName: _currentCustomerName,
+          customerConfirmed: _customerConfirmed,
+          score: result.score,
+          verdict: _exactDeltaEReady
+              ? _overallStatus(result.score)
+              : 'Предварительно',
+          refSize: result.refSize,
+          cmpSize: result.cmpSize,
+          labId: _shortLabId(_refLabFingerprint?.labId),
+          referenceId: _activeReferenceId ?? '',
+          referenceLabel: _savedRefLabel ?? _layoutProfile?.name ?? 'Эталон',
+          sampleLabel: _currentSampleLabel,
+          sampleNo: _sampleNo,
+          labMatch: _labFingerprintMatch,
+          deltaEFormula: _measurementSettings.deltaEFormula.shortLabel,
+          captureLighting: _cameraCaptureSettings.lighting.label,
+          captureFilter: _cameraCaptureSettings.opticalFilter.label,
+          apertureMm: _measurementSettings.aperture.diameterMm,
+          stages: _checkProtocolStages(result),
+        );
+  }
+
+  String? _personalProtocolText() {
+    final result = _result;
+    if (result == null) return null;
+    return PersonalProtocolFormatter.format(
+      _currentProtocolForSharing(result),
+    );
+  }
+
+  Future<void> _copyPersonalProtocol(String text) async {
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Краткий протокол скопирован'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+  }
+
+  Future<void> _showPersonalShortProtocol() async {
+    final text = _personalProtocolText();
+    if (text == null) {
+      await xpDlg(
+        context,
+        'Краткий протокол',
+        'Сначала выполните сравнение.',
+      );
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Краткий протокол'),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 520, maxHeight: 460),
+          child: SingleChildScrollView(
+            child: SelectableText(
+              text,
+              style: const TextStyle(fontSize: 13, height: 1.45),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Закрыть'),
+          ),
+          FilledButton.icon(
+            onPressed: () async {
+              Navigator.pop(dialogContext);
+              await _copyPersonalProtocol(text);
+            },
+            icon: const Icon(Icons.copy_rounded, size: 17),
+            label: const Text('Копировать'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _personalProtocolCard(CheckProtocol protocol) {
+    final text = PersonalProtocolFormatter.format(protocol);
+    return Container(
+      key: const ValueKey('personal-short-protocol'),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7FAFC),
+        border: Border.all(color: AppTheme.border),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Краткий протокол',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () => _copyPersonalProtocol(text),
+                icon: const Icon(Icons.copy_rounded, size: 16),
+                label: const Text('Копировать'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          SelectableText(
+            text,
+            style: const TextStyle(fontSize: 12, height: 1.45),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _checkProtocolListPanel() {
+    if (widget.organizationAccess.organizationId == null) {
+      final current = _result;
+      if (current == null) return const SizedBox.shrink();
+      return _personalProtocolCard(_currentProtocolForSharing(current));
+    }
     if (!widget.showStoredHistory) {
       final current = _result;
       if (current == null) return const SizedBox.shrink();
@@ -4080,7 +4502,11 @@ class _CompareScreenState extends State<CompareScreen> {
     return ValueListenableBuilder<List<CheckProtocol>>(
       valueListenable: CheckHistoryService.checks,
       builder: (context, protocols, _) {
-        final list = protocols
+        final scopedProtocols = CheckHistoryService.forScope(
+          ownerUserId: widget.historyOwnerId,
+          organizationId: widget.organizationAccess.organizationId,
+        );
+        final list = scopedProtocols
             .where(
               (p) =>
                   _activeReferenceId == null ||
@@ -4872,7 +5298,7 @@ class _CompareScreenState extends State<CompareScreen> {
             ],
             if (r != null ||
                 (widget.showStoredHistory &&
-                    CheckHistoryService.checks.value.any(
+                    _scopedCheckHistory.any(
                       (protocol) =>
                           _activeReferenceId == null ||
                           protocol.referenceId == _activeReferenceId ||

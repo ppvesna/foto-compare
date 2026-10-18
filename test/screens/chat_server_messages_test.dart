@@ -554,7 +554,9 @@ void main() {
         'job-internal-1': [
           ChatMessage(
             id: 'internal-message-1',
-            threadId: 'job-internal-1',
+            // The live backend may return a legacy/shared group id here.
+            // The audience must follow the channel that loaded the message.
+            threadId: 'legacy-shared-job-thread',
             senderId: 'employee-1',
             senderNickname: 'employee_masha',
             senderDisplayName: 'Маша',
@@ -596,6 +598,11 @@ void main() {
     expect(find.text('Внутренняя запись'), findsOneWidget);
     expect(find.text('Видно заказчику'), findsOneWidget);
     expect(find.text('Заказчику'), findsWidgets);
+    expect(find.text('Команде'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.text('Видно заказчику')).dx,
+      greaterThan(tester.getTopLeft(find.text('Внутренняя запись')).dx),
+    );
 
     await tester.tap(
       find.byKey(const ValueKey('work-audience-customer')),
@@ -613,6 +620,75 @@ void main() {
       await repository.listMessages('job-internal-1'),
       hasLength(1),
     );
+  });
+
+  testWidgets('compact customer work chat does not overflow', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(320, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final repository = MockChatRepository(
+      currentUserId: 'customer-1',
+      currentNickname: 'vesna_customer_test2',
+      currentDisplayName: 'Ира',
+      threads: [
+        ChatThread(
+          id: 'personal-1',
+          title: 'Личные заметки',
+          kind: ChatThreadKind.personal,
+          updatedAt: DateTime.utc(2026, 10, 18, 18),
+        ),
+        ChatThread(
+          id: 'job-customer-1',
+          title: 'Работа № VESNA-CHAT-TEST-001',
+          kind: ChatThreadKind.jobCustomer,
+          organizationId: 'organization-1',
+          jobId: 'job-1',
+          jobStatus: 'active',
+          customerName: 'VESNA-CLIENT-TEST',
+          customerShared: true,
+          updatedAt: DateTime.utc(2026, 10, 18, 17, 53),
+        ),
+      ],
+      messages: {
+        'job-customer-1': [
+          ChatMessage(
+            id: 'customer-message-1',
+            threadId: 'job-customer-1',
+            senderId: 'admin-1',
+            senderNickname: 'vesna_admin_test',
+            senderDisplayName: 'Анна Администратор',
+            kind: ChatMessageKind.text,
+            text: 'ЗАКАЗЧИКУ-ТЕСТ-01',
+            createdAt: DateTime.utc(2026, 10, 18, 17, 53),
+          ),
+        ],
+      },
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChatScreen(
+            currentUserId: 'customer-1',
+            email: 'customer@example.com',
+            displayName: 'Ира',
+            nickname: 'vesna_customer_test2',
+            organizationName: 'vesna-test',
+            chatRepository: repository,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('chat-section-works')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.tap(find.byKey(const ValueKey('open-work-chat-job-1')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.text('ЗАКАЗЧИКУ-ТЕСТ-01'), findsOneWidget);
+    expect(find.byKey(const ValueKey('work-audience-customer')), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('team management is absent from the conversation screen',
@@ -655,5 +731,92 @@ void main() {
         repository.threads
             .where((thread) => thread.kind == ChatThreadKind.team),
         isEmpty);
+  });
+
+  testWidgets('compact team navigation gives thread cards enough height',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(600, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final repository = MockChatRepository(
+      currentUserId: 'employee-1',
+      threads: [
+        ChatThread(
+          id: 'personal-1',
+          title: 'Личные заметки',
+          kind: ChatThreadKind.personal,
+          updatedAt: DateTime.utc(2026, 10, 18, 12),
+        ),
+        ChatThread(
+          id: 'organization-1',
+          title: 'vesna-test',
+          kind: ChatThreadKind.organization,
+          organizationId: 'organization-1',
+          updatedAt: DateTime.utc(2026, 10, 18, 11),
+        ),
+        ChatThread(
+          id: 'team-1',
+          title: 'Смена Катя 01',
+          kind: ChatThreadKind.team,
+          organizationId: 'organization-1',
+          updatedAt: DateTime.utc(2026, 10, 18, 10),
+        ),
+        ChatThread(
+          id: 'job-1',
+          title: 'Работа № VESNA-001',
+          kind: ChatThreadKind.jobInternal,
+          organizationId: 'organization-1',
+          jobId: 'job-1',
+          jobStatus: 'active',
+          customerName: 'Альфа',
+          updatedAt: DateTime.utc(2026, 10, 18, 9),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChatScreen(
+            currentUserId: 'employee-1',
+            email: 'katya@example.com',
+            displayName: 'Катя',
+            nickname: 'vesna_personal_test',
+            organizationName: 'vesna-test',
+            chatRepository: repository,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('chat-section-teams')));
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('vesna-test'), findsWidgets);
+    expect(find.text('Смена Катя 01'), findsOneWidget);
+    expect(
+      tester
+          .getSize(
+            find.byKey(const ValueKey('chat-thread-organization-1')),
+          )
+          .height,
+      inInclusiveRange(76, 82),
+    );
+    expect(
+      tester
+          .getSize(
+            find.byKey(const ValueKey('chat-thread-organization-1')),
+          )
+          .width,
+      252,
+    );
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.byKey(const ValueKey('chat-section-works')));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(
+      tester.getSize(find.byKey(const ValueKey('chat-only-unread'))),
+      const Size.square(28),
+    );
+    expect(tester.takeException(), isNull);
   });
 }

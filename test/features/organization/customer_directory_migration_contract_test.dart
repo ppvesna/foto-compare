@@ -29,6 +29,8 @@ void main() {
     expect(function, contains('attach_organization_invitation_customer_v1'));
     expect(function, contains('cancel_organization_invitation_v1'));
     expect(function, contains('customer_seat_limit'));
+    expect(function, contains('if (isRegistered)'));
+    expect(function, contains('organization_invite_setup: false'));
   });
 
   test('customer codes are generated atomically by the organization', () async {

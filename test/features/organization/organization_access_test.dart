@@ -96,6 +96,15 @@ void main() {
     );
   });
 
+  test('personal workspace is explicit and keeps inspection available', () {
+    final access = OrganizationAccess.personal();
+
+    expect(access.organizationId, isNull);
+    expect(access.role, OrganizationRole.personal);
+    expect(access.legacyFallback, isFalse);
+    expect(access.allows(OrganizationPermission.runInspection), isTrue);
+  });
+
   test('mock service returns configured organization role', () async {
     final expected = OrganizationAccess.forRole(
       organizationId: 'organization-1',

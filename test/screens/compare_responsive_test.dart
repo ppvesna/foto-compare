@@ -271,6 +271,82 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('workspace overflow shows useful preparation actions',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(590, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    SharedPreferences.setMockInitialValues({});
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CompareScreen(
+            entitlements: EntitlementSnapshot.forPlan(PlanTier.pro),
+            organizationAccess: OrganizationAccess.legacyPersonal(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Ещё'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Все этапы'), findsOneWidget);
+    expect(find.text('Данные и параметры'), findsOneWidget);
+    expect(find.text('Выбрать сохранённый эталон'), findsOneWidget);
+    expect(find.text('Начать заново'), findsOneWidget);
+    expect(find.text('AI-анализ'), findsNothing);
+    expect(find.text('Новая проверка'), findsNothing);
+    expect(find.text('Сохранить результат'), findsNothing);
+    expect(find.text('Экспорт…'), findsNothing);
+    expect(find.text('Горячие клавиши'), findsNothing);
+    expect(find.text('Краткий протокол'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('reference and sample own their replacement actions',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(590, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    SharedPreferences.setMockInitialValues({});
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CompareScreen(
+            entitlements: EntitlementSnapshot.forPlan(PlanTier.pro),
+            organizationAccess: OrganizationAccess.legacyPersonal(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.byKey(const ValueKey('workspace-mode-reference-menu')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Другой эталон'), findsOneWidget);
+    expect(find.text('Изменить рамку'), findsOneWidget);
+    expect(find.text('Выбрать сохранённый'), findsOneWidget);
+    await tester.tapAt(const Offset(580, 680));
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.byKey(const ValueKey('workspace-mode-sample-menu')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Другой образец'), findsOneWidget);
+    expect(find.text('Изменить рамку'), findsOneWidget);
+    expect(find.text('Выбрать сохранённый'), findsNothing);
+    expect(
+      find.byKey(const ValueKey('workspace-mode-comparison-menu')),
+      findsNothing,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('guest inspector does not expose stored work history',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(1100, 700));
@@ -317,6 +393,55 @@ void main() {
     expect(find.text('Протокол проверки'), findsNothing);
     expect(find.text('ID для базы'), findsNothing);
     expect(find.text('Работа'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('personal workspace does not expose organization work history',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1100, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    SharedPreferences.setMockInitialValues({});
+    CheckHistoryService.checks.value = [
+      CheckProtocol(
+        id: 'organization-check',
+        createdAt: DateTime.utc(2026, 10, 8),
+        ownerUserId: 'user-1',
+        organizationId: 'organization-1',
+        jobId: 'job-secret',
+        jobNumber: 'VESNA-SECRET-WORK',
+        customerName: 'Скрытый заказчик',
+        score: 92,
+        verdict: 'Предварительно',
+        refSize: '100×100',
+        cmpSize: '100×100',
+        labId: 'lab-secret',
+        labMatch: 92,
+        stages: const [],
+      ),
+    ];
+    addTearDown(() => CheckHistoryService.checks.value = const []);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CompareScreen(
+            entitlements: EntitlementSnapshot.forPlan(PlanTier.pro),
+            organizationAccess: OrganizationAccess.personal(),
+            historyOwnerId: 'user-1',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Ещё'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Данные и параметры'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('VESNA-SECRET-WORK'), findsNothing);
+    expect(find.textContaining('Скрытый заказчик'), findsNothing);
+    expect(find.text('Протокол проверки'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
