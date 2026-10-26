@@ -1,8 +1,9 @@
 import 'package:web/web.dart' as web;
 
+import '../features/auth/domain/password_recovery_service.dart';
+
 String passwordRecoveryRedirectUrl() {
-  final uri = Uri.base;
-  return uri.replace(path: '/', query: '', fragment: '').toString();
+  return buildPasswordRecoveryRedirectUrl(Uri.base);
 }
 
 void clearAuthCallbackUrl() {

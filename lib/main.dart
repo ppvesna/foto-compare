@@ -59,7 +59,6 @@ Future<void> _recoverWebAuthCallback() async {
   if (!kIsWeb) return;
   final preferences = await SharedPreferences.getInstance();
   final uri = Uri.base;
-  final fragment = uri.fragment;
   final isRecovery = isPasswordRecoveryCallback(uri);
   if (isRecovery) {
     _startupPasswordRecovery = true;
@@ -70,8 +69,7 @@ Future<void> _recoverWebAuthCallback() async {
   } else if (Supabase.instance.client.auth.currentSession == null) {
     await preferences.remove(_passwordRecoveryPendingKey);
   }
-  final isCallback = fragment.contains('access_token=') ||
-      fragment.contains('error_description=');
+  final isCallback = hasAuthCallbackPayload(uri);
   if (!isCallback ||
       (Supabase.instance.client.auth.currentSession != null && !isRecovery)) {
     return;
