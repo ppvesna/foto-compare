@@ -223,6 +223,7 @@ class _CompareScreenState extends State<CompareScreen> {
   final _resultCmpCtrl = TransformationController();
   _WorkspaceView _workspaceView = _WorkspaceView.reference;
   _PointProbe? _pointProbe;
+  bool _pointProbeBusy = false;
   _AreaLoupe? _areaLoupe;
   Offset? _loupeDragStart;
   Rect? _loupeDraftRect;
@@ -2827,7 +2828,9 @@ class _CompareScreenState extends State<CompareScreen> {
                 if (_pointProbe == null)
                   line(
                     'point-hint',
-                    'НАЖМИТЕ НА ИЗОБРАЖЕНИЕ',
+                    _pointProbeBusy
+                        ? 'ИЗМЕРЯЮ ТОЧКУ...'
+                        : 'НАЖМИТЕ НА ИЗОБРАЖЕНИЕ',
                     _hudGreenSecondary,
                     top: 8,
                   )
@@ -4262,7 +4265,11 @@ class _CompareScreenState extends State<CompareScreen> {
               ),
             ),
             Text(
-              probe == null ? 'кликните по карте' : 'измерено',
+              _pointProbeBusy
+                  ? 'измеряю...'
+                  : probe == null
+                      ? 'кликните по карте'
+                      : 'измерено',
               style: const TextStyle(fontSize: 10, color: Colors.black54),
             ),
           ]),
@@ -6409,13 +6416,17 @@ class _CompareScreenState extends State<CompareScreen> {
                 behavior: HitTestBehavior.opaque,
                 onTapDown: refBase != null &&
                         cmpBase != null &&
+                        !_pointProbeBusy &&
                         _inspectionTool == _InspectionTool.point
-                    ? (details) => _sampleResultPoint(
-                          local: details.localPosition,
-                          viewportSize: boxSize,
-                          refBytes: refBase,
-                          cmpBytes: cmpBase,
-                          ctrl: ctrl,
+                    ? (details) => unawaited(
+                          _sampleResultPoint(
+                            local: details.localPosition,
+                            viewportSize: boxSize,
+                            imageSize: imageSize,
+                            refBytes: refBase,
+                            cmpBytes: cmpBase,
+                            ctrl: ctrl,
+                          ),
                         )
                     : null,
                 child: Stack(children: [
@@ -6497,136 +6508,193 @@ class _CompareScreenState extends State<CompareScreen> {
     );
   }
 
-  void _sampleResultPoint({
+  Future<void> _sampleResultPoint({
     required Offset local,
     required Size viewportSize,
+    required Size imageSize,
     required Uint8List refBytes,
     required Uint8List cmpBytes,
     required TransformationController ctrl,
-  }) {
-    final ref = img.decodeImage(refBytes);
-    final cmp = img.decodeImage(cmpBytes);
-    if (ref == null || cmp == null) return;
-
+  }) async {
+    if (_pointProbeBusy) return;
     final scenePoint = ctrl.toScene(local);
-    final rect = _containedImageRect(
-      viewportSize,
-      Size(ref.width.toDouble(), ref.height.toDouble()),
-    );
+    final rect = _containedImageRect(viewportSize, imageSize);
     if (!rect.contains(scenePoint)) return;
 
     final nx = ((scenePoint.dx - rect.left) / rect.width).clamp(0.0, 1.0);
     final ny = ((scenePoint.dy - rect.top) / rect.height).clamp(0.0, 1.0);
-    final rx = (nx * (ref.width - 1)).round().clamp(0, ref.width - 1);
-    final ry = (ny * (ref.height - 1)).round().clamp(0, ref.height - 1);
-    final cx = (nx * (cmp.width - 1)).round().clamp(0, cmp.width - 1);
-    final cy = (ny * (cmp.height - 1)).round().clamp(0, cmp.height - 1);
+    setState(() => _pointProbeBusy = true);
 
-    final refMeasurement = ColorMeasurementEngine.measurePoint(
-      ref,
-      x: rx,
-      y: ry,
-      settings: _measurementSettings,
-      pixelsPerMm: AppConfig.canonicalPixelsPerMm,
-    );
-    final cmpMeasurement = ColorMeasurementEngine.measurePoint(
-      cmp,
-      x: cx,
-      y: cy,
-      settings: _measurementSettings,
-      pixelsPerMm: AppConfig.canonicalPixelsPerMm,
-    );
-    var refLab = refMeasurement.lab;
-    var cmpLab = cmpMeasurement.lab;
-    var refDensity = OpticalDensityMeasurement.imageRelativeFromRgb(
-      refMeasurement.red,
-      refMeasurement.green,
-      refMeasurement.blue,
-    );
-    var cmpDensity = OpticalDensityMeasurement.imageRelativeFromRgb(
-      cmpMeasurement.red,
-      cmpMeasurement.green,
-      cmpMeasurement.blue,
-    );
-    final calibrationProfile = _cameraCalibrationProfile;
-    final calibrationModel = calibrationProfile?.model;
-    if (calibrationProfile?.enabled == true && calibrationModel != null) {
-      final calibratedRefLab = calibrationModel.labForRgb(
+    late final PointColorMeasurement refMeasurement;
+    late final PointColorMeasurement cmpMeasurement;
+    var measuredImageSize = imageSize;
+    try {
+      if (web_worker.isWebCompareWorkerSupported) {
+        final workerResult = await web_worker.runWebPointWorker(
+          reference: refBytes,
+          sample: cmpBytes,
+          normalizedX: nx,
+          normalizedY: ny,
+          diameterMm: _measurementSettings.aperture.diameterMm,
+          pixelsPerMm: AppConfig.canonicalPixelsPerMm,
+        );
+        refMeasurement = PointColorMeasurement(
+          lab: LabColor(
+            (workerResult['refL'] as num).toDouble(),
+            (workerResult['refA'] as num).toDouble(),
+            (workerResult['refB'] as num).toDouble(),
+          ),
+          red: (workerResult['refRed'] as num).toDouble(),
+          green: (workerResult['refGreen'] as num).toDouble(),
+          blue: (workerResult['refBlue'] as num).toDouble(),
+          sampledPixels: workerResult['refSampledPixels'] as int,
+        );
+        cmpMeasurement = PointColorMeasurement(
+          lab: LabColor(
+            (workerResult['sampleL'] as num).toDouble(),
+            (workerResult['sampleA'] as num).toDouble(),
+            (workerResult['sampleB'] as num).toDouble(),
+          ),
+          red: (workerResult['sampleRed'] as num).toDouble(),
+          green: (workerResult['sampleGreen'] as num).toDouble(),
+          blue: (workerResult['sampleBlue'] as num).toDouble(),
+          sampledPixels: workerResult['sampleSampledPixels'] as int,
+        );
+        measuredImageSize = Size(
+          (workerResult['refWidth'] as int).toDouble(),
+          (workerResult['refHeight'] as int).toDouble(),
+        );
+      } else {
+        final ref = img.decodeImage(refBytes);
+        final cmp = img.decodeImage(cmpBytes);
+        if (ref == null || cmp == null) {
+          throw StateError('Не удалось прочитать изображения');
+        }
+        final rx = (nx * (ref.width - 1)).round().clamp(0, ref.width - 1);
+        final ry = (ny * (ref.height - 1)).round().clamp(0, ref.height - 1);
+        final cx = (nx * (cmp.width - 1)).round().clamp(0, cmp.width - 1);
+        final cy = (ny * (cmp.height - 1)).round().clamp(0, cmp.height - 1);
+        refMeasurement = ColorMeasurementEngine.measurePoint(
+          ref,
+          x: rx,
+          y: ry,
+          settings: _measurementSettings,
+          pixelsPerMm: AppConfig.canonicalPixelsPerMm,
+        );
+        cmpMeasurement = ColorMeasurementEngine.measurePoint(
+          cmp,
+          x: cx,
+          y: cy,
+          settings: _measurementSettings,
+          pixelsPerMm: AppConfig.canonicalPixelsPerMm,
+        );
+        measuredImageSize = Size(
+          ref.width.toDouble(),
+          ref.height.toDouble(),
+        );
+      }
+      if (!mounted || _inspectionTool != _InspectionTool.point) return;
+
+      var refLab = refMeasurement.lab;
+      var cmpLab = cmpMeasurement.lab;
+      var refDensity = OpticalDensityMeasurement.imageRelativeFromRgb(
         refMeasurement.red,
         refMeasurement.green,
         refMeasurement.blue,
       );
-      final calibratedCmpLab = calibrationModel.labForRgb(
+      var cmpDensity = OpticalDensityMeasurement.imageRelativeFromRgb(
         cmpMeasurement.red,
         cmpMeasurement.green,
         cmpMeasurement.blue,
       );
-      refLab = LabColor(
-        calibratedRefLab.l,
-        calibratedRefLab.a,
-        calibratedRefLab.b,
-      );
-      cmpLab = LabColor(
-        calibratedCmpLab.l,
-        calibratedCmpLab.a,
-        calibratedCmpLab.b,
-      );
-      final calibratedRefDensity = calibrationModel.densityForRgb(
-        refMeasurement.red,
-        refMeasurement.green,
-        refMeasurement.blue,
-      );
-      final calibratedCmpDensity = calibrationModel.densityForRgb(
-        cmpMeasurement.red,
-        cmpMeasurement.green,
-        cmpMeasurement.blue,
-      );
-      final calibratedDensityReady =
-          calibrationModel.validationDensityMae != null;
-      if (calibratedDensityReady && calibratedRefDensity != null) {
-        refDensity = OpticalDensityMeasurement(
-          cyan: calibratedRefDensity.c,
-          magenta: calibratedRefDensity.m,
-          yellow: calibratedRefDensity.y,
-          black: calibratedRefDensity.k,
+      final calibrationProfile = _cameraCalibrationProfile;
+      final calibrationModel = calibrationProfile?.model;
+      if (calibrationProfile?.enabled == true && calibrationModel != null) {
+        final calibratedRefLab = calibrationModel.labForRgb(
+          refMeasurement.red,
+          refMeasurement.green,
+          refMeasurement.blue,
+        );
+        final calibratedCmpLab = calibrationModel.labForRgb(
+          cmpMeasurement.red,
+          cmpMeasurement.green,
+          cmpMeasurement.blue,
+        );
+        refLab = LabColor(
+          calibratedRefLab.l,
+          calibratedRefLab.a,
+          calibratedRefLab.b,
+        );
+        cmpLab = LabColor(
+          calibratedCmpLab.l,
+          calibratedCmpLab.a,
+          calibratedCmpLab.b,
+        );
+        final calibratedRefDensity = calibrationModel.densityForRgb(
+          refMeasurement.red,
+          refMeasurement.green,
+          refMeasurement.blue,
+        );
+        final calibratedCmpDensity = calibrationModel.densityForRgb(
+          cmpMeasurement.red,
+          cmpMeasurement.green,
+          cmpMeasurement.blue,
+        );
+        final calibratedDensityReady =
+            calibrationModel.validationDensityMae != null;
+        if (calibratedDensityReady && calibratedRefDensity != null) {
+          refDensity = OpticalDensityMeasurement(
+            cyan: calibratedRefDensity.c,
+            magenta: calibratedRefDensity.m,
+            yellow: calibratedRefDensity.y,
+            black: calibratedRefDensity.k,
+          );
+        }
+        if (calibratedDensityReady && calibratedCmpDensity != null) {
+          cmpDensity = OpticalDensityMeasurement(
+            cyan: calibratedCmpDensity.c,
+            magenta: calibratedCmpDensity.m,
+            yellow: calibratedCmpDensity.y,
+            black: calibratedCmpDensity.k,
+          );
+        }
+      }
+      setState(() {
+        _pointProbe = _PointProbe(
+          normalized: Offset(nx, ny),
+          imageSize: measuredImageSize,
+          refLab: _LabColor.fromLab(refLab),
+          cmpLab: _LabColor.fromLab(cmpLab),
+          refDensity: refDensity,
+          cmpDensity: cmpDensity,
+          deltaE: ColorDifferenceCalculator.deltaE(
+            refLab,
+            cmpLab,
+            _measurementSettings.deltaEFormula,
+          ),
+          formulaLabel: _measurementSettings.deltaEFormula.shortLabel,
+          measurementSource:
+              calibrationProfile?.enabled == true && calibrationModel != null
+                  ? calibrationModel.validationDensityMae == null
+                      ? 'профиль ${calibrationProfile!.name} · D по изображению'
+                      : 'профиль ${calibrationProfile!.name}'
+                  : 'по изображению',
+          apertureLabel: _measurementSettings.aperture.label,
+          sampledPixels: min(
+            refMeasurement.sampledPixels,
+            cmpMeasurement.sampledPixels,
+          ),
+        );
+      });
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Не удалось измерить точку: $error')),
         );
       }
-      if (calibratedDensityReady && calibratedCmpDensity != null) {
-        cmpDensity = OpticalDensityMeasurement(
-          cyan: calibratedCmpDensity.c,
-          magenta: calibratedCmpDensity.m,
-          yellow: calibratedCmpDensity.y,
-          black: calibratedCmpDensity.k,
-        );
-      }
+    } finally {
+      if (mounted) setState(() => _pointProbeBusy = false);
     }
-    setState(() {
-      _pointProbe = _PointProbe(
-        normalized: Offset(nx, ny),
-        imageSize: Size(ref.width.toDouble(), ref.height.toDouble()),
-        refLab: _LabColor.fromLab(refLab),
-        cmpLab: _LabColor.fromLab(cmpLab),
-        refDensity: refDensity,
-        cmpDensity: cmpDensity,
-        deltaE: ColorDifferenceCalculator.deltaE(
-          refLab,
-          cmpLab,
-          _measurementSettings.deltaEFormula,
-        ),
-        formulaLabel: _measurementSettings.deltaEFormula.shortLabel,
-        measurementSource:
-            calibrationProfile?.enabled == true && calibrationModel != null
-                ? calibrationModel.validationDensityMae == null
-                    ? 'профиль ${calibrationProfile!.name} · D по изображению'
-                    : 'профиль ${calibrationProfile!.name}'
-                : 'по изображению',
-        apertureLabel: _measurementSettings.aperture.label,
-        sampledPixels: min(
-          refMeasurement.sampledPixels,
-          cmpMeasurement.sampledPixels,
-        ),
-      );
-    });
   }
 
   void _startAreaLoupeSelection({

@@ -15,6 +15,10 @@ self.onmessage = async (event) => {
       await alignImages(task);
       return;
     }
+    if (task.type === 'point') {
+      await measurePointPair(task);
+      return;
+    }
     if (task.type === 'compare') {
       await compareImages(task);
     }
@@ -51,6 +55,138 @@ async function cropImage(task) {
     { type: 'cropResult', bytes: buffer, width, height },
     [buffer],
   );
+}
+
+async function measurePointPair(task) {
+  progress('Измеряю выбранную точку...');
+  const normalizedX = clamp(Number(task.normalizedX) || 0, 0, 1);
+  const normalizedY = clamp(Number(task.normalizedY) || 0, 0, 1);
+  const diameterMm = Math.max(0.1, Number(task.diameterMm) || 2);
+  const pixelsPerMm = Math.max(0.1, Number(task.pixelsPerMm) || 27);
+
+  // Decode and release the images one after another. Apart from keeping the
+  // work off Flutter's UI thread, this avoids holding two full-size RGBA
+  // buffers in memory for a single point measurement.
+  const referenceValue = task.reference;
+  task.reference = null;
+  const reference = await measurePointImage(
+    referenceValue,
+    normalizedX,
+    normalizedY,
+    diameterMm,
+    pixelsPerMm,
+  );
+  const sampleValue = task.sample;
+  task.sample = null;
+  const sample = await measurePointImage(
+    sampleValue,
+    normalizedX,
+    normalizedY,
+    diameterMm,
+    pixelsPerMm,
+  );
+
+  self.postMessage({
+    type: 'pointResult',
+    refWidth: reference.width,
+    refHeight: reference.height,
+    refRed: reference.red,
+    refGreen: reference.green,
+    refBlue: reference.blue,
+    refL: reference.l,
+    refA: reference.a,
+    refB: reference.b,
+    refSampledPixels: reference.sampledPixels,
+    sampleWidth: sample.width,
+    sampleHeight: sample.height,
+    sampleRed: sample.red,
+    sampleGreen: sample.green,
+    sampleBlue: sample.blue,
+    sampleL: sample.l,
+    sampleA: sample.a,
+    sampleB: sample.b,
+    sampleSampledPixels: sample.sampledPixels,
+  });
+}
+
+async function measurePointImage(
+  value,
+  normalizedX,
+  normalizedY,
+  diameterMm,
+  pixelsPerMm,
+) {
+  const bitmap = await decodeBitmap(value);
+  const width = bitmap.width;
+  const height = bitmap.height;
+  const canvas = new OffscreenCanvas(width, height);
+  const context = canvas.getContext('2d', { alpha: true });
+  context.drawImage(bitmap, 0, 0);
+  bitmap.close();
+  let imageData = context.getImageData(0, 0, width, height);
+  canvas.width = 1;
+  canvas.height = 1;
+
+  const x = clamp(Math.round(normalizedX * (width - 1)), 0, width - 1);
+  const y = clamp(Math.round(normalizedY * (height - 1)), 0, height - 1);
+  const radius = Math.max(0.5, (diameterMm * pixelsPerMm) / 2);
+  const radiusSquared = radius * radius;
+  const minX = Math.max(0, Math.floor(x - radius));
+  const maxX = Math.min(width - 1, Math.ceil(x + radius));
+  const minY = Math.max(0, Math.floor(y - radius));
+  const maxY = Math.min(height - 1, Math.ceil(y + radius));
+  let red = 0;
+  let green = 0;
+  let blue = 0;
+  let l = 0;
+  let a = 0;
+  let b = 0;
+  let count = 0;
+
+  for (let py = minY; py <= maxY; py++) {
+    const dy = py - y;
+    for (let px = minX; px <= maxX; px++) {
+      const dx = px - x;
+      if (dx * dx + dy * dy > radiusSquared) continue;
+      const index = (py * width + px) * 4;
+      if (imageData.data[index + 3] < 250) continue;
+      const pixelRed = imageData.data[index];
+      const pixelGreen = imageData.data[index + 1];
+      const pixelBlue = imageData.data[index + 2];
+      const lab = rgbToLab(pixelRed, pixelGreen, pixelBlue);
+      red += pixelRed;
+      green += pixelGreen;
+      blue += pixelBlue;
+      l += lab.l;
+      a += lab.a;
+      b += lab.b;
+      count++;
+    }
+  }
+
+  if (count === 0) {
+    const index = (y * width + x) * 4;
+    red = imageData.data[index];
+    green = imageData.data[index + 1];
+    blue = imageData.data[index + 2];
+    const lab = rgbToLab(red, green, blue);
+    l = lab.l;
+    a = lab.a;
+    b = lab.b;
+    count = 1;
+  }
+  imageData = null;
+  return {
+    width,
+    height,
+    red: red / count,
+    green: green / count,
+    blue: blue / count,
+    l: l / count,
+    a: a / count,
+    b: b / count,
+    sampledPixels: count,
+  };
 }
 
 async function alignImages(task) {
@@ -959,6 +1095,24 @@ function pivotRgb(value) {
 
 function pivotXyz(value) {
   return value > 0.008856 ? Math.pow(value, 1 / 3) : 7.787 * value + 16 / 116;
+}
+
+function rgbToLab(red, green, blue) {
+  const r = pivotRgb(red);
+  const g = pivotRgb(green);
+  const b = pivotRgb(blue);
+  const fx = pivotXyz(
+    (r * 0.4124564 + g * 0.3575761 + b * 0.1804375) / 0.95047,
+  );
+  const fy = pivotXyz(r * 0.2126729 + g * 0.7151522 + b * 0.0721750);
+  const fz = pivotXyz(
+    (r * 0.0193339 + g * 0.1191920 + b * 0.9503041) / 1.08883,
+  );
+  return {
+    l: 116 * fy - 16,
+    a: 500 * (fx - fy),
+    b: 200 * (fy - fz),
+  };
 }
 
 async function imageDataToPng(imageData) {

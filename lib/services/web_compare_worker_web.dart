@@ -155,6 +155,77 @@ Future<Map<String, dynamic>> runWebAlignmentWorker({
   return completer.future;
 }
 
+Future<Map<String, dynamic>> runWebPointWorker({
+  required Uint8List reference,
+  required Uint8List sample,
+  required double normalizedX,
+  required double normalizedY,
+  required double diameterMm,
+  required double pixelsPerMm,
+}) async {
+  final worker = web.Worker('compare_worker.js'.toJS);
+  final completer = Completer<Map<String, dynamic>>();
+
+  void close() => worker.terminate();
+
+  worker.onmessage = ((JSObject rawEvent) {
+    final event = rawEvent as web.MessageEvent;
+    final data = event.data as JSObject;
+    final type = _string(data, 'type');
+    if (type == 'progress') return;
+    if (type == 'error') {
+      if (!completer.isCompleted) {
+        completer.completeError(
+          StateError(_string(data, 'message') ?? 'Ошибка Worker'),
+        );
+      }
+      close();
+      return;
+    }
+    if (type != 'pointResult') return;
+    if (!completer.isCompleted) {
+      completer.complete({
+        'refWidth': _integer(data, 'refWidth'),
+        'refHeight': _integer(data, 'refHeight'),
+        'refRed': _number(data, 'refRed'),
+        'refGreen': _number(data, 'refGreen'),
+        'refBlue': _number(data, 'refBlue'),
+        'refL': _number(data, 'refL'),
+        'refA': _number(data, 'refA'),
+        'refB': _number(data, 'refB'),
+        'refSampledPixels': _integer(data, 'refSampledPixels'),
+        'sampleWidth': _integer(data, 'sampleWidth'),
+        'sampleHeight': _integer(data, 'sampleHeight'),
+        'sampleRed': _number(data, 'sampleRed'),
+        'sampleGreen': _number(data, 'sampleGreen'),
+        'sampleBlue': _number(data, 'sampleBlue'),
+        'sampleL': _number(data, 'sampleL'),
+        'sampleA': _number(data, 'sampleA'),
+        'sampleB': _number(data, 'sampleB'),
+        'sampleSampledPixels': _integer(data, 'sampleSampledPixels'),
+      });
+    }
+    close();
+  }).toJS;
+  worker.onerror = ((JSObject rawEvent) {
+    if (!completer.isCompleted) {
+      completer.completeError(StateError('Web Worker не запустился'));
+    }
+    close();
+  }).toJS;
+
+  final message = JSObject();
+  message['type'] = 'point'.toJS;
+  message['reference'] = reference.toJS;
+  message['sample'] = sample.toJS;
+  message['normalizedX'] = normalizedX.toJS;
+  message['normalizedY'] = normalizedY.toJS;
+  message['diameterMm'] = diameterMm.toJS;
+  message['pixelsPerMm'] = pixelsPerMm.toJS;
+  worker.postMessage(message);
+  return completer.future;
+}
+
 Future<({Uint8List bytes, int width, int height})> runWebCropWorker({
   required Uint8List image,
   required int x,
