@@ -227,6 +227,7 @@ class _GuestComparisonShellState extends State<GuestComparisonShell> {
                   child: CompareScreen(
                     entitlements: entitlements,
                     organizationAccess: access,
+                    storageSettingsScope: const StorageSettingsScope.guest(),
                     onBackToWorks: widget.onExit,
                     backTooltip: 'На стартовый экран',
                     canOpenChat: false,
@@ -252,6 +253,8 @@ class _GuestComparisonShellState extends State<GuestComparisonShell> {
                       child: SettingsScreen(
                         entitlements: entitlements,
                         organizationAccess: access,
+                        storageSettingsScope:
+                            const StorageSettingsScope.guest(),
                         initialSection: 4,
                         onAccessChanged: () async {},
                       ),
@@ -397,7 +400,9 @@ class _MainShellState extends State<MainShell> {
   bool _accessLoaded = false;
   AccountProfile? _accountProfile;
   bool _accountProfileResolved = false;
-  CloudStorage? _cloudStorage;
+  CloudStorage? _supabaseCloudStorage;
+  GoogleDriveCloudStorage? _googleDriveCloudStorage;
+  CloudStorage? _settingsCloudStorage;
   ProtocolCloudRepository? _protocolCloudRepository;
   ChatRepository? _chatRepository;
   CheckUsageService? _checkUsageService;
@@ -463,12 +468,42 @@ class _MainShellState extends State<MainShell> {
             ? entitlements
             : personalEntitlements;
     final currentUser = client.auth.currentUser;
-    final cloudStorage = currentUser == null
+    final supabaseCloudStorage = currentUser == null
         ? null
         : SupabaseCloudStorage(
             client,
             ownerUserId: currentUser.id,
           );
+    final googleDriveCloudStorage = currentUser == null
+        ? null
+        : GoogleDriveCloudStorage(
+            clientId: AppConfig.googleOAuthClientId,
+          );
+    final storageScope = _storageScopeFor(effectiveAccess, currentUser?.id);
+    final storageSettings = await StorageSettingsService.load(
+      scope: storageScope,
+    );
+    if (!mounted) return;
+    final settingsCloudStorage = effectiveAccess.organizationId != null
+        ? supabaseCloudStorage
+        : googleDriveCloudStorage;
+    final protocolCloudRepository = currentUser == null
+        ? null
+        : effectiveAccess.organizationId != null && supabaseCloudStorage != null
+            ? SupabaseProtocolCloudRepository(
+                client,
+                storage: supabaseCloudStorage,
+                ownerUserId: currentUser.id,
+                organizationId: effectiveAccess.organizationId,
+              )
+            : storageSettings.primaryLocation ==
+                        AssetStorageLocation.googleDrive &&
+                    googleDriveCloudStorage != null
+                ? GoogleDriveProtocolCloudRepository(
+                    storage: googleDriveCloudStorage,
+                    ownerUserId: currentUser.id,
+                  )
+                : null;
     setState(() {
       _personalEntitlements = personalEntitlements;
       _organizationEntitlements =
@@ -480,21 +515,16 @@ class _MainShellState extends State<MainShell> {
       _accessLoaded = true;
       _accountProfile = accountProfile;
       _accountProfileResolved = true;
-      _cloudStorage = cloudStorage;
-      _protocolCloudRepository = currentUser == null || cloudStorage == null
-          ? null
-          : SupabaseProtocolCloudRepository(
-              client,
-              storage: cloudStorage,
-              ownerUserId: currentUser.id,
-              organizationId: effectiveAccess.organizationId,
-            );
+      _supabaseCloudStorage = supabaseCloudStorage;
+      _googleDriveCloudStorage = googleDriveCloudStorage;
+      _settingsCloudStorage = settingsCloudStorage;
+      _protocolCloudRepository = protocolCloudRepository;
       _chatRepository = currentUser == null
           ? null
           : SupabaseChatRepository(
               client,
               currentUserId: currentUser.id,
-              storage: cloudStorage!,
+              storage: supabaseCloudStorage!,
             );
       _checkUsageService =
           currentUser == null ? null : SupabaseCheckUsageService(client);
@@ -516,7 +546,8 @@ class _MainShellState extends State<MainShell> {
         ? organizationEntitlements!
         : _personalEntitlements;
     final user = Supabase.instance.client.auth.currentUser;
-    final storage = _cloudStorage;
+    final supabaseStorage = _supabaseCloudStorage;
+    final googleDriveStorage = _googleDriveCloudStorage;
     setState(() {
       _selectedWorkspace = workspace;
       _organizationAccess = access;
@@ -529,14 +560,64 @@ class _MainShellState extends State<MainShell> {
       _sidePanel = null;
       _requestedChatJobId = null;
       _requestedChatKind = null;
-      _protocolCloudRepository = user == null || storage == null
+      _settingsCloudStorage =
+          access.organizationId == null ? googleDriveStorage : supabaseStorage;
+      _protocolCloudRepository = user == null || supabaseStorage == null
           ? null
-          : SupabaseProtocolCloudRepository(
-              Supabase.instance.client,
-              storage: storage,
-              ownerUserId: user.id,
-              organizationId: access.organizationId,
-            );
+          : access.organizationId == null
+              ? null
+              : SupabaseProtocolCloudRepository(
+                  Supabase.instance.client,
+                  storage: supabaseStorage,
+                  ownerUserId: user.id,
+                  organizationId: access.organizationId,
+                );
+    });
+    _refreshStorageForWorkspace();
+  }
+
+  StorageSettingsScope _storageScopeFor(
+    OrganizationAccess access,
+    String? userId,
+  ) {
+    final organizationId = access.organizationId;
+    if (organizationId != null) {
+      return StorageSettingsScope.organization(organizationId);
+    }
+    if (userId == null || userId.isEmpty) {
+      return const StorageSettingsScope.guest();
+    }
+    return StorageSettingsScope.personal(userId);
+  }
+
+  Future<void> _refreshStorageForWorkspace() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
+    final access = _organizationAccess;
+    final scope = _storageScopeFor(access, user.id);
+    final settings = await StorageSettingsService.load(scope: scope);
+    if (!mounted) return;
+    final isOrganization = access.organizationId != null;
+    final storage =
+        isOrganization ? _supabaseCloudStorage : _googleDriveCloudStorage;
+    ProtocolCloudRepository? repository;
+    if (isOrganization && _supabaseCloudStorage != null) {
+      repository = SupabaseProtocolCloudRepository(
+        Supabase.instance.client,
+        storage: _supabaseCloudStorage!,
+        ownerUserId: user.id,
+        organizationId: access.organizationId,
+      );
+    } else if (settings.primaryLocation == AssetStorageLocation.googleDrive &&
+        _googleDriveCloudStorage != null) {
+      repository = GoogleDriveProtocolCloudRepository(
+        storage: _googleDriveCloudStorage!,
+        ownerUserId: user.id,
+      );
+    }
+    setState(() {
+      _settingsCloudStorage = storage;
+      _protocolCloudRepository = repository;
     });
   }
 
@@ -947,6 +1028,8 @@ class _MainShellState extends State<MainShell> {
             ),
             entitlements: _entitlements,
             organizationAccess: _organizationAccess,
+            storageSettingsScope:
+                _storageScopeFor(_organizationAccess, user?.id),
             historyOwnerId: user?.id ?? 'guest',
             initialJob: _comparisonWork == null
                 ? null
@@ -1028,9 +1111,10 @@ class _MainShellState extends State<MainShell> {
         key: ValueKey('settings-access-$_settingsAccessRequest'),
         entitlements: _entitlements,
         organizationAccess: _organizationAccess,
+        storageSettingsScope: _storageScopeFor(_organizationAccess, user?.id),
         historyOwnerId: user?.id ?? 'guest',
         initialSection: _settingsInitialSection,
-        cloudStorage: _cloudStorage,
+        cloudStorage: _settingsCloudStorage,
         printConditionService: SupabasePrintConditionService(
           Supabase.instance.client,
         ),
@@ -1041,6 +1125,7 @@ class _MainShellState extends State<MainShell> {
         onChangeWorkspace:
             _membershipAccess == null ? null : _requestWorkspaceChoice,
         onSignOut: _signOut,
+        onStorageChanged: _refreshStorageForWorkspace,
       );
     }
 

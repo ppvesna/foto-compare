@@ -20,8 +20,8 @@ In particular, Architecture v2 does not require an immediate refactor of
 
 The implemented boundaries include `lib/features/auth`, `lib/features/protocols`,
 `lib/features/references`, the first `billing`, `organization`, customer-directory,
-production, and print-proofing workflow contracts, plus the initial `capabilities/storage` contract
-and local settings adapter. The auth boundary currently owns editable current-profile
+production, and print-proofing workflow contracts, plus scoped storage settings,
+Supabase Storage, and personal Google Drive adapters. The auth boundary currently owns editable current-profile
 data; sign-in, registration, and invitation completion now share an adaptive form UI
 with explicit password visibility controls. Forgotten-password recovery is isolated
 behind `PasswordRecoveryService`; the web shell consumes the Supabase recovery callback
@@ -30,8 +30,9 @@ Entitlements and organization permissions now reach the current application shel
 typed snapshots. Existing storage keys, file names, JSON, and current user access remain
 compatible. The current test environment supports organization access, invitations,
 personal/working entitlement separation, customer and job data, private Storage,
-cloud protocols, secure chat, and test billing. The exact applied-migration ledger
-must still be audited before production.
+cloud protocols with source assets, secure chat, and test billing. The test remote
+ledger is aligned through migration `039`; the actual schema must still be audited
+before production.
 
 ## 2. Architectural decision
 

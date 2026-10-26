@@ -37,6 +37,64 @@ void main() {
     expect(loaded.syncOriginals, isFalse);
   });
 
+  test('guest, personal, and organization storage stay isolated', () async {
+    SharedPreferences.setMockInitialValues({});
+    final personal = StorageSettingsScope.personal('user-1');
+    final organization = StorageSettingsScope.organization('organization-1');
+
+    final guestSettings = await StorageSettingsService.load(
+      scope: const StorageSettingsScope.guest(),
+    );
+    final organizationDefaults = await StorageSettingsService.load(
+      scope: organization,
+    );
+
+    expect(guestSettings.primaryLocation, AssetStorageLocation.device);
+    expect(guestSettings.syncOriginals, isFalse);
+    expect(
+      organizationDefaults.primaryLocation,
+      AssetStorageLocation.supabaseStorage,
+    );
+    expect(organizationDefaults.syncOriginals, isTrue);
+
+    await StorageSettingsService.save(
+      const StorageSettings(
+        primaryLocation: AssetStorageLocation.googleDrive,
+        syncProtocolMetadata: true,
+        syncPreviews: true,
+        syncOriginals: true,
+      ),
+      scope: personal,
+    );
+
+    expect(
+      (await StorageSettingsService.load(scope: personal)).primaryLocation,
+      AssetStorageLocation.googleDrive,
+    );
+    expect(
+      (await StorageSettingsService.load(scope: organization)).primaryLocation,
+      AssetStorageLocation.supabaseStorage,
+    );
+  });
+
+  test('scope rejects a provider belonging to another workspace', () async {
+    SharedPreferences.setMockInitialValues({});
+    final organization = StorageSettingsScope.organization('organization-1');
+
+    await StorageSettingsService.save(
+      const StorageSettings(
+        primaryLocation: AssetStorageLocation.googleDrive,
+        syncProtocolMetadata: true,
+        syncPreviews: true,
+        syncOriginals: true,
+      ),
+      scope: organization,
+    );
+
+    final loaded = await StorageSettingsService.load(scope: organization);
+    expect(loaded.primaryLocation, AssetStorageLocation.supabaseStorage);
+  });
+
   test('mock cloud storage supports a deterministic asset lifecycle', () async {
     final storage = MockCloudStorage();
     final connection = await storage.connect();

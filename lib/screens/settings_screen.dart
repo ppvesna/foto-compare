@@ -54,6 +54,7 @@ class SettingsScreen extends StatefulWidget {
   final CustomerDirectoryService? customerDirectoryService;
   final AccountProfileService? accountProfileService;
   final CloudStorage? cloudStorage;
+  final StorageSettingsScope? storageSettingsScope;
   final PaymentService? paymentService;
   final CheckUsageService? checkUsageService;
   final PrintConditionService? printConditionService;
@@ -62,6 +63,7 @@ class SettingsScreen extends StatefulWidget {
   final String historyOwnerId;
   final Future<void> Function()? onChangeWorkspace;
   final Future<void> Function()? onSignOut;
+  final Future<void> Function()? onStorageChanged;
 
   const SettingsScreen({
     super.key,
@@ -73,6 +75,7 @@ class SettingsScreen extends StatefulWidget {
     this.customerDirectoryService,
     this.accountProfileService,
     this.cloudStorage,
+    this.storageSettingsScope,
     this.paymentService,
     this.checkUsageService,
     this.printConditionService,
@@ -81,6 +84,7 @@ class SettingsScreen extends StatefulWidget {
     this.historyOwnerId = 'guest',
     this.onChangeWorkspace,
     this.onSignOut,
+    this.onStorageChanged,
   });
 
   @override
@@ -174,6 +178,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _showArchivedPrintConditions = false;
   String? _printConditionsError;
 
+  StorageSettingsScope get _storageScope {
+    final explicit = widget.storageSettingsScope;
+    if (explicit != null) return explicit;
+    final organizationId = widget.organizationAccess.organizationId;
+    if (organizationId != null && organizationId.isNotEmpty) {
+      return StorageSettingsScope.organization(organizationId);
+    }
+    if (widget.historyOwnerId != 'guest' &&
+        widget.historyOwnerId.trim().isNotEmpty) {
+      return StorageSettingsScope.personal(widget.historyOwnerId);
+    }
+    return const StorageSettingsScope.guest();
+  }
+
   static const _sections = [
     _SettingsSection('Аккаунт', 'профиль пользователя'),
     _SettingsSection('Доступ', 'план, роль и лимиты'),
@@ -251,6 +269,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (oldWidget.organizationAccess.organizationId !=
             widget.organizationAccess.organizationId ||
         oldWidget.organizationAccess.role != widget.organizationAccess.role) {
+      _loadStorageSettings();
       final nextScope = _defaultBillingScope();
       if (_billingScope != nextScope &&
           !_canUseOrganizationBilling(_billingScope)) {
@@ -423,7 +442,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _loadStorageSettings() async {
-    final settings = await StorageSettingsService.load();
+    final settings = await StorageSettingsService.load(scope: _storageScope);
     if (mounted) setState(() => _storageSettings = settings);
   }
 
@@ -448,20 +467,47 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() {
       _cloudConnection = connection;
       _cloudConnectionChecking = false;
+      if (connection.state == CloudConnectionState.connected) {
+        _storageSettings = _storageSettings.copyWith(
+          primaryLocation: storage.location,
+          syncProtocolMetadata: true,
+          syncPreviews: true,
+          syncOriginals: true,
+        );
+      }
     });
     if (connection.state == CloudConnectionState.connected) {
+      final providerName = storage.location == AssetStorageLocation.googleDrive
+          ? 'Google Drive'
+          : 'Supabase Storage';
       xpDlg(
         context,
         'Облако доступно',
-        'Приватное хранилище Supabase подключено для ${connection.accountLabel ?? 'текущего пользователя'}. Автоматическая загрузка изображений пока выключена.',
+        '$providerName подключён для '
+            '${connection.accountLabel ?? 'текущего пользователя'}. '
+            'После сохранения настроек новые проверки будут '
+            'сохраняться в нём.',
       );
     } else {
       xpDlg(
         context,
         'Облако недоступно',
-        'Не удалось открыть приватное хранилище. Проверьте, что миграция 013 установлена в Supabase.',
+        connection.errorMessage ?? 'Не удалось открыть приватное хранилище.',
       );
     }
+  }
+
+  Future<void> _disconnectCloudConnection() async {
+    final storage = widget.cloudStorage;
+    if (storage == null || _cloudConnectionChecking) return;
+    setState(() => _cloudConnectionChecking = true);
+    await storage.disconnect();
+    if (!mounted) return;
+    setState(() {
+      _cloudConnectionChecking = false;
+      _cloudConnection = CloudConnection.disconnected;
+      _storageSettings = StorageSettings.defaultsFor(_storageScope);
+    });
   }
 
   final _dotRows = const [
@@ -5097,17 +5143,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _storageSection() {
-    final cloudAllowed =
-        widget.entitlements.allows(ProductCapability.cloudAssets);
+    final scope = _storageScope;
+    final isGuest = scope.type == StorageWorkspaceType.guest;
+    final isPersonal = scope.type == StorageWorkspaceType.personal;
+    final isOrganization = scope.type == StorageWorkspaceType.organization;
+    final cloudStorage = widget.cloudStorage;
+    final isGoogleProvider =
+        cloudStorage?.location == AssetStorageLocation.googleDrive;
+    final googleConfigured = cloudStorage is GoogleDriveCloudStorage
+        ? cloudStorage.configured
+        : isGoogleProvider;
+    final cloudAllowed = isPersonal
+        ? googleConfigured
+        : widget.entitlements.allows(ProductCapability.cloudAssets);
     final cloudConnected =
         _cloudConnection.state == CloudConnectionState.connected;
-    final appCloudSelected = _storageSettings.primaryLocation ==
-        AssetStorageLocation.supabaseStorage;
+    final cloudSelected =
+        _storageSettings.primaryLocation != AssetStorageLocation.device;
     final cloudStatus = switch (_cloudConnection.state) {
       CloudConnectionState.connected =>
         'Подключено: ${_cloudConnection.accountLabel ?? 'текущий пользователь'}',
       CloudConnectionState.error =>
-        'Не подключено. Требуется миграция хранилища.',
+        _cloudConnection.errorMessage ?? 'Не подключено.',
       CloudConnectionState.disconnected => 'Подключение ещё не проверено.',
     };
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -5115,58 +5172,83 @@ class _SettingsScreenState extends State<SettingsScreen> {
         title: 'Место хранения изображений',
         child:
             Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          _storageLocationOption(
-            location: AssetStorageLocation.device,
-            icon: Icons.computer_outlined,
-            title: 'На устройстве пользователя',
-            subtitle:
-                'Активно. Trimatrix обрабатывает выбранные файлы, но не загружает оригиналы в облако.',
-            available: true,
-          ),
-          _storageLocationOption(
-            location: AssetStorageLocation.supabaseStorage,
-            icon: Icons.cloud_outlined,
-            title: 'Облако приложения',
-            subtitle: cloudAllowed
-                ? '$cloudStatus Оригиналы автоматически не загружаются.'
-                : 'Supabase Storage доступен в плане Pro или Enterprise.',
-            available: cloudAllowed && cloudConnected,
-          ),
-          _storageLocationOption(
-            location: AssetStorageLocation.googleDrive,
-            icon: Icons.add_to_drive_outlined,
-            title: 'Google Drive пользователя',
-            subtitle:
-                'Потребуется отдельный вход Google OAuth. Вход Trimatrix не даёт доступа к диску.',
-          ),
-          _storageLocationOption(
-            location: AssetStorageLocation.organizationDrive,
-            icon: Icons.corporate_fare_outlined,
-            title: 'Диск организации',
-            subtitle:
-                'Общее хранилище организации. Подключать сможет администратор с соответствующим правом.',
-          ),
+          if (isGuest || isPersonal)
+            _storageLocationOption(
+              location: AssetStorageLocation.device,
+              icon: Icons.computer_outlined,
+              title: 'На этом устройстве',
+              subtitle: isGuest
+                  ? 'Гостевая проверка не отправляет файлы в облако.'
+                  : 'Файлы и история остаются только в этом браузере.',
+              available: true,
+            ),
+          if (isPersonal)
+            _storageLocationOption(
+              location: AssetStorageLocation.googleDrive,
+              icon: Icons.add_to_drive_outlined,
+              title: 'Google Drive',
+              subtitle: googleConfigured
+                  ? '$cloudStatus Файлы попадут в личную папку Trimatrix.'
+                  : 'Для хостинга нужно задать Google OAuth Client ID.',
+              available: cloudAllowed && cloudConnected,
+            ),
+          if (isOrganization)
+            _storageLocationOption(
+              location: AssetStorageLocation.supabaseStorage,
+              icon: Icons.cloud_outlined,
+              title: 'Облако Trimatrix',
+              subtitle: cloudAllowed
+                  ? '$cloudStatus Эталон, образец, результат и протокол доступны организации.'
+                  : 'Облачный архив не входит в текущий тариф.',
+              available: cloudAllowed && cloudConnected,
+            ),
+          if (isOrganization)
+            _storageLocationOption(
+              location: AssetStorageLocation.organizationDrive,
+              icon: Icons.dns_outlined,
+              title: 'Сервер организации',
+              subtitle:
+                  'Будет подключаться через Trimatrix Connector. Пароли и ключи не будут храниться в браузере.',
+              unavailableMessage:
+                  'Для своего сервера нужен Trimatrix Connector. До его установки организация продолжает работать с облаком Trimatrix.',
+            ),
           const SizedBox(height: 4),
           _notePanel(
-            'Авторизация Trimatrix определяет пользователя, организацию и роль. Подключение облачного хранилища настраивается отдельно и не меняет права пользователя в приложении.',
+            isGuest
+                ? 'Без входа в аккаунт Trimatrix не загружает изображения и протоколы в сеть.'
+                : 'Вход в Trimatrix и доступ к хранилищу — разные разрешения. Файлы отправляются только в выбранное хранилище.',
           ),
-          const SizedBox(height: 10),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: XpBtn(
-              key: const ValueKey('check-supabase-storage'),
-              label: _cloudConnectionChecking
-                  ? 'Проверяем подключение...'
-                  : 'Проверить Supabase Storage',
-              icon: Icons.cloud_done_outlined,
-              primary: cloudConnected,
-              onPressed: cloudAllowed &&
-                      widget.cloudStorage != null &&
-                      !_cloudConnectionChecking
-                  ? _checkCloudConnection
-                  : null,
-            ),
-          ),
+          if (!isGuest) ...[
+            const SizedBox(height: 10),
+            Wrap(spacing: 8, runSpacing: 8, children: [
+              XpBtn(
+                key: const ValueKey('check-supabase-storage'),
+                label: _cloudConnectionChecking
+                    ? 'Проверяем...'
+                    : cloudConnected
+                        ? 'Проверить подключение'
+                        : isPersonal
+                            ? 'Подключить Google Drive'
+                            : 'Проверить облако Trimatrix',
+                icon: isPersonal
+                    ? Icons.add_to_drive_outlined
+                    : Icons.cloud_done_outlined,
+                primary: cloudConnected,
+                onPressed: cloudAllowed &&
+                        cloudStorage != null &&
+                        !_cloudConnectionChecking
+                    ? _checkCloudConnection
+                    : null,
+              ),
+              if (isPersonal && cloudConnected)
+                XpBtn(
+                  key: const ValueKey('disconnect-google-drive'),
+                  label: 'Отключить',
+                  icon: Icons.link_off_outlined,
+                  onPressed: _disconnectCloudConnection,
+                ),
+            ]),
+          ],
         ]),
       ),
       const SizedBox(height: 10),
@@ -5174,25 +5256,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
         title: 'Политика данных',
         child:
             Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          _infoRow('Оригиналы', 'не загружаются; остаются у владельца'),
+          _infoRow(
+            'Оригиналы',
+            cloudSelected
+                ? 'эталон и образец сохраняются с протоколом'
+                : 'остаются на устройстве',
+          ),
           _infoRow(
             'Протокол',
-            appCloudSelected
-                ? 'локально + приватная копия в Supabase'
+            cloudSelected
+                ? 'локально + приватная облачная копия'
                 : 'последняя проверка хранится локально',
           ),
           _infoRow(
             'Превью и карты',
-            appCloudSelected
-                ? 'карта отличий до 1280 px в Supabase'
+            cloudSelected
+                ? 'карта отличий до 1280 px в выбранном хранилище'
                 : 'облачная отправка выключена',
           ),
           _infoRow('Права доступа', 'план + роль + доступ к работе'),
-          _infoRow('Google OAuth', 'не подключён'),
-          _infoRow(
-            'Supabase Storage',
-            cloudConnected ? 'приватное хранилище доступно' : 'не подключён',
-          ),
+          if (!isGuest)
+            _infoRow(
+              isPersonal ? 'Google Drive' : 'Облако Trimatrix',
+              cloudConnected ? 'подключено' : 'не подключено',
+            ),
         ]),
       ),
       const SizedBox(height: 10),
@@ -5224,6 +5311,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     required String title,
     required String subtitle,
     bool available = false,
+    String? unavailableMessage,
   }) {
     final selected = _storageSettings.primaryLocation == location;
     return Padding(
@@ -5231,19 +5319,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
       child: InkWell(
         onTap: available
             ? () => setState(() {
-                  final cloudSelected =
-                      location == AssetStorageLocation.supabaseStorage;
+                  final cloudSelected = location != AssetStorageLocation.device;
                   _storageSettings = _storageSettings.copyWith(
                     primaryLocation: location,
                     syncProtocolMetadata: cloudSelected,
                     syncPreviews: cloudSelected,
-                    syncOriginals: false,
+                    syncOriginals: cloudSelected,
                   );
                 })
             : () => xpDlg(
                   context,
                   'Хранилище не подключено',
-                  'Сейчас данные никуда не отправляются. Подключение появится после добавления защищённого адаптера и проверки прав.',
+                  unavailableMessage ??
+                      'Сейчас данные никуда не отправляются. '
+                          'Сначала подключите хранилище.',
                 ),
         borderRadius: BorderRadius.circular(12),
         child: Container(
@@ -5618,15 +5707,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await CompareSettingsService.save(_compareSettings);
     await ColorMeasurementSettingsService.save(_colorMeasurementSettings);
     await CameraCaptureSettingsService.save(_cameraCaptureSettings);
-    await StorageSettingsService.save(_storageSettings);
+    await StorageSettingsService.save(
+      _storageSettings,
+      scope: _storageScope,
+    );
+    await widget.onStorageChanged?.call();
     if (!mounted) return;
-    final cloudSelected = _storageSettings.primaryLocation ==
-        AssetStorageLocation.supabaseStorage;
+    final location = _storageSettings.primaryLocation;
+    final cloudSelected = location != AssetStorageLocation.device;
+    final provider = location == AssetStorageLocation.googleDrive
+        ? 'Google Drive'
+        : 'облаке Trimatrix';
     xpDlg(
       context,
       'Сохранено',
       cloudSelected
-          ? 'Протоколы и уменьшенные превью будут сохраняться в Supabase. Оригиналы остаются на устройстве.'
+          ? 'Новые протоколы, эталоны, образцы и результаты '
+              'будут сохраняться в $provider.'
           : 'Настройки применены локально. Изображения и протоколы остаются на устройстве.',
     );
   }
@@ -5653,13 +5750,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _compareSettings = CompareSettings.defaults;
       _colorMeasurementSettings = ColorMeasurementSettings.defaults;
       _cameraCaptureSettings = CameraCaptureSettings.defaults;
-      _storageSettings = StorageSettings.defaults;
+      _storageSettings = StorageSettings.defaultsFor(_storageScope);
     });
     await CalibrationSettingsService.reset();
     await CompareSettingsService.reset();
     await ColorMeasurementSettingsService.reset();
     await CameraCaptureSettingsService.reset();
-    await StorageSettingsService.reset();
+    await StorageSettingsService.reset(scope: _storageScope);
   }
 
   Widget _lastCheckHistoryGroup() {

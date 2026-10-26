@@ -11,6 +11,13 @@ class AppConfig {
   // Сервер (REST API — не Supabase)
   static const String baseUrl = '';
 
+  // Google Drive is optional and must use a public OAuth Web Client ID.
+  // Example build flag:
+  // --dart-define=GOOGLE_OAUTH_CLIENT_ID=...apps.googleusercontent.com
+  static const String googleOAuthClientId = String.fromEnvironment(
+    'GOOGLE_OAUTH_CLIENT_ID',
+  );
+
   // AI
   static const String aiApiKey = '';
   static const String aiModel = 'claude-sonnet-4-20250514';

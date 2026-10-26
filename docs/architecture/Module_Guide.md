@@ -327,6 +327,11 @@ Public contracts: `ProtocolRepository`, `ProtocolFactory`, `ProtocolReader`.
 Dependencies: storage and sync. It accepts results from Inspection but does not import
 Inspection presentation.
 
+`ProtocolCloudRepository` currently writes immutable protocol metadata, a bounded
+difference preview, and—when enabled—the exact reference and sample source assets.
+Migration `039` records those private asset identifiers and paths. This is a completed
+archive write path; bidirectional offline reconciliation remains future sync work.
+
 ### print_proofing
 
 Responsibilities: organization-owned press/material/ink conditions, evidence for quick
@@ -474,16 +479,20 @@ Defines `LocalStorage`, `CloudStorage`, asset metadata, cache, retention, checks
 upload policy.
 
 Current foundation: the vendor-neutral `CloudStorage` port, deterministic
-`MockCloudStorage`, device-only defaults, and persisted storage settings exist.
-`SupabaseCloudStorage` now verifies and accesses the private per-user
-`trimatrix-assets` path prepared by migration `013`. No workflow uploads reference or
-sample originals. Google Drive and organization/job-scoped paths remain disconnected.
+`MockCloudStorage`, scoped persisted settings, `SupabaseCloudStorage`, and
+`GoogleDriveCloudStorage` exist. Guest, personal, and organization settings use
+separate keys and provider policies. Guests are device-only. Personal users may keep
+data on-device or authorize the app-owned `Trimatrix` folder through the Google
+`drive.file` scope. Organizations use private job-scoped Supabase Storage. A future
+organization server must connect through Trimatrix Connector; browser-held server
+credentials are forbidden.
 
 Migration `014` and `ProtocolCloudRepository` add the first narrow cloud workflow.
 Completed checks remain local-first, then protocol JSON and a difference-map preview
-limited to 1280 pixels are uploaded in the background. Reference and sample originals
-are not accepted by this workflow. The initial RLS policy is owner-only; organization
-sharing requires the later job-scoped policy.
+limited to 1280 pixels are uploaded in the background. Migration `039` extends the
+record with exact reference and sample asset paths. The Supabase adapter stores those
+assets below the private job scope; the Google Drive adapter stores personal protocol
+metadata, preview, reference, and sample in the user's `Trimatrix` folder.
 
 Migration `015` applies the existing `can_view_production_job_v1` policy to cloud
 protocol rows and preview objects. New organization previews use
@@ -495,6 +504,10 @@ representative of the assigned customer opened the first job's protocol and prev
 while a representative of another customer could see only his own second job. The
 chat action refreshes the accessible protocol list before opening it, so a protocol
 created after the chat screen opened no longer requires a full page reload.
+
+Storage ownership remains independent from application hosting. Supabase remains the
+authentication, database, policy, and default organization storage control plane after
+the web application is deployed to a hosting provider.
 
 Migration `016` secures the existing chat tables, creates default personal and team
 threads, and provides job-scoped threads through `can_view_production_job_v1`.

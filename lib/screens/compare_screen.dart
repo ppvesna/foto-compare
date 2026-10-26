@@ -60,6 +60,7 @@ class CompareScreen extends StatefulWidget {
   final CustomerDirectoryService? customerDirectoryService;
   final ProductionJobService? productionJobService;
   final ProtocolCloudRepository? protocolCloudRepository;
+  final StorageSettingsScope storageSettingsScope;
   final CheckUsageService? checkUsageService;
   final ProductionWorkflowService? productionWorkflowService;
   final ProductionWorkUnit? inspectionUnit;
@@ -81,6 +82,7 @@ class CompareScreen extends StatefulWidget {
     this.customerDirectoryService,
     this.productionJobService,
     this.protocolCloudRepository,
+    this.storageSettingsScope = const StorageSettingsScope.legacy(),
     this.checkUsageService,
     this.productionWorkflowService,
     this.inspectionUnit,
@@ -1810,24 +1812,37 @@ class _CompareScreenState extends State<CompareScreen> {
     Uint8List? differenceMap,
   ) async {
     final repository = widget.protocolCloudRepository;
-    if (repository == null ||
-        !_allows(ProductCapability.cloudSync) ||
-        !_allows(ProductCapability.cloudAssets)) {
+    if (repository == null) return;
+    final settings = await StorageSettingsService.load(
+      scope: widget.storageSettingsScope,
+    );
+    if (settings.primaryLocation == AssetStorageLocation.device ||
+        !settings.syncProtocolMetadata) {
       return;
     }
-    final settings = await StorageSettingsService.load();
-    if (settings.primaryLocation != AssetStorageLocation.supabaseStorage) {
+    final usesManagedCloud =
+        settings.primaryLocation == AssetStorageLocation.supabaseStorage;
+    if (usesManagedCloud &&
+        (!_allows(ProductCapability.cloudSync) ||
+            !_allows(ProductCapability.cloudAssets))) {
       return;
     }
     try {
-      final preview = differenceMap == null
+      final preview = !settings.syncPreviews || differenceMap == null
           ? null
           : await ProtocolPreviewService.create(differenceMap);
-      await repository.saveProtocol(protocol, previewPng: preview);
+      await repository.saveProtocol(
+        protocol,
+        previewPng: preview,
+        referenceImage: settings.syncOriginals ? _refImg : null,
+        sampleImage: settings.syncOriginals ? _cmpImg : null,
+      );
       _setCompareStatus(
-        preview == null
-            ? 'Протокол сохранён локально и в облаке.'
-            : 'Протокол и превью карты отличий сохранены в облаке.',
+        settings.syncOriginals
+            ? 'Протокол, эталон, образец и результат сохранены.'
+            : preview == null
+                ? 'Протокол сохранён локально и в облаке.'
+                : 'Протокол и превью карты отличий сохранены в облаке.',
       );
     } catch (_) {
       _setCompareStatus(

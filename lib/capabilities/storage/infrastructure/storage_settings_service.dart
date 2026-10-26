@@ -14,35 +14,80 @@ class StorageSettingsService {
   static final ValueNotifier<StorageSettings> notifier =
       ValueNotifier<StorageSettings>(StorageSettings.defaults);
 
-  static Future<StorageSettings> load() async {
+  static Future<StorageSettings> load({
+    StorageSettingsScope scope = const StorageSettingsScope.legacy(),
+  }) async {
     final prefs = await SharedPreferences.getInstance();
+    final defaults = StorageSettings.defaultsFor(scope);
+    if (scope.type == StorageWorkspaceType.guest) {
+      notifier.value = defaults;
+      return defaults;
+    }
     final settings = StorageSettings(
-      primaryLocation: _readLocation(prefs.getString(_locationKey)),
-      syncProtocolMetadata: prefs.getBool(_protocolsKey) ?? false,
-      syncPreviews: prefs.getBool(_previewsKey) ?? false,
-      syncOriginals: prefs.getBool(_originalsKey) ?? false,
-    );
+      primaryLocation: _readLocation(
+        prefs.getString(_key(scope, _locationKey)),
+        fallback: defaults.primaryLocation,
+      ),
+      syncProtocolMetadata: prefs.getBool(_key(scope, _protocolsKey)) ??
+          defaults.syncProtocolMetadata,
+      syncPreviews:
+          prefs.getBool(_key(scope, _previewsKey)) ?? defaults.syncPreviews,
+      syncOriginals:
+          prefs.getBool(_key(scope, _originalsKey)) ?? defaults.syncOriginals,
+    ).normalizedFor(scope);
     notifier.value = settings;
     return settings;
   }
 
-  static Future<void> save(StorageSettings settings) async {
+  static Future<void> save(
+    StorageSettings settings, {
+    StorageSettingsScope scope = const StorageSettingsScope.legacy(),
+  }) async {
+    final normalized = settings.normalizedFor(scope);
+    if (scope.type == StorageWorkspaceType.guest) {
+      notifier.value = StorageSettings.defaults;
+      return;
+    }
     final prefs = await SharedPreferences.getInstance();
     await Future.wait([
-      prefs.setString(_locationKey, settings.primaryLocation.name),
-      prefs.setBool(_protocolsKey, settings.syncProtocolMetadata),
-      prefs.setBool(_previewsKey, settings.syncPreviews),
-      prefs.setBool(_originalsKey, settings.syncOriginals),
+      prefs.setString(
+        _key(scope, _locationKey),
+        normalized.primaryLocation.name,
+      ),
+      prefs.setBool(
+        _key(scope, _protocolsKey),
+        normalized.syncProtocolMetadata,
+      ),
+      prefs.setBool(
+        _key(scope, _previewsKey),
+        normalized.syncPreviews,
+      ),
+      prefs.setBool(
+        _key(scope, _originalsKey),
+        normalized.syncOriginals,
+      ),
     ]);
-    notifier.value = settings;
+    notifier.value = normalized;
   }
 
-  static Future<void> reset() => save(StorageSettings.defaults);
+  static Future<void> reset({
+    StorageSettingsScope scope = const StorageSettingsScope.legacy(),
+  }) =>
+      save(StorageSettings.defaultsFor(scope), scope: scope);
 
-  static AssetStorageLocation _readLocation(String? stored) {
+  static AssetStorageLocation _readLocation(
+    String? stored, {
+    AssetStorageLocation fallback = AssetStorageLocation.device,
+  }) {
     for (final value in AssetStorageLocation.values) {
       if (value.name == stored) return value;
     }
-    return AssetStorageLocation.device;
+    return fallback;
+  }
+
+  static String _key(StorageSettingsScope scope, String legacyKey) {
+    if (scope.type == StorageWorkspaceType.legacy) return legacyKey;
+    final suffix = legacyKey.substring('storage.'.length);
+    return '${scope.preferencePrefix}.$suffix';
   }
 }

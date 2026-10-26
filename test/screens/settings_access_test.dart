@@ -330,10 +330,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Место хранения изображений'), findsOneWidget);
-    expect(find.text('На устройстве пользователя'), findsOneWidget);
-    expect(find.text('Облако приложения'), findsOneWidget);
-    expect(find.text('Google Drive пользователя'), findsOneWidget);
-    expect(find.text('Диск организации'), findsOneWidget);
+    expect(find.text('На этом устройстве'), findsNothing);
+    expect(find.text('Облако Trimatrix'), findsWidgets);
+    expect(find.text('Google Drive'), findsNothing);
+    expect(find.text('Сервер организации'), findsOneWidget);
     expect(find.text('Синхронизация с сервером'), findsNothing);
 
     await tester.tap(
@@ -346,20 +346,22 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('Подключено: mock-account'), findsOneWidget);
 
-    await tester.tap(find.text('Облако приложения'));
+    await tester.tap(find.text('Облако Trimatrix').first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Сохранить').last);
     await tester.pumpAndSettle();
 
     expect(
-      find.textContaining('Протоколы и уменьшенные превью'),
+      find.textContaining('Новые протоколы, эталоны'),
       findsOneWidget,
     );
-    final settings = await StorageSettingsService.load();
+    final settings = await StorageSettingsService.load(
+      scope: StorageSettingsScope.organization('organization-1'),
+    );
     expect(settings.primaryLocation, AssetStorageLocation.supabaseStorage);
     expect(settings.syncProtocolMetadata, isTrue);
     expect(settings.syncPreviews, isTrue);
-    expect(settings.syncOriginals, isFalse);
+    expect(settings.syncOriginals, isTrue);
   });
 
   testWidgets('owner prepares and sends an organization invitation',

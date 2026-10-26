@@ -6,10 +6,14 @@ import '../domain/protocol_cloud_repository.dart';
 class MockCloudProtocolSave {
   final CheckProtocol protocol;
   final Uint8List? previewPng;
+  final Uint8List? referenceImage;
+  final Uint8List? sampleImage;
 
   const MockCloudProtocolSave({
     required this.protocol,
     required this.previewPng,
+    this.referenceImage,
+    this.sampleImage,
   });
 }
 
@@ -20,11 +24,17 @@ class MockProtocolCloudRepository implements ProtocolCloudRepository {
   Future<void> saveProtocol(
     CheckProtocol protocol, {
     Uint8List? previewPng,
+    Uint8List? referenceImage,
+    Uint8List? sampleImage,
   }) async {
     saves.add(
       MockCloudProtocolSave(
         protocol: protocol,
         previewPng: previewPng == null ? null : Uint8List.fromList(previewPng),
+        referenceImage:
+            referenceImage == null ? null : Uint8List.fromList(referenceImage),
+        sampleImage:
+            sampleImage == null ? null : Uint8List.fromList(sampleImage),
       ),
     );
   }

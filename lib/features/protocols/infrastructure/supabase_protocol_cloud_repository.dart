@@ -23,6 +23,8 @@ class SupabaseProtocolCloudRepository implements ProtocolCloudRepository {
   Future<void> saveProtocol(
     CheckProtocol protocol, {
     Uint8List? previewPng,
+    Uint8List? referenceImage,
+    Uint8List? sampleImage,
   }) async {
     String? previewAssetId;
     String? previewObjectPath;
@@ -41,6 +43,41 @@ class SupabaseProtocolCloudRepository implements ProtocolCloudRepository {
       previewObjectPath = asset.storageKey;
     }
 
+    String? referenceAssetId;
+    String? referenceObjectPath;
+    if (referenceImage != null) {
+      final format = detectImageAssetFormat(referenceImage);
+      referenceAssetId =
+          'protocol-${protocol.id}-reference.${format.extension}';
+      final asset = await storage.upload(
+        CloudAssetUpload(
+          id: referenceAssetId,
+          name: '${protocol.referenceLabel}.${format.extension}',
+          mimeType: format.mimeType,
+          bytes: referenceImage,
+          scope: assetScope,
+        ),
+      );
+      referenceObjectPath = asset.storageKey;
+    }
+
+    String? sampleAssetId;
+    String? sampleObjectPath;
+    if (sampleImage != null) {
+      final format = detectImageAssetFormat(sampleImage);
+      sampleAssetId = 'protocol-${protocol.id}-sample.${format.extension}';
+      final asset = await storage.upload(
+        CloudAssetUpload(
+          id: sampleAssetId,
+          name: '${protocol.sampleLabel}.${format.extension}',
+          mimeType: format.mimeType,
+          bytes: sampleImage,
+          scope: assetScope,
+        ),
+      );
+      sampleObjectPath = asset.storageKey;
+    }
+
     await client.from('cloud_check_protocols').upsert(
       {
         'owner_user_id': ownerUserId,
@@ -51,6 +88,10 @@ class SupabaseProtocolCloudRepository implements ProtocolCloudRepository {
         'protocol_data': protocol.toJson(),
         'preview_asset_id': previewAssetId,
         'preview_object_path': previewObjectPath,
+        'reference_asset_id': referenceAssetId,
+        'reference_object_path': referenceObjectPath,
+        'sample_asset_id': sampleAssetId,
+        'sample_object_path': sampleObjectPath,
         'protocol_created_at': protocol.createdAt.toUtc().toIso8601String(),
         'updated_at': DateTime.now().toUtc().toIso8601String(),
       },
@@ -66,7 +107,9 @@ class SupabaseProtocolCloudRepository implements ProtocolCloudRepository {
         .from('cloud_check_protocols')
         .select(
           'owner_user_id, organization_id, protocol_data, '
-          'preview_asset_id, preview_object_path',
+          'preview_asset_id, preview_object_path, '
+          'reference_asset_id, reference_object_path, '
+          'sample_asset_id, sample_object_path',
         )
         .order('protocol_created_at', ascending: false)
         .limit(limit);
@@ -80,6 +123,10 @@ class SupabaseProtocolCloudRepository implements ProtocolCloudRepository {
         organizationId: data['organization_id'] as String?,
         previewAssetId: data['preview_asset_id'] as String?,
         previewObjectPath: data['preview_object_path'] as String?,
+        referenceAssetId: data['reference_asset_id'] as String?,
+        referenceObjectPath: data['reference_object_path'] as String?,
+        sampleAssetId: data['sample_asset_id'] as String?,
+        sampleObjectPath: data['sample_object_path'] as String?,
       );
     }).toList();
   }

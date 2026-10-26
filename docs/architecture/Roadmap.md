@@ -25,9 +25,10 @@ Rule: every step must preserve the working application and be independently reve
   a server adapter, customer directory, and a narrow comparison-flow UI. Job-scoped
   server data is present; customer publication, revocation, preserved history, and two
   representatives on one work have passed an end-to-end manual test.
-- The first `CloudStorage` port, mock, device-only settings adapter, and provider status
-  UI are present. Supabase Storage, bounded protocol previews, and job-scoped access are
-  connected; originals remain device-only and Google Drive remains disconnected.
+- The `CloudStorage` port, mock, scoped settings, Supabase adapter, and Google Drive
+  adapter are present. Guests are device-only; personal users may select Drive;
+  organizations use private job-scoped Supabase Storage. Migration `039` archives the
+  exact reference and sample beside each new cloud protocol.
 - Secure organization/job chat and Supabase Realtime are connected. Owner/employee
   text messaging has passed a two-account test. Private images and ordinary files in
   job chats have passed a two-account upload, preview, and download test.
@@ -81,9 +82,11 @@ Rule: every step must preserve the working application and be independently reve
   remain in the role-aware overflow menu. Migration `038` records the
   agreed rule that only an inspection specialist enters a new work; it is applied
   pointwise to the test remote and the public-schema lint is clean.
-- The `vesna-test` employee and customer job sharing/revocation gate has passed. The
-  remote ledger is still empty because historical migrations were applied pointwise;
-  the next release task is to repair/audit that ledger before production deployment.
+- The `vesna-test` employee and customer job sharing/revocation gate has passed.
+  On 2026-10-26 the test remote ledger was repaired to match already deployed
+  migrations `001`–`038` without replaying their SQL, then `039` was applied through
+  the normal migration path. Production still requires a schema audit, not only a
+  matching ledger.
 
 ## Migration policy
 
@@ -252,8 +255,9 @@ next step.
 
 Migration `029` is applied pointwise to the test environment. It adds protected
 per-user read cursors and extends accessible thread summaries with job status,
-customer name, and unread count. The remote schema lint passes; the historical remote
-migration ledger remains intentionally untouched pending its separate audit.
+customer name, and unread count. The remote schema lint passes. At that checkpoint the
+historical remote migration ledger was intentionally untouched; it was repaired later
+on 2026-10-26 before migration `039` was applied normally.
 
 Migration `030` is applied pointwise to the test environment. It adds cursor-paginated
 work search, production stages, ready/blocked/completed state, partial-scope defect
@@ -317,15 +321,14 @@ through a server-side `DatabaseConnector`; raw database credentials are never st
 Flutter Web. AI integration follows through `AIProvider`, independently of the compare
 engine and storage provider.
 
-Progress: the port, mock, local settings persistence, and device-only default are
-implemented. The first real Supabase adapter and private per-user bucket policy are
-prepared by migration `013`; settings can verify the connection without uploading
-files. Migration `014` implements the first explicit low-risk flow: local-first
-protocol metadata and a bounded difference-map preview are copied to the private
-user cloud in the background. Originals remain device-only. The next storage step is
-organization/job-scoped reading and preview access. Migration `015` implements that
-step using the existing production-job access function and exposes available protocols
-through chat attachments. Migration `016` adds the first secure text-chat slice and
+Progress: the port, mock, scoped settings persistence, Supabase adapter, and Google
+Drive adapter are implemented. Migration `013` provides the private bucket;
+`014` stores local-first protocol metadata and a bounded difference-map preview;
+`015` adds organization/job-scoped reading. Migration `039` now archives the exact
+reference and sample used by a new cloud protocol. Personal Drive uses the narrow
+`drive.file` permission and needs deployment OAuth configuration plus a real-account
+manual test. The own-server provider remains unavailable until a separate secure
+Trimatrix Connector exists. Migration `016` adds the first secure text-chat slice and
 Realtime updates; owner/employee messaging has passed the first two-account test.
 Migration `017` adds manager-controlled customer release for one job at a time.
 Customer visibility, revocation, preserved history, Realtime messaging, and
@@ -335,7 +338,8 @@ opening, including protocols created after the screen was opened.
 Migration `024` adds the next bounded storage slice: ordinary files and images in job
 chats, backed by private Storage and the existing job-access boundary. The current
 client has no artificial file-size ceiling; provider and plan constraints still apply.
-Google OAuth and Drive remain a separate provider connection.
+Application hosting does not replace Supabase: it remains the auth, database, policy,
+and default organization storage control plane.
 
 ### Step 20. Add an outbox
 
