@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:photo_compare/features/references/references.dart';
@@ -30,6 +31,26 @@ void main() {
     expect(reference.layoutProfile?.reprojError, 1.25);
     expect(reference.layoutProfile?.widthMm, 120.0);
     expect(reference.layoutProfile?.heightMm, 80.0);
+  });
+
+  test('saving the same reference id updates instead of duplicating it',
+      () async {
+    await ReferenceStorage.saveProfile(
+      id: 'reference-1',
+      bytes: Uint8List.fromList([1, 2, 3]),
+      label: 'Первый',
+    );
+    await ReferenceStorage.saveProfile(
+      id: 'reference-1',
+      bytes: Uint8List.fromList([4, 5, 6]),
+      label: 'Обновлённый',
+    );
+
+    final references = await ReferenceStorage.loadProfiles();
+
+    expect(references, hasLength(1));
+    expect(references.single.label, 'Обновлённый');
+    expect(references.single.bytes, [4, 5, 6]);
   });
 }
 

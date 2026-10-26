@@ -51,19 +51,21 @@ class ReferenceStorage {
     required Uint8List bytes,
     required String label,
     LayoutProfile? layoutProfile,
+    String? id,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     final all = await loadProfiles();
-    final id =
-        layoutProfile?.id ?? DateTime.now().millisecondsSinceEpoch.toString();
+    final resolvedId = id ??
+        layoutProfile?.id ??
+        DateTime.now().millisecondsSinceEpoch.toString();
     final item = SavedReferenceProfile(
-      id: id,
+      id: resolvedId,
       label: label.trim().isEmpty ? 'Эталон' : label.trim(),
       bytes: bytes,
       layoutProfile: layoutProfile,
       createdAt: DateTime.now(),
     );
-    final next = [item, ...all.where((p) => p.id != id)];
+    final next = [item, ...all.where((p) => p.id != resolvedId)];
     await prefs.setString(
         _profilesKey, jsonEncode(next.map((p) => p.toJson()).toList()));
     await prefs.setString(_activeIdKey, item.id);

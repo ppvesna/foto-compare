@@ -1041,6 +1041,37 @@ class _CompareScreenState extends State<CompareScreen> {
     );
   }
 
+  Future<String?> _promptReferenceName() async {
+    final ctrl = TextEditingController(
+      text:
+          'Эталон ${DateTime.now().day}.${DateTime.now().month}.${DateTime.now().year}',
+    );
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Название эталона'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: 'Название'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(
+              ctx,
+              ctrl.text.trim().isEmpty ? 'Эталон' : ctrl.text.trim(),
+            ),
+            child: const Text('Сохранить'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_handleCtrlKey);
@@ -2158,6 +2189,59 @@ class _CompareScreenState extends State<CompareScreen> {
     }
   }
 
+  bool get _currentReferenceIsStored {
+    final id = _activeReferenceId;
+    return id != null && _savedReferences.any((item) => item.id == id);
+  }
+
+  Future<void> _saveCurrentReference() async {
+    final bytes = _refImg;
+    if (bytes == null) return;
+    var label = _savedRefLabel?.trim();
+    if (label == null || label.isEmpty) {
+      label = await _promptReferenceName();
+    }
+    if (label == null || !mounted) return;
+
+    setState(() {
+      _imageBusy = true;
+      _imageBusyLabel = 'Сохраняю эталон...';
+    });
+    try {
+      final saved = await ReferenceStorage.saveProfile(
+        id: _activeReferenceId,
+        bytes: bytes,
+        label: label,
+        layoutProfile: _layoutProfile,
+      );
+      if (!mounted) return;
+      setState(() {
+        _savedReferences = List<SavedReferenceProfile>.from(
+          ReferenceStorage.profiles.value,
+        );
+        _savedRefLabel = saved.label;
+        _activeReferenceId = saved.id;
+      });
+      await xpDlg(
+        context,
+        'Эталон сохранён',
+        _layoutProfile == null
+            ? '"${saved.label}" добавлен в список. Точки можно задать при следующей проверке.'
+            : '"${saved.label}" добавлен в список вместе с точками.',
+      );
+    } catch (error) {
+      if (mounted) {
+        await xpDlg(
+          context,
+          'Эталон не сохранён',
+          'Не удалось записать эталон на устройство: $error',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _imageBusy = false);
+    }
+  }
+
   Future<void> _handleModeMenu(
     _WorkspaceView view,
     String value,
@@ -2167,6 +2251,8 @@ class _CompareScreenState extends State<CompareScreen> {
         await _pickImage(view == _WorkspaceView.reference);
       case 'crop':
         await _cropImage(view == _WorkspaceView.reference);
+      case 'save':
+        await _saveCurrentReference();
       case 'saved':
         await _showSavedReferencePicker();
     }
@@ -2487,11 +2573,18 @@ class _CompareScreenState extends State<CompareScreen> {
                           : _cmpImg != null,
                       child: const Text('Изменить рамку'),
                     ),
-                    if (view == _WorkspaceView.reference)
+                    if (view == _WorkspaceView.reference) ...[
+                      const PopupMenuDivider(),
+                      PopupMenuItem(
+                        value: 'save',
+                        enabled: _refImg != null,
+                        child: const Text('Сохранить эталон'),
+                      ),
                       const PopupMenuItem(
                         value: 'saved',
                         child: Text('Выбрать сохранённый'),
                       ),
+                    ],
                   ],
                   child: const Center(
                     child: Text(
@@ -3678,9 +3771,11 @@ class _CompareScreenState extends State<CompareScreen> {
   Widget _referenceWorkspace() {
     return _stagePanel(
       title: 'Эталон',
-      subtitle: _savedRefLabel != null
+      subtitle: _currentReferenceIsStored
           ? 'Сохранён: $_savedRefLabel'
-          : (_refImg == null ? 'Загрузите цифровой файл' : 'Эталон готов'),
+          : _savedRefLabel != null
+              ? 'Готов к сохранению: $_savedRefLabel'
+              : (_refImg == null ? 'Загрузите цифровой файл' : 'Эталон готов'),
       bytes: _refImg,
       transformationController: _refAlignCtrl,
       onOpen: _refImg != null ? () => _openFullScreen(_refImg!) : null,

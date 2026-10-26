@@ -329,6 +329,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Другой эталон'), findsOneWidget);
     expect(find.text('Изменить рамку'), findsOneWidget);
+    expect(find.text('Сохранить эталон'), findsOneWidget);
     expect(find.text('Выбрать сохранённый'), findsOneWidget);
     await tester.tapAt(const Offset(580, 680));
     await tester.pumpAndSettle();
@@ -339,6 +340,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Другой образец'), findsOneWidget);
     expect(find.text('Изменить рамку'), findsOneWidget);
+    expect(find.text('Сохранить эталон'), findsNothing);
     expect(find.text('Выбрать сохранённый'), findsNothing);
     expect(
       find.byKey(const ValueKey('workspace-mode-comparison-menu')),
