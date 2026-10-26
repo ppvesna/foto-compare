@@ -15,6 +15,18 @@ Future<Map<String, dynamic>> runWebCompareWorker({
   throw UnsupportedError('Web Worker is available only in a browser');
 }
 
+Future<Map<String, dynamic>> runWebAlignmentWorker({
+  required Uint8List reference,
+  required Uint8List sample,
+  required Float64List referencePoints,
+  required Float64List samplePoints,
+  required int canonicalLongPx,
+  required int maxSourceDim,
+  ValueChanged<String>? onProgress,
+}) {
+  throw UnsupportedError('Web Worker is available only in a browser');
+}
+
 Future<({Uint8List bytes, int width, int height})> runWebCropWorker({
   required Uint8List image,
   required int x,

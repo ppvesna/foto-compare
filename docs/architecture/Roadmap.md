@@ -28,7 +28,8 @@ Rule: every step must preserve the working application and be independently reve
 - The `CloudStorage` port, mock, scoped settings, Supabase adapter, and Google Drive
   adapter are present. Guests are device-only; personal users may select Drive;
   organizations use private job-scoped Supabase Storage. Migration `039` archives the
-  exact reference and sample beside each new cloud protocol.
+  exact reference and sample beside each new cloud protocol; migration `040` grants
+  that write only to eligible inspection specialists, while customers remain read-only.
 - Secure organization/job chat and Supabase Realtime are connected. Owner/employee
   text messaging has passed a two-account test. Private images and ordinary files in
   job chats have passed a two-account upload, preview, and download test.
@@ -84,7 +85,7 @@ Rule: every step must preserve the working application and be independently reve
   pointwise to the test remote and the public-schema lint is clean.
 - The `vesna-test` employee and customer job sharing/revocation gate has passed.
   On 2026-10-26 the test remote ledger was repaired to match already deployed
-  migrations `001`–`038` without replaying their SQL, then `039` was applied through
+  migrations `001`–`038` without replaying their SQL, then `039`–`040` were applied through
   the normal migration path. Production still requires a schema audit, not only a
   matching ledger.
 
@@ -325,7 +326,9 @@ Progress: the port, mock, scoped settings persistence, Supabase adapter, and Goo
 Drive adapter are implemented. Migration `013` provides the private bucket;
 `014` stores local-first protocol metadata and a bounded difference-map preview;
 `015` adds organization/job-scoped reading. Migration `039` now archives the exact
-reference and sample used by a new cloud protocol. Personal Drive uses the narrow
+reference and sample used by a new cloud protocol, and `040` lets an assigned employee
+with the inspection-specialist function write that archive without granting customer
+writes. Personal Drive uses the narrow
 `drive.file` permission and needs deployment OAuth configuration plus a real-account
 manual test. The own-server provider remains unavailable until a separate secure
 Trimatrix Connector exists. Migration `016` adds the first secure text-chat slice and

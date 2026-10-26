@@ -491,7 +491,9 @@ Migration `014` and `ProtocolCloudRepository` add the first narrow cloud workflo
 Completed checks remain local-first, then protocol JSON and a difference-map preview
 limited to 1280 pixels are uploaded in the background. Migration `039` extends the
 record with exact reference and sample asset paths. The Supabase adapter stores those
-assets below the private job scope; the Google Drive adapter stores personal protocol
+assets below the private job scope. Migration `040` allows an assigned organization
+inspection specialist to write them and keeps external customers read-only. The Google
+Drive adapter stores personal protocol
 metadata, preview, reference, and sample in the user's `Trimatrix` folder.
 
 Migration `015` applies the existing `can_view_production_job_v1` policy to cloud

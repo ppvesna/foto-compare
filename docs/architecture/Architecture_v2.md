@@ -31,7 +31,7 @@ typed snapshots. Existing storage keys, file names, JSON, and current user acces
 compatible. The current test environment supports organization access, invitations,
 personal/working entitlement separation, customer and job data, private Storage,
 cloud protocols with source assets, secure chat, and test billing. The test remote
-ledger is aligned through migration `039`; the actual schema must still be audited
+ledger is aligned through migration `040`; the actual schema must still be audited
 before production.
 
 ## 2. Architectural decision

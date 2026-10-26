@@ -11,6 +11,10 @@ self.onmessage = async (event) => {
       await cropImage(task);
       return;
     }
+    if (task.type === 'align') {
+      await alignImages(task);
+      return;
+    }
     if (task.type === 'compare') {
       await compareImages(task);
     }
@@ -47,6 +51,390 @@ async function cropImage(task) {
     { type: 'cropResult', bytes: buffer, width, height },
     [buffer],
   );
+}
+
+async function alignImages(task) {
+  progress('Декодирую изображения для совмещения...');
+  // Keep the two full-size decodes out of memory at the same time. Large
+  // production photos otherwise create an avoidable browser memory peak.
+  const referenceBitmap = await decodeBitmap(task.reference);
+  task.reference = null;
+  const referenceWidth = referenceBitmap.width;
+  const referenceHeight = referenceBitmap.height;
+  const longPx = Math.max(27, Math.round(task.canonicalLongPx || 1404));
+  const maxSourceDim = Math.max(256, Math.round(task.maxSourceDim || 1600));
+  let canonicalWidth;
+  let canonicalHeight;
+  if (referenceWidth >= referenceHeight) {
+    canonicalWidth = longPx;
+    canonicalHeight = Math.max(
+      27,
+      Math.round(((referenceHeight / referenceWidth) * longPx) / 27) * 27,
+    );
+  } else {
+    canonicalHeight = longPx;
+    canonicalWidth = Math.max(
+      27,
+      Math.round(((referenceWidth / referenceHeight) * longPx) / 27) * 27,
+    );
+  }
+
+  const referenceCanvas = new OffscreenCanvas(canonicalWidth, canonicalHeight);
+  const referenceContext = referenceCanvas.getContext('2d', { alpha: true });
+  referenceContext.drawImage(
+    referenceBitmap,
+    0,
+    0,
+    canonicalWidth,
+    canonicalHeight,
+  );
+  referenceBitmap.close();
+  const referencePng = await canvasToPng(referenceCanvas);
+  referenceCanvas.width = 1;
+  referenceCanvas.height = 1;
+
+  const sampleBitmap = await decodeBitmap(task.sample);
+  task.sample = null;
+  const sampleWidth = sampleBitmap.width;
+  const sampleHeight = sampleBitmap.height;
+  const sourceScale = maxSourceDim / Math.max(sampleWidth, sampleHeight);
+  const sourceWidth = Math.max(1, Math.round(sampleWidth * sourceScale));
+  const sourceHeight = Math.max(1, Math.round(sampleHeight * sourceScale));
+  const sourceCanvas = new OffscreenCanvas(sourceWidth, sourceHeight);
+  const sourceContext = sourceCanvas.getContext('2d', { alpha: true });
+  sourceContext.drawImage(sampleBitmap, 0, 0, sourceWidth, sourceHeight);
+  sampleBitmap.close();
+  let sourceData = sourceContext.getImageData(0, 0, sourceWidth, sourceHeight);
+  sourceCanvas.width = 1;
+  sourceCanvas.height = 1;
+
+  const referencePoints = scaledPointPairs(
+    task.referencePoints,
+    canonicalWidth / referenceWidth,
+    canonicalHeight / referenceHeight,
+  );
+  const samplePoints = scaledPointPairs(
+    task.samplePoints,
+    sourceScale,
+    sourceScale,
+  );
+  const alignment = chooseAlignmentHomography(
+    samplePoints,
+    referencePoints,
+    sourceWidth,
+    sourceHeight,
+    canonicalWidth,
+    canonicalHeight,
+  );
+  if (!alignment) throw new Error('Не удалось рассчитать преобразование точек');
+
+  progress('Совмещаю образец в фоновом потоке...');
+  const warped = warpPerspective(
+    sourceData,
+    alignment.h,
+    canonicalWidth,
+    canonicalHeight,
+  );
+  sourceData = null;
+  const reprojError = reprojectionError(
+    alignment.h,
+    samplePoints,
+    referencePoints,
+  );
+  const fourPointPerspective = alignment.projective && samplePoints.length <= 4;
+  const quality = fourPointPerspective
+    ? (reprojError < 18 ? 'warning' : 'fail')
+    : reprojError < 3
+      ? 'excellent'
+      : reprojError < 6
+        ? 'good'
+        : reprojError < 18
+          ? 'warning'
+          : 'fail';
+  const confidence = fourPointPerspective
+    ? 0.5
+    : reprojError < 6
+      ? 0.75
+      : reprojError < 18
+        ? 0.5
+        : 0.25;
+
+  progress('Кодирую результат совмещения...');
+  const alignedPng = await imageDataToPng(warped);
+  const homography = new Float64Array(alignment.h).buffer;
+  self.postMessage(
+    {
+      type: 'alignResult',
+      alignedPng,
+      referencePng,
+      homography,
+      reprojError,
+      confidence,
+      quality,
+    },
+    [alignedPng, referencePng, homography],
+  );
+}
+
+function scaledPointPairs(value, scaleX, scaleY) {
+  const raw = value instanceof Float64Array ? value : new Float64Array(value);
+  const points = [];
+  for (let index = 0; index + 1 < raw.length; index += 2) {
+    points.push({ x: raw[index] * scaleX, y: raw[index + 1] * scaleY });
+  }
+  return points;
+}
+
+function chooseAlignmentHomography(
+  sourcePoints,
+  targetPoints,
+  sourceWidth,
+  sourceHeight,
+  targetWidth,
+  targetHeight,
+) {
+  const similarity = similarityHomography(sourcePoints, targetPoints);
+  if (!similarity) return null;
+  let best = similarity;
+  let bestError = reprojectionError(best, sourcePoints, targetPoints);
+  let projective = false;
+  if (bestError <= 3) return { h: best, projective };
+
+  const affine = affineHomography(sourcePoints, targetPoints);
+  if (affine) {
+    const affineError = reprojectionError(affine, sourcePoints, targetPoints);
+    if (affineError <= 3 || affineError < bestError * 0.70) {
+      best = affine;
+      bestError = affineError;
+    }
+  }
+
+  const perspective = projectiveHomography(sourcePoints, targetPoints);
+  if (
+    perspective &&
+    usableHomography(
+      perspective,
+      sourceWidth,
+      sourceHeight,
+      targetWidth,
+      targetHeight,
+    )
+  ) {
+    const perspectiveError = reprojectionError(
+      perspective,
+      sourcePoints,
+      targetPoints,
+    );
+    const needsPerspective = bestError > 3 || perspectiveError > 0.5;
+    if (needsPerspective && perspectiveError < bestError * 0.55) {
+      return { h: perspective, projective: true };
+    }
+  }
+  return { h: best, projective };
+}
+
+function similarityHomography(source, target) {
+  if (source.length < 2 || source.length !== target.length) return null;
+  const rows = source.length * 2;
+  const matrix = Array.from({ length: rows }, () => Array(4).fill(0));
+  const values = Array(rows).fill(0);
+  for (let index = 0; index < source.length; index++) {
+    const { x, y } = source[index];
+    const { x: u, y: v } = target[index];
+    matrix[index * 2] = [x, -y, 1, 0];
+    values[index * 2] = u;
+    matrix[index * 2 + 1] = [y, x, 0, 1];
+    values[index * 2 + 1] = v;
+  }
+  const result = solveLeastSquares(matrix, values, 4);
+  return result
+    ? [result[0], -result[1], result[2], result[1], result[0], result[3], 0, 0, 1]
+    : null;
+}
+
+function affineHomography(source, target) {
+  if (source.length < 3 || source.length !== target.length) return null;
+  const rows = source.length * 2;
+  const matrix = Array.from({ length: rows }, () => Array(6).fill(0));
+  const values = Array(rows).fill(0);
+  for (let index = 0; index < source.length; index++) {
+    const { x, y } = source[index];
+    const { x: u, y: v } = target[index];
+    matrix[index * 2] = [x, y, 1, 0, 0, 0];
+    values[index * 2] = u;
+    matrix[index * 2 + 1] = [0, 0, 0, x, y, 1];
+    values[index * 2 + 1] = v;
+  }
+  const result = solveLeastSquares(matrix, values, 6);
+  return result
+    ? [result[0], result[1], result[2], result[3], result[4], result[5], 0, 0, 1]
+    : null;
+}
+
+function projectiveHomography(source, target) {
+  if (source.length < 4 || source.length !== target.length) return null;
+  const rows = source.length * 2;
+  const matrix = Array.from({ length: rows }, () => Array(8).fill(0));
+  const values = Array(rows).fill(0);
+  for (let index = 0; index < source.length; index++) {
+    const { x, y } = source[index];
+    const { x: u, y: v } = target[index];
+    matrix[index * 2] = [x, y, 1, 0, 0, 0, -u * x, -u * y];
+    values[index * 2] = u;
+    matrix[index * 2 + 1] = [0, 0, 0, x, y, 1, -v * x, -v * y];
+    values[index * 2 + 1] = v;
+  }
+  const result = solveLeastSquares(matrix, values, 8);
+  return result
+    ? [result[0], result[1], result[2], result[3], result[4], result[5], result[6], result[7], 1]
+    : null;
+}
+
+function solveLeastSquares(matrix, values, columns) {
+  const normal = Array.from({ length: columns }, () => Array(columns).fill(0));
+  const rhs = Array(columns).fill(0);
+  for (let row = 0; row < matrix.length; row++) {
+    for (let left = 0; left < columns; left++) {
+      rhs[left] += matrix[row][left] * values[row];
+      for (let right = 0; right < columns; right++) {
+        normal[left][right] += matrix[row][left] * matrix[row][right];
+      }
+    }
+  }
+  return solveLinear(normal, rhs);
+}
+
+function solveLinear(matrix, values) {
+  const size = values.length;
+  const work = matrix.map((row, index) => [...row, values[index]]);
+  for (let column = 0; column < size; column++) {
+    let pivot = column;
+    let pivotValue = Math.abs(work[column][column]);
+    for (let row = column + 1; row < size; row++) {
+      const value = Math.abs(work[row][column]);
+      if (value > pivotValue) {
+        pivot = row;
+        pivotValue = value;
+      }
+    }
+    if (pivotValue < 1e-10) return null;
+    [work[column], work[pivot]] = [work[pivot], work[column]];
+    for (let row = column + 1; row < size; row++) {
+      const factor = work[row][column] / work[column][column];
+      for (let index = column; index <= size; index++) {
+        work[row][index] -= factor * work[column][index];
+      }
+    }
+  }
+  const result = Array(size).fill(0);
+  for (let row = size - 1; row >= 0; row--) {
+    result[row] = work[row][size];
+    for (let column = row + 1; column < size; column++) {
+      result[row] -= work[row][column] * result[column];
+    }
+    result[row] /= work[row][row];
+  }
+  return result;
+}
+
+function reprojectionError(homography, source, target) {
+  let total = 0;
+  for (let index = 0; index < source.length; index++) {
+    const point = source[index];
+    const divisor = homography[6] * point.x + homography[7] * point.y + homography[8];
+    const x = (homography[0] * point.x + homography[1] * point.y + homography[2]) / divisor;
+    const y = (homography[3] * point.x + homography[4] * point.y + homography[5]) / divisor;
+    total += Math.hypot(x - target[index].x, y - target[index].y);
+  }
+  return total / source.length;
+}
+
+function usableHomography(homography, sourceWidth, sourceHeight, targetWidth, targetHeight) {
+  const corners = [
+    { x: 0, y: 0 },
+    { x: sourceWidth, y: 0 },
+    { x: sourceWidth, y: sourceHeight },
+    { x: 0, y: sourceHeight },
+  ];
+  const mapped = [];
+  for (const point of corners) {
+    const divisor = homography[6] * point.x + homography[7] * point.y + homography[8];
+    if (Math.abs(divisor) < 1e-9) return false;
+    const x = (homography[0] * point.x + homography[1] * point.y + homography[2]) / divisor;
+    const y = (homography[3] * point.x + homography[4] * point.y + homography[5]) / divisor;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+    mapped.push({ x, y });
+  }
+  const xs = mapped.map((point) => point.x);
+  const ys = mapped.map((point) => point.y);
+  const area = (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys));
+  const targetArea = Math.max(1, targetWidth * targetHeight);
+  return area > targetArea * 0.05 && area < targetArea * 20;
+}
+
+function invertHomography(homography) {
+  const [a, b, c, d, e, f, g, h, i] = homography;
+  const A = e * i - f * h;
+  const B = -(d * i - f * g);
+  const C = d * h - e * g;
+  const D = -(b * i - c * h);
+  const E = a * i - c * g;
+  const F = -(a * h - b * g);
+  const G = b * f - c * e;
+  const H = -(a * f - c * d);
+  const I = a * e - b * d;
+  const determinant = a * A + b * B + c * C;
+  if (Math.abs(determinant) < 1e-12) return Array(9).fill(0);
+  return [A, D, G, B, E, H, C, F, I].map((value) => value / determinant);
+}
+
+function warpPerspective(source, homography, width, height) {
+  const inverse = invertHomography(homography);
+  const output = new ImageData(width, height);
+  const maxX = source.width - 1;
+  const maxY = source.height - 1;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const wx = inverse[0] * x + inverse[1] * y + inverse[2];
+      const wy = inverse[3] * x + inverse[4] * y + inverse[5];
+      const wz = inverse[6] * x + inverse[7] * y + inverse[8];
+      const sourceX = wx / wz;
+      const sourceY = wy / wz;
+      if (sourceX < 0 || sourceY < 0 || sourceX > maxX || sourceY > maxY) continue;
+      const x0 = Math.floor(sourceX);
+      const y0 = Math.floor(sourceY);
+      const x1 = Math.min(x0 + 1, maxX);
+      const y1 = Math.min(y0 + 1, maxY);
+      const fractionX = sourceX - x0;
+      const fractionY = sourceY - y0;
+      const targetIndex = (y * width + x) * 4;
+      const p00 = (y0 * source.width + x0) * 4;
+      const p10 = (y0 * source.width + x1) * 4;
+      const p01 = (y1 * source.width + x0) * 4;
+      const p11 = (y1 * source.width + x1) * 4;
+      for (let channel = 0; channel < 3; channel++) {
+        output.data[targetIndex + channel] = Math.round(
+          bilinear(
+            source.data[p00 + channel],
+            source.data[p10 + channel],
+            source.data[p01 + channel],
+            source.data[p11 + channel],
+            fractionX,
+            fractionY,
+          ),
+        );
+      }
+      output.data[targetIndex + 3] = 255;
+    }
+    if (y % 64 === 0) {
+      progress(`Совмещение: ${Math.round((y / Math.max(1, height)) * 100)}%`);
+    }
+  }
+  return output;
+}
+
+function bilinear(a, b, c, d, x, y) {
+  return a * (1 - x) * (1 - y) + b * x * (1 - y) + c * (1 - x) * y + d * x * y;
 }
 
 async function compareImages(task) {

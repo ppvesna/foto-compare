@@ -20,6 +20,7 @@ import '../widgets/xp_widgets.dart';
 import '../widgets/pixel_text.dart';
 import '../services/compare_service.dart';
 import '../features/references/references.dart';
+import '../services/homography_dart.dart' show canonicalDim;
 import '../services/opencv_service.dart';
 import '../services/ai_compare_service.dart';
 import '../services/barcode_service.dart';
@@ -709,12 +710,43 @@ class _CompareScreenState extends State<CompareScreen> {
     });
     try {
       _startTimedStage('Расчёт совмещения по ${refPts.length} точкам...');
-      final alignResult = await OpenCvService.alignByAnchors(
-        _refImg!,
-        _cmpImg!,
-        refPts,
-        cmpPts,
-      );
+      final AlignByAnchorsResult? alignResult;
+      if (web_worker.isWebCompareWorkerSupported) {
+        final workerResult = await web_worker.runWebAlignmentWorker(
+          reference: _refImg!,
+          sample: _cmpImg!,
+          referencePoints: Float64List.fromList(
+            refPts.expand((point) => [point.dx, point.dy]).toList(),
+          ),
+          samplePoints: Float64List.fromList(
+            cmpPts.expand((point) => [point.dx, point.dy]).toList(),
+          ),
+          canonicalLongPx: canonicalDim(
+            max(AppConfig.printWidthMm, AppConfig.printHeightMm),
+          ),
+          maxSourceDim: 1600,
+          onProgress: _setCompareStatus,
+        );
+        alignResult = AlignByAnchorsResult(
+          alignedBytes: workerResult['alignedPng'] as Uint8List,
+          refCanonicalBytes: workerResult['referencePng'] as Uint8List,
+          homography: List<double>.from(
+            workerResult['homography'] as Float64List,
+          ),
+          reprojError: workerResult['reprojError'] as double,
+          eccScore: 0,
+          confidence: workerResult['confidence'] as double,
+          quality: workerResult['quality'] as String,
+          refinedSrcPoints: cmpPts,
+        );
+      } else {
+        alignResult = await OpenCvService.alignByAnchors(
+          _refImg!,
+          _cmpImg!,
+          refPts,
+          cmpPts,
+        );
+      }
       _finishTimedStage(label: 'Расчёт совмещения');
       if (!mounted) return;
       if (alignResult == null) {
@@ -730,10 +762,11 @@ class _CompareScreenState extends State<CompareScreen> {
         });
         return;
       }
+      final resolvedAlignment = alignResult;
 
-      final canUseAlignment = alignResult.isAcceptable;
+      final canUseAlignment = resolvedAlignment.isAcceptable;
       final ok = await _showAlignmentValidation(
-        alignResult,
+        resolvedAlignment,
         canAccept: canUseAlignment,
       );
       if (!mounted) return;
@@ -786,16 +819,16 @@ class _CompareScreenState extends State<CompareScreen> {
             DateTime.now().millisecondsSinceEpoch.toString(),
         name: name,
         refAnchors: refAnchors,
-        homography: alignResult.homography,
+        homography: resolvedAlignment.homography,
         cropRegion: CropRegion.defaultCrop,
         widthMm: AppConfig.printWidthMm,
         heightMm: AppConfig.printHeightMm,
         refImageWidth: refSize.width.round(),
         refImageHeight: refSize.height.round(),
         alignment: AlignmentInfo(
-          reprojectionError: alignResult.reprojError,
-          eccScore: alignResult.eccScore,
-          confidence: alignResult.confidence,
+          reprojectionError: resolvedAlignment.reprojError,
+          eccScore: resolvedAlignment.eccScore,
+          confidence: resolvedAlignment.confidence,
         ),
         createdAt: _layoutProfile?.createdAt ?? DateTime.now(),
       );
@@ -805,8 +838,8 @@ class _CompareScreenState extends State<CompareScreen> {
         _layoutProfile = profile;
         _savedRefLabel = name;
         _activeReferenceId = profile.id;
-        _cmpAligned = alignResult.alignedBytes;
-        _refAligned = alignResult.refCanonicalBytes;
+        _cmpAligned = resolvedAlignment.alignedBytes;
+        _refAligned = resolvedAlignment.refCanonicalBytes;
         _refAnchorPts = refPts;
         _cmpAnchorPts = cmpPts;
         _calStep = 0;
@@ -821,8 +854,27 @@ class _CompareScreenState extends State<CompareScreen> {
         xpDlg(
           context,
           'Профиль сохранён',
-          '"$name"\nТочность точек: ${alignResult.reprojError.toStringAsFixed(1)} пкс. Профиль готов к работе.',
+          '"$name"\nТочность точек: ${resolvedAlignment.reprojError.toStringAsFixed(1)} пкс. Профиль готов к работе.',
         );
+      }
+    } catch (error, stackTrace) {
+      debugPrint('Alignment failed: $error\n$stackTrace');
+      if (mounted) {
+        _setCompareStatus(
+          'Не удалось рассчитать совмещение. Точки образца можно указать заново.',
+        );
+        await xpDlg(
+          context,
+          'Расчёт не выполнен',
+          'Браузер не смог обработать изображения. '
+              'Повторите расстановку точек.',
+        );
+        if (mounted) {
+          setState(() {
+            _calStep = 2;
+            _tempCmpPts = [];
+          });
+        }
       }
     } finally {
       _finishTimedStage(label: 'Расчёт совмещения');
@@ -1844,9 +1896,11 @@ class _CompareScreenState extends State<CompareScreen> {
                 ? 'Протокол сохранён локально и в облаке.'
                 : 'Протокол и превью карты отличий сохранены в облаке.',
       );
-    } catch (_) {
+    } catch (error, stackTrace) {
+      debugPrint('Cloud protocol sync failed: $error\n$stackTrace');
       _setCompareStatus(
-        'Протокол сохранён локально. Облачная копия сейчас не сохранена.',
+        'Протокол сохранён на устройстве, но облачный архив не сохранён. '
+        'Повторите позже или обратитесь к администратору.',
       );
     }
   }
