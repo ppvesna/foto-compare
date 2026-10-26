@@ -6,6 +6,7 @@ import 'package:photo_compare/features/billing/billing.dart';
 import 'package:photo_compare/features/organization/organization.dart';
 import 'package:photo_compare/features/production/production.dart';
 import 'package:photo_compare/features/protocols/protocols.dart';
+import 'package:photo_compare/features/references/references.dart';
 import 'package:photo_compare/screens/compare_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -557,6 +558,130 @@ void main() {
     expect(jobValue, findsOneWidget);
     expect(
       find.ancestor(of: jobValue, matching: find.byType(Tooltip)),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('organization job restores only its assigned reference',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1100, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    const png =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+    SharedPreferences.setMockInitialValues({
+      'reference_profiles_v2': jsonEncode([
+        {
+          'id': 'reference-job-1',
+          'label': 'Эталон работы 1',
+          'bytes': png,
+          'layoutProfile': null,
+          'createdAt': '2026-10-26T10:00:00.000Z',
+        },
+        {
+          'id': 'reference-other',
+          'label': 'Эталон другой работы',
+          'bytes': png,
+          'layoutProfile': null,
+          'createdAt': '2026-10-26T11:00:00.000Z',
+        },
+      ]),
+      'reference_profiles_active_id_v2': 'reference-other',
+      'reference_profiles_job_bindings_v1': jsonEncode({
+        'job-1': 'reference-job-1',
+      }),
+    });
+    expect((await ReferenceStorage.loadForJob('job-1'))?.id, 'reference-job-1');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CompareScreen(
+            entitlements: EntitlementSnapshot.forPlan(PlanTier.pro),
+            organizationAccess: OrganizationAccess.forRole(
+              organizationId: 'organization-1',
+              organizationName: 'Vesna',
+              role: OrganizationRole.admin,
+            ),
+            initialJob: const ProductionJobContext(
+              jobId: 'job-1',
+              jobNumber: 'WORK-001',
+              customerId: 'customer-1',
+              customerName: 'Заказчик',
+              customerConfirmed: true,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pumpAndSettle();
+    final preferences = await SharedPreferences.getInstance();
+    expect(preferences.getString('reference_profiles_active_id_v2'),
+        'reference-job-1');
+
+    final stageLabels = tester
+        .widgetList<Semantics>(find.byType(Semantics))
+        .map((widget) => widget.properties.label)
+        .whereType<String>()
+        .where((label) => label.startsWith('Эталон.'))
+        .toList();
+    expect(
+      stageLabels,
+      contains('Эталон. Сохранён: Эталон работы 1'),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('new organization job does not borrow global active reference',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1100, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    const png =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+    SharedPreferences.setMockInitialValues({
+      'reference_profiles_v2': jsonEncode([
+        {
+          'id': 'reference-other',
+          'label': 'Чужой эталон',
+          'bytes': png,
+          'layoutProfile': null,
+          'createdAt': '2026-10-26T11:00:00.000Z',
+        },
+      ]),
+      'reference_profiles_active_id_v2': 'reference-other',
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CompareScreen(
+            entitlements: EntitlementSnapshot.forPlan(PlanTier.pro),
+            organizationAccess: OrganizationAccess.forRole(
+              organizationId: 'organization-1',
+              organizationName: 'Vesna',
+              role: OrganizationRole.admin,
+            ),
+            initialJob: const ProductionJobContext(
+              jobId: 'job-new',
+              jobNumber: 'WORK-NEW',
+              customerId: 'customer-1',
+              customerName: 'Заказчик',
+              customerConfirmed: true,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Semantics &&
+            widget.properties.label == 'Эталон. Загрузите цифровой файл',
+      ),
       findsOneWidget,
     );
     expect(tester.takeException(), isNull);

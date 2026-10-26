@@ -52,6 +52,48 @@ void main() {
     expect(references.single.label, 'Обновлённый');
     expect(references.single.bytes, [4, 5, 6]);
   });
+
+  test('keeps a separate saved reference binding for each job', () async {
+    await ReferenceStorage.saveProfile(
+      id: 'reference-1',
+      bytes: Uint8List.fromList([1]),
+      label: 'Эталон 1',
+    );
+    await ReferenceStorage.saveProfile(
+      id: 'reference-2',
+      bytes: Uint8List.fromList([2]),
+      label: 'Эталон 2',
+    );
+
+    await ReferenceStorage.bindToJob(
+      jobId: 'job-1',
+      referenceId: 'reference-1',
+    );
+    await ReferenceStorage.bindToJob(
+      jobId: 'job-2',
+      referenceId: 'reference-2',
+    );
+
+    expect((await ReferenceStorage.loadForJob('job-1'))?.id, 'reference-1');
+    expect((await ReferenceStorage.loadForJob('job-2'))?.id, 'reference-2');
+    expect(await ReferenceStorage.loadForJob('job-3'), isNull);
+  });
+
+  test('deleting a reference removes its job binding', () async {
+    await ReferenceStorage.saveProfile(
+      id: 'reference-1',
+      bytes: Uint8List.fromList([1]),
+      label: 'Эталон 1',
+    );
+    await ReferenceStorage.bindToJob(
+      jobId: 'job-1',
+      referenceId: 'reference-1',
+    );
+
+    await ReferenceStorage.delete('reference-1');
+
+    expect(await ReferenceStorage.loadForJob('job-1'), isNull);
+  });
 }
 
 Map<String, dynamic> _legacyReferenceJson() => {

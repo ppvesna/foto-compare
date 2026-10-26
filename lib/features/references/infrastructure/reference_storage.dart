@@ -9,6 +9,7 @@ import '../domain/saved_reference.dart';
 class ReferenceStorage {
   static const _profilesKey = 'reference_profiles_v2';
   static const _activeIdKey = 'reference_profiles_active_id_v2';
+  static const _jobBindingsKey = 'reference_profiles_job_bindings_v1';
 
   static final ValueNotifier<List<SavedReferenceProfile>> profiles =
       ValueNotifier<List<SavedReferenceProfile>>(const []);
@@ -89,6 +90,33 @@ class ReferenceStorage {
     );
   }
 
+  static Future<SavedReferenceProfile?> loadForJob(String jobId) async {
+    final cleanJobId = jobId.trim();
+    if (cleanJobId.isEmpty) return null;
+    final prefs = await SharedPreferences.getInstance();
+    final bindings = _decodeJobBindings(prefs.getString(_jobBindingsKey));
+    final referenceId = bindings[cleanJobId];
+    if (referenceId == null || referenceId.isEmpty) return null;
+    final all = await loadProfiles();
+    for (final item in all) {
+      if (item.id == referenceId) return item;
+    }
+    return null;
+  }
+
+  static Future<void> bindToJob({
+    required String jobId,
+    required String referenceId,
+  }) async {
+    final cleanJobId = jobId.trim();
+    final cleanReferenceId = referenceId.trim();
+    if (cleanJobId.isEmpty || cleanReferenceId.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    final bindings = _decodeJobBindings(prefs.getString(_jobBindingsKey));
+    bindings[cleanJobId] = cleanReferenceId;
+    await prefs.setString(_jobBindingsKey, jsonEncode(bindings));
+  }
+
   static Future<Uint8List?> load() async => (await loadActiveProfile())?.bytes;
 
   static Future<String?> loadLabel() async =>
@@ -110,6 +138,9 @@ class ReferenceStorage {
         await prefs.setString(_activeIdKey, next.first.id);
       }
     }
+    final bindings = _decodeJobBindings(prefs.getString(_jobBindingsKey));
+    bindings.removeWhere((_, referenceId) => referenceId == id);
+    await prefs.setString(_jobBindingsKey, jsonEncode(bindings));
     profiles.value = next;
   }
 
@@ -117,8 +148,21 @@ class ReferenceStorage {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_profilesKey);
     await prefs.remove(_activeIdKey);
+    await prefs.remove(_jobBindingsKey);
     profiles.value = const [];
   }
 
   static Future<bool> exists() async => (await loadProfiles()).isNotEmpty;
+
+  static Map<String, String> _decodeJobBindings(String? raw) {
+    if (raw == null || raw.isEmpty) return <String, String>{};
+    try {
+      final decoded = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+      return decoded.map(
+        (jobId, referenceId) => MapEntry(jobId, referenceId.toString()),
+      );
+    } catch (_) {
+      return <String, String>{};
+    }
+  }
 }

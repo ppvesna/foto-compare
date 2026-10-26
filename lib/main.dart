@@ -20,6 +20,7 @@ import 'features/organization/organization.dart';
 import 'features/print_proofing/print_proofing.dart';
 import 'features/protocols/protocols.dart';
 import 'features/production/production.dart';
+import 'features/references/references.dart';
 import 'services/sync_service.dart';
 import 'services/browser_auth_url.dart';
 import 'widgets/auth_page_backdrop.dart';
@@ -1042,6 +1043,13 @@ class _MainShellState extends State<MainShell> {
                   ),
             onBackToWorks: _backToWorks,
             protocolCloudRepository: _protocolCloudRepository,
+            jobReferenceRepository:
+                organizationId == null || _supabaseCloudStorage == null
+                    ? null
+                    : SupabaseJobReferenceRepository(
+                        Supabase.instance.client,
+                        storage: _supabaseCloudStorage!,
+                      ),
             checkUsageService: _checkUsageService,
             productionWorkflowService: _workflowService,
             inspectionUnit: _comparisonUnit,

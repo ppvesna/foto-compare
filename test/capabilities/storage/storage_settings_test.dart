@@ -138,6 +138,16 @@ void main() {
       ),
       'organizations/organization-1/jobs/job-1/preview.png',
     );
+    expect(
+      storage.objectPath(
+        'reference.png',
+        scope: const CloudAssetScope.organizationJobReference(
+          organizationId: 'organization-1',
+          jobId: 'job-1',
+        ),
+      ),
+      'organizations/organization-1/jobs/job-1/references/reference.png',
+    );
   });
 
   test('mock cloud storage isolates personal and job assets', () async {

@@ -7,6 +7,7 @@ enum CloudConnectionState { disconnected, connected, error }
 enum CloudAssetScopeType {
   personal,
   organizationJob,
+  organizationJobReference,
   organizationJobChat,
   organizationJobInternalChat,
   organizationChat,
@@ -28,6 +29,12 @@ class CloudAssetScope {
     required this.organizationId,
     required this.jobId,
   })  : type = CloudAssetScopeType.organizationJob,
+        threadId = null;
+
+  const CloudAssetScope.organizationJobReference({
+    required this.organizationId,
+    required this.jobId,
+  })  : type = CloudAssetScopeType.organizationJobReference,
         threadId = null;
 
   const CloudAssetScope.organizationJobChat({
