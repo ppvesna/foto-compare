@@ -192,7 +192,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Загрузить эталон'), findsOneWidget);
-    expect(find.text('Нажмите на экран'), findsOneWidget);
+    expect(find.text('Нажмите на изображение'), findsOneWidget);
     expect(find.textContaining('Следующий шаг:'), findsNothing);
     expect(tester.takeException(), isNull);
   });

@@ -66,5 +66,32 @@ void main() {
 
     expect(protocol.aiAnalysisPerformed, isFalse);
     expect(protocol.aiVerdict, isEmpty);
+    expect(protocol.inspectionDecision, 'pending');
+    expect(protocol.inspectionDecisionNote, isEmpty);
+    expect(protocol.inspectionDecisionAt, isNull);
+  });
+
+  test('production decision survives protocol serialization', () {
+    final decidedAt = DateTime.utc(2026, 11, 2, 11, 45);
+    final protocol = CheckProtocol(
+      id: 'decision',
+      createdAt: DateTime.utc(2026, 11, 2, 11, 40),
+      score: 82,
+      verdict: 'Стоп',
+      refSize: '10×10',
+      cmpSize: '10×10',
+      labId: '-',
+      labMatch: null,
+      inspectionDecision: 'blocked',
+      inspectionDecisionNote: 'Полоса по краю',
+      inspectionDecisionAt: decidedAt,
+      stages: const [],
+    );
+
+    final restored = CheckProtocol.fromJson(protocol.toJson());
+
+    expect(restored.inspectionDecision, 'blocked');
+    expect(restored.inspectionDecisionNote, 'Полоса по краю');
+    expect(restored.inspectionDecisionAt, decidedAt);
   });
 }

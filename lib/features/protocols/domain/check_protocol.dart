@@ -25,6 +25,9 @@ class CheckProtocol {
   final double apertureMm;
   final bool aiAnalysisPerformed;
   final String aiVerdict;
+  final String inspectionDecision;
+  final String inspectionDecisionNote;
+  final DateTime? inspectionDecisionAt;
   final List<CheckProtocolStage> stages;
 
   const CheckProtocol({
@@ -54,6 +57,9 @@ class CheckProtocol {
     this.apertureMm = 2,
     this.aiAnalysisPerformed = false,
     this.aiVerdict = '',
+    this.inspectionDecision = 'pending',
+    this.inspectionDecisionNote = '',
+    this.inspectionDecisionAt,
     required this.stages,
   });
 
@@ -88,6 +94,11 @@ class CheckProtocol {
         apertureMm: (json['apertureMm'] as num?)?.toDouble() ?? 2,
         aiAnalysisPerformed: json['aiAnalysisPerformed'] as bool? ?? false,
         aiVerdict: json['aiVerdict'] as String? ?? '',
+        inspectionDecision: json['inspectionDecision'] as String? ?? 'pending',
+        inspectionDecisionNote: json['inspectionDecisionNote'] as String? ?? '',
+        inspectionDecisionAt: json['inspectionDecisionAt'] == null
+            ? null
+            : DateTime.tryParse(json['inspectionDecisionAt'] as String),
         stages: (json['stages'] as List)
             .map((e) => CheckProtocolStage.fromJson(
                   Map<String, dynamic>.from(e as Map),
@@ -122,6 +133,9 @@ class CheckProtocol {
         'apertureMm': apertureMm,
         'aiAnalysisPerformed': aiAnalysisPerformed,
         'aiVerdict': aiVerdict,
+        'inspectionDecision': inspectionDecision,
+        'inspectionDecisionNote': inspectionDecisionNote,
+        'inspectionDecisionAt': inspectionDecisionAt?.toIso8601String(),
         'stages': stages.map((e) => e.toJson()).toList(),
       };
 }

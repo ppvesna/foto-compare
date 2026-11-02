@@ -124,6 +124,9 @@ class _CompareScreenState extends State<CompareScreen> {
   CompareResult? _result;
   ProductionUnitState? _productionInspectionState;
   bool _productionDecisionBusy = false;
+  String _inspectionDecision = 'pending';
+  String _inspectionDecisionNote = '';
+  DateTime? _inspectionDecisionAt;
   AiAnalysis? _aiResult;
   List<BarcodeResult> _refBarcodes = [];
   List<BarcodeResult> _cmpBarcodes = [];
@@ -679,6 +682,9 @@ class _CompareScreenState extends State<CompareScreen> {
       _activeProtocolSampleImageId = null;
       _activeProtocolSampleNo = null;
       _currentProtocol = null;
+      _inspectionDecision = 'pending';
+      _inspectionDecisionNote = '';
+      _inspectionDecisionAt = null;
       _pointProbe = null;
       _areaLoupe = null;
       _loupeDraftRect = null;
@@ -1275,6 +1281,9 @@ class _CompareScreenState extends State<CompareScreen> {
     _activeProtocolSampleNo = null;
     _currentProtocol = null;
     _aiResult = null;
+    _inspectionDecision = 'pending';
+    _inspectionDecisionNote = '';
+    _inspectionDecisionAt = null;
     _refBarcodes = [];
     _cmpBarcodes = [];
     _textDiff = null;
@@ -1521,6 +1530,9 @@ class _CompareScreenState extends State<CompareScreen> {
       _workspaceView = _WorkspaceView.comparison;
       _inspectionTool = null;
       _aiResult = null;
+      _inspectionDecision = 'pending';
+      _inspectionDecisionNote = '';
+      _inspectionDecisionAt = null;
       _refBarcodes = [];
       _cmpBarcodes = [];
       _textDiff = null;
@@ -2009,6 +2021,9 @@ class _CompareScreenState extends State<CompareScreen> {
       apertureMm: _measurementSettings.aperture.diameterMm,
       aiAnalysisPerformed: _aiResult != null,
       aiVerdict: _aiResult?.verdict ?? '',
+      inspectionDecision: _inspectionDecision,
+      inspectionDecisionNote: _inspectionDecisionNote,
+      inspectionDecisionAt: _inspectionDecisionAt,
       stages: _checkProtocolStages(r),
     );
     if (!mounted) return;
@@ -2038,7 +2053,7 @@ class _CompareScreenState extends State<CompareScreen> {
     }
     final unit = widget.inspectionUnit;
     final workflow = widget.productionWorkflowService;
-    if (unit != null && workflow != null) {
+    if (!replacingCurrent && unit != null && workflow != null) {
       await workflow.recordInspectionAttempt(
         unitId: unit.id,
         protocolId: protocolId,
@@ -3086,6 +3101,14 @@ class _CompareScreenState extends State<CompareScreen> {
                 left: 12,
                 child: _activeStatusHud(maxWidth: constraints.maxWidth),
               ),
+              if (_result != null)
+                Positioned(
+                  top: 12,
+                  right: 72,
+                  child: _currentSampleStatusHud(
+                    maxWidth: constraints.maxWidth,
+                  ),
+                ),
             ],
             if (_workspaceView != _WorkspaceView.comparison || _result == null)
               Positioned(
@@ -3227,6 +3250,12 @@ class _CompareScreenState extends State<CompareScreen> {
               ),
               if (_currentJobNumber.isNotEmpty)
                 line('РАБОТА', _currentJobNumber, _hudGreen),
+              if (_savedRefLabel != null && _savedRefLabel!.trim().isNotEmpty)
+                line(
+                  'ЭТАЛОН',
+                  _savedRefLabel!,
+                  _hudGreenSecondary,
+                ),
               if (!narrow && _currentCustomerName.isNotEmpty)
                 line(
                   'ЗАКАЗЧИК',
@@ -3336,38 +3365,101 @@ class _CompareScreenState extends State<CompareScreen> {
     final enabled = action.onTap != null && !action.busy;
     final label = action.busy ? 'Выполняется…' : _screenActionLabel(action);
     return IgnorePointer(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            label,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 14,
-              color: enabled ? Colors.white : const Color(0xFFBAC8CC),
-              fontWeight: FontWeight.w900,
-              letterSpacing: 0.2,
-              shadows: const [
-                Shadow(color: Color(0xFF081519), blurRadius: 4),
-                Shadow(color: Color(0xFF081519), blurRadius: 12),
-              ],
+      child: Container(
+        width: 226,
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+        decoration: BoxDecoration(
+          color: const Color(0xE3263438),
+          borderRadius: BorderRadius.circular(8),
+          border: Border(
+            left: BorderSide(
+              color: enabled ? _hudGreen : const Color(0xFF708187),
+              width: 3,
             ),
           ),
-          if (enabled) ...[
-            const SizedBox(height: 5),
-            const Text(
-              'Нажмите на экран',
-              style: TextStyle(
-                fontSize: 9,
-                color: Color(0xFFD7EDF2),
-                fontFamily: 'monospace',
-                letterSpacing: 0.7,
-                shadows: [
-                  Shadow(color: Color(0xFF081519), blurRadius: 7),
-                ],
-              ),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x66000000),
+              blurRadius: 12,
+              offset: Offset(0, 4),
             ),
           ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            PixelText(
+              text: 'ОБРАЗЕЦ №$_sampleNo',
+              color: _hudWarning,
+              pixelSize: 1.0,
+            ),
+            const SizedBox(height: 6),
+            const PixelText(
+              text: 'СЛЕДУЮЩЕЕ ДЕЙСТВИЕ',
+              color: Color(0xFF9BB0B6),
+              pixelSize: 0.78,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 13,
+                height: 1.18,
+                color: enabled ? Colors.white : const Color(0xFFBAC8CC),
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            if (enabled) ...[
+              const SizedBox(height: 5),
+              const Text(
+                'Нажмите на изображение',
+                style: TextStyle(
+                  fontSize: 9,
+                  color: Color(0xFFD7EDF2),
+                  fontFamily: 'monospace',
+                  letterSpacing: 0.25,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _currentSampleStatusHud({required double maxWidth}) {
+    final compact = maxWidth < 620;
+    final (label, color) = switch (_inspectionDecision) {
+      'approved' => ('ДОПУЩЕН', _hudGreen),
+      'blocked' => ('СТОП', _hudError),
+      _ => ('ПРОВЕРЕН', _hudWarning),
+    };
+    return Container(
+      width: compact ? 132 : 176,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xD9263438),
+        borderRadius: BorderRadius.circular(8),
+        border: Border(left: BorderSide(color: color, width: 3)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          PixelText(
+            text: 'ОБРАЗЕЦ №$_sampleNo',
+            color: _hudGreenSecondary,
+            pixelSize: compact ? 0.82 : 1.0,
+          ),
+          const SizedBox(height: 4),
+          PixelText(
+            text: label,
+            color: color,
+            pixelSize: compact ? 0.78 : 0.92,
+          ),
         ],
       ),
     );
@@ -4179,13 +4271,19 @@ class _CompareScreenState extends State<CompareScreen> {
                               key: const ValueKey('workspace-primary-action'),
                               onTap: actionTap,
                               onDoubleTap: onOpen,
-                              child: Center(child: _screenActionPrompt(action)),
+                              child: const SizedBox.expand(),
                             ),
                           ),
                         )
                       else if (onOpen != null)
                         Positioned.fill(
                           child: GestureDetector(onDoubleTap: onOpen),
+                        ),
+                      if (action != null)
+                        Positioned(
+                          top: 12,
+                          right: 12,
+                          child: _screenActionPrompt(action),
                         ),
                     ],
                   ),
@@ -4209,8 +4307,8 @@ class _CompareScreenState extends State<CompareScreen> {
         final chromeHeight = r == null
             ? 0.0
             : widget.inspectionUnit == null
-                ? 70.0
-                : 116.0;
+                ? 194.0
+                : 240.0;
         final naturalHeight = availableWidth * 9 / 16 + chromeHeight;
         final stageHeight = max(viewportHeight, naturalHeight);
 
@@ -4273,6 +4371,7 @@ class _CompareScreenState extends State<CompareScreen> {
                     _resultModeHud(),
                     if (widget.inspectionUnit != null)
                       _productionInspectionDecisionBar(),
+                    _sampleCheckLedger(),
                   ] else if (_comparing)
                     const Expanded(
                       child: Center(
@@ -4298,11 +4397,15 @@ class _CompareScreenState extends State<CompareScreen> {
                                     'workspace-primary-action',
                                   ),
                                   onTap: actionTap,
-                                  child: Center(
-                                    child: _screenActionPrompt(action),
-                                  ),
+                                  child: const SizedBox.expand(),
                                 ),
                               ),
+                            ),
+                          if (action != null)
+                            Positioned(
+                              top: 12,
+                              right: 12,
+                              child: _screenActionPrompt(action),
                             ),
                         ],
                       ),
@@ -4317,9 +4420,7 @@ class _CompareScreenState extends State<CompareScreen> {
   }
 
   Widget _productionInspectionDecisionBar() {
-    final unit = widget.inspectionUnit!;
     final blocked = _productionInspectionState == ProductionUnitState.blocked;
-    final approved = _productionInspectionState == ProductionUnitState.approved;
     return Container(
       height: 46,
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -4329,7 +4430,6 @@ class _CompareScreenState extends State<CompareScreen> {
       ),
       child: LayoutBuilder(builder: (context, constraints) {
         final compact = constraints.maxWidth < 620;
-        final showStatus = constraints.maxWidth >= 860;
         final gap = compact ? 4.0 : 6.0;
         final padding = EdgeInsets.symmetric(horizontal: compact ? 6 : 10);
         final outlinedStyle = OutlinedButton.styleFrom(
@@ -4350,91 +4450,398 @@ class _CompareScreenState extends State<CompareScreen> {
         );
 
         return Row(children: [
-          if (showStatus) ...[
-            Expanded(
-              child: Text(
-                '${unit.fullLabel} · ${(_productionInspectionState ?? unit.state).label}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.w800,
-                  color: blocked
-                      ? const Color(0xFFA22D25)
-                      : approved
-                          ? const Color(0xFF3A6E37)
-                          : AppTheme.graphite,
-                ),
+          Expanded(
+            child: Tooltip(
+              message: 'Повторить сравнение',
+              child: OutlinedButton.icon(
+                key: const ValueKey('repeat-production-comparison'),
+                style: outlinedStyle,
+                onPressed:
+                    _productionDecisionBusy || _comparing ? null : _runCompare,
+                icon: const Icon(Icons.replay_rounded, size: 16),
+                label: Text(compact ? 'Ещё раз' : 'Сравнить ещё раз'),
               ),
             ),
-            SizedBox(width: gap),
-          ] else
-            const Spacer(),
-          Tooltip(
-            message: 'Повторить сравнение',
-            child: OutlinedButton.icon(
-              key: const ValueKey('repeat-production-comparison'),
-              style: outlinedStyle,
-              onPressed:
-                  _productionDecisionBusy || _comparing ? null : _runCompare,
-              icon: const Icon(Icons.replay_rounded, size: 16),
-              label: Text(compact ? 'Ещё раз' : 'Сравнить ещё раз'),
+          ),
+          SizedBox(width: gap),
+          Expanded(
+            child: Tooltip(
+              message: _aiResult == null
+                  ? 'Запустить AI-анализ'
+                  : 'Повторить AI-анализ',
+              child: FilledButton.tonalIcon(
+                key: const ValueKey('production-ai-analysis'),
+                style: tonalStyle,
+                onPressed: _productionDecisionBusy || _comparing || _aiLoading
+                    ? null
+                    : _runAiAnalysis,
+                icon: _aiLoading
+                    ? const SizedBox.square(
+                        dimension: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Icon(
+                        _aiResult == null
+                            ? Icons.auto_awesome_outlined
+                            : Icons.auto_awesome,
+                        size: 16,
+                      ),
+                label: Text(compact ? 'AI' : 'AI-анализ'),
+              ),
             ),
           ),
           SizedBox(width: gap),
-          Tooltip(
-            message: _aiResult == null
-                ? 'Запустить AI-анализ'
-                : 'Повторить AI-анализ',
+          Expanded(
             child: FilledButton.tonalIcon(
-              key: const ValueKey('production-ai-analysis'),
+              key: const ValueKey('approve-production-unit'),
               style: tonalStyle,
-              onPressed: _productionDecisionBusy || _comparing || _aiLoading
-                  ? null
-                  : _runAiAnalysis,
-              icon: _aiLoading
-                  ? const SizedBox.square(
-                      dimension: 14,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : Icon(
-                      _aiResult == null
-                          ? Icons.auto_awesome_outlined
-                          : Icons.auto_awesome,
-                      size: 16,
-                    ),
-              label: Text(compact ? 'AI' : 'AI-анализ'),
-            ),
-          ),
-          SizedBox(width: gap),
-          FilledButton.tonalIcon(
-            key: const ValueKey('approve-production-unit'),
-            style: tonalStyle,
-            onPressed: _productionDecisionBusy || blocked
-                ? null
-                : () => _decideProductionInspection(
-                      ProductionInspectionDecision.approved,
-                    ),
-            icon: const Icon(Icons.task_alt_rounded, size: 16),
-            label: const Text('Допустить'),
-          ),
-          SizedBox(width: gap),
-          Tooltip(
-            message: 'Заблокировать образец',
-            child: FilledButton.icon(
-              key: const ValueKey('block-production-unit'),
-              style: blockedStyle,
               onPressed: _productionDecisionBusy || blocked
                   ? null
                   : () => _decideProductionInspection(
-                        ProductionInspectionDecision.blocked,
+                        ProductionInspectionDecision.approved,
                       ),
-              icon: const Icon(Icons.block_rounded, size: 16),
-              label: Text(compact ? 'Стоп' : 'Заблокировать'),
+              icon: const Icon(Icons.task_alt_rounded, size: 16),
+              label: const Text('Допустить'),
+            ),
+          ),
+          SizedBox(width: gap),
+          Expanded(
+            child: Tooltip(
+              message: 'Заблокировать образец',
+              child: FilledButton.icon(
+                key: const ValueKey('block-production-unit'),
+                style: blockedStyle,
+                onPressed: _productionDecisionBusy || blocked
+                    ? null
+                    : () => _decideProductionInspection(
+                          ProductionInspectionDecision.blocked,
+                        ),
+                icon: const Icon(Icons.block_rounded, size: 16),
+                label: Text(compact ? 'Стоп' : 'Заблокировать'),
+              ),
             ),
           ),
         ]);
       }),
+    );
+  }
+
+  List<CheckProtocol> _protocolsForCurrentJob(
+    List<CheckProtocol> protocols,
+  ) {
+    final organizationId = widget.organizationAccess.organizationId ?? '';
+    final jobId = _currentJobId;
+    final jobNumber = _currentJobNumber;
+    final list = protocols.where((protocol) {
+      final sameScope = organizationId.isNotEmpty
+          ? protocol.organizationId == organizationId
+          : protocol.organizationId.isEmpty &&
+              protocol.ownerUserId == widget.historyOwnerId;
+      if (!sameScope) return false;
+      if (jobNumber.isEmpty) return protocol.jobId == jobId;
+      return protocol.jobId == jobId || protocol.jobNumber == jobNumber;
+    }).toList();
+    final current = _currentProtocol;
+    if (current != null && !list.any((protocol) => protocol.id == current.id)) {
+      list.add(current);
+    }
+    list.sort((a, b) {
+      final bySample = b.sampleNo.compareTo(a.sampleNo);
+      return bySample != 0 ? bySample : b.createdAt.compareTo(a.createdAt);
+    });
+    return list;
+  }
+
+  String _protocolDecisionLabel(CheckProtocol protocol) {
+    return switch (protocol.inspectionDecision) {
+      'approved' => 'Допущен',
+      'blocked' => 'Стоп',
+      _ => 'Проверен',
+    };
+  }
+
+  Color _protocolDecisionColor(CheckProtocol protocol) {
+    return switch (protocol.inspectionDecision) {
+      'approved' => const Color(0xFF5BE681),
+      'blocked' => const Color(0xFFFF6268),
+      _ => const Color(0xFFFFA253),
+    };
+  }
+
+  String _protocolTime(DateTime value) {
+    final local = value.toLocal();
+    return '${local.hour.toString().padLeft(2, '0')}:'
+        '${local.minute.toString().padLeft(2, '0')}';
+  }
+
+  Widget _sampleLedgerCell(
+    String text, {
+    required int flex,
+    Color? color,
+    bool bold = false,
+    TextAlign align = TextAlign.left,
+  }) {
+    return Expanded(
+      flex: flex,
+      child: Tooltip(
+        message: text,
+        child: Text(
+          text,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: align,
+          style: TextStyle(
+            fontSize: 10,
+            color: color ?? const Color(0xFFD8E4E8),
+            fontWeight: bold ? FontWeight.w800 : FontWeight.w600,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _sampleCheckLedger() {
+    return SizedBox(
+      key: const ValueKey('sample-check-ledger'),
+      height: 124,
+      child: DecoratedBox(
+        decoration: const BoxDecoration(
+          color: Color(0xFF202C30),
+          border: Border(
+            top: BorderSide(color: Color(0xFF4D6870)),
+          ),
+        ),
+        child: ValueListenableBuilder<List<CheckProtocol>>(
+          valueListenable: CheckHistoryService.checks,
+          builder: (context, protocols, _) {
+            final rows = _protocolsForCurrentJob(protocols);
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Container(
+                  height: 27,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  color: const Color(0xFF2B3B40),
+                  child: Row(
+                    children: [
+                      _sampleLedgerCell('Эталон', flex: 4, bold: true),
+                      _sampleLedgerCell('Образец', flex: 2, bold: true),
+                      _sampleLedgerCell('Время', flex: 2, bold: true),
+                      _sampleLedgerCell(
+                        'AI',
+                        flex: 1,
+                        bold: true,
+                        align: TextAlign.center,
+                      ),
+                      _sampleLedgerCell('Статус', flex: 3, bold: true),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: rows.isEmpty
+                      ? const Center(
+                          child: Text(
+                            'Проверка ещё не сохранена',
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: Color(0xFF9EB0B5),
+                            ),
+                          ),
+                        )
+                      : ListView.builder(
+                          padding: EdgeInsets.zero,
+                          itemCount: rows.length,
+                          itemExtent: 31,
+                          itemBuilder: (context, index) {
+                            final protocol = rows[index];
+                            final current = protocol.id == _activeProtocolId;
+                            final statusColor =
+                                _protocolDecisionColor(protocol);
+                            return Material(
+                              color: current
+                                  ? const Color(0xFF28474C)
+                                  : index.isEven
+                                      ? const Color(0xFF202C30)
+                                      : const Color(0xFF243237),
+                              child: InkWell(
+                                key: ValueKey(
+                                  'sample-ledger-row-${protocol.id}',
+                                ),
+                                onTap: () => _showCheckSummary(protocol),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      _sampleLedgerCell(
+                                        protocol.referenceLabel,
+                                        flex: 4,
+                                        color: current ? _hudGreen : null,
+                                        bold: current,
+                                      ),
+                                      _sampleLedgerCell(
+                                        '№${protocol.sampleNo}',
+                                        flex: 2,
+                                        color: current ? _hudGreen : null,
+                                        bold: current,
+                                      ),
+                                      _sampleLedgerCell(
+                                        _protocolTime(protocol.createdAt),
+                                        flex: 2,
+                                      ),
+                                      _sampleLedgerCell(
+                                        protocol.aiAnalysisPerformed
+                                            ? '✓'
+                                            : '—',
+                                        flex: 1,
+                                        color: protocol.aiAnalysisPerformed
+                                            ? _hudGreen
+                                            : null,
+                                        bold: true,
+                                        align: TextAlign.center,
+                                      ),
+                                      _sampleLedgerCell(
+                                        _protocolDecisionLabel(protocol),
+                                        flex: 3,
+                                        color: statusColor,
+                                        bold: true,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showCheckSummary(CheckProtocol protocol) async {
+    CheckProtocolStage? stageContaining(String pattern) {
+      final lower = pattern.toLowerCase();
+      for (final stage in protocol.stages) {
+        if (stage.name.toLowerCase().contains(lower)) return stage;
+      }
+      return null;
+    }
+
+    final colorStage = stageContaining('цвет');
+    final geometryStage = stageContaining('геометр');
+    final ocrStage = stageContaining('ocr');
+    final barcodeStage = stageContaining('штрих');
+    final decisionColor = _protocolDecisionColor(protocol);
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 520),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 22),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Образец №${protocol.sampleNo}',
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      _protocolDecisionLabel(protocol),
+                      style: TextStyle(
+                        color: decisionColor,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${protocol.referenceLabel} · '
+                  '${_protocolTime(protocol.createdAt)} · '
+                  '${protocol.score.toStringAsFixed(1)}%',
+                  style: const TextStyle(
+                    color: AppTheme.graphiteSoft,
+                    fontSize: 12,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                _checkSummaryLine(
+                  'AI-анализ',
+                  protocol.aiAnalysisPerformed
+                      ? protocol.aiVerdict.isEmpty
+                          ? 'выполнен'
+                          : protocol.aiVerdict
+                      : 'не выполнялся',
+                ),
+                if (colorStage != null)
+                  _checkSummaryLine('Цвет', colorStage.metric),
+                if (geometryStage != null)
+                  _checkSummaryLine('Геометрия', geometryStage.metric),
+                if (ocrStage != null) _checkSummaryLine('OCR', ocrStage.metric),
+                if (barcodeStage != null)
+                  _checkSummaryLine('Штрихкоды', barcodeStage.metric),
+                if (protocol.inspectionDecisionAt != null)
+                  _checkSummaryLine(
+                    'Решение',
+                    '${_protocolDecisionLabel(protocol)} · '
+                        '${_protocolTime(protocol.inspectionDecisionAt!)}',
+                  ),
+                if (protocol.inspectionDecisionNote.isNotEmpty)
+                  _checkSummaryLine(
+                    'Причина',
+                    protocol.inspectionDecisionNote,
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _checkSummaryLine(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 118,
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: AppTheme.graphiteSoft,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value.isEmpty ? '—' : value,
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -4488,7 +4895,14 @@ class _CompareScreenState extends State<CompareScreen> {
             decision == ProductionInspectionDecision.approved
                 ? ProductionUnitState.approved
                 : ProductionUnitState.blocked;
+        _inspectionDecision = decision == ProductionInspectionDecision.approved
+            ? 'approved'
+            : 'blocked';
+        _inspectionDecisionNote = note.trim();
+        _inspectionDecisionAt = DateTime.now();
       });
+      await _saveCheckResult();
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(decision == ProductionInspectionDecision.approved
@@ -4927,6 +5341,9 @@ class _CompareScreenState extends State<CompareScreen> {
           apertureMm: _measurementSettings.aperture.diameterMm,
           aiAnalysisPerformed: _aiResult != null,
           aiVerdict: _aiResult?.verdict ?? '',
+          inspectionDecision: _inspectionDecision,
+          inspectionDecisionNote: _inspectionDecisionNote,
+          inspectionDecisionAt: _inspectionDecisionAt,
           stages: _checkProtocolStages(result),
         );
   }
