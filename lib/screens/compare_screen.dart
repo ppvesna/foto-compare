@@ -43,6 +43,13 @@ enum _WorkspaceView { reference, sample, comparison }
 
 enum _ReferenceReplacementChoice { useNew, keepPrevious }
 
+typedef _SampleLedgerEntry = ({
+  int sampleNo,
+  String key,
+  CheckProtocol? protocol,
+  List<ProductionInspectionHistoryItem> attempts,
+});
+
 class _JobSelectionDraft {
   final String jobNumber;
   final String? customerId;
@@ -260,6 +267,7 @@ class _CompareScreenState extends State<CompareScreen> {
   final _sampleLedgerScrollCtrl = ScrollController();
   Map<String, ProductionInspectionHistoryItem> _inspectionHistoryByProtocol =
       const {};
+  List<ProductionInspectionHistoryItem> _serverInspectionHistory = const [];
   int _serverSampleCount = 0;
 
   static const int _uiImageCacheWidth = 1600;
@@ -403,6 +411,7 @@ class _CompareScreenState extends State<CompareScreen> {
           '${item.batchNumber}:${item.unitNumber}:${item.inspectionNumber}',
       };
       setState(() {
+        _serverInspectionHistory = jobHistory;
         _inspectionHistoryByProtocol = {
           for (final item in jobHistory)
             if (item.protocolId.isNotEmpty) item.protocolId: item,
@@ -4382,11 +4391,11 @@ class _CompareScreenState extends State<CompareScreen> {
             : MediaQuery.sizeOf(context).width;
         final viewportHeight =
             constraints.minHeight.isFinite ? constraints.minHeight : 0.0;
-        final visibleProtocols = _protocolsForCurrentJob(
+        final visibleEntries = _sampleLedgerEntries(
           CheckHistoryService.checks.value,
         );
-        final hasPreviousChecks = visibleProtocols.isNotEmpty;
-        final ledgerHeight = _sampleLedgerHeight(visibleProtocols.length);
+        final hasPreviousChecks = visibleEntries.isNotEmpty;
+        final ledgerHeight = _sampleLedgerHeight(visibleEntries.length);
         final chromeHeight = r == null
             ? hasPreviousChecks
                 ? ledgerHeight
@@ -4640,20 +4649,97 @@ class _CompareScreenState extends State<CompareScreen> {
     return list;
   }
 
-  String _protocolDecisionLabel(CheckProtocol protocol) {
-    return switch (_resolvedProtocolDecision(protocol)) {
-      'approved' => 'Допущен',
-      'blocked' => 'Заблокирован',
-      _ => '',
+  List<_SampleLedgerEntry> _sampleLedgerEntries(
+    List<CheckProtocol> protocols,
+  ) {
+    final localProtocols = _protocolsForCurrentJob(protocols);
+    final localById = {
+      for (final protocol in localProtocols) protocol.id: protocol
     };
+    final serverGroups = <String, List<ProductionInspectionHistoryItem>>{};
+    for (final item in _serverInspectionHistory) {
+      final key = '${item.batchNumber}:${item.unitNumber}:'
+          '${item.inspectionNumber}';
+      serverGroups.putIfAbsent(key, () => []).add(item);
+    }
+    final chronological = serverGroups.entries.toList()
+      ..forEach(
+        (entry) => entry.value.sort(
+          (a, b) => a.attemptedAt.compareTo(b.attemptedAt),
+        ),
+      )
+      ..sort(
+        (a, b) =>
+            a.value.first.attemptedAt.compareTo(b.value.first.attemptedAt),
+      );
+
+    final representedProtocols = <String>{};
+    final entries = <_SampleLedgerEntry>[];
+    for (final indexed in chronological.indexed) {
+      final attempts = indexed.$2.value;
+      final latest = attempts.last;
+      final protocol = localById[latest.protocolId];
+      if (latest.protocolId.isNotEmpty) {
+        representedProtocols.add(latest.protocolId);
+      }
+      entries.add((
+        sampleNo: indexed.$1 + 1,
+        key: 'server-${indexed.$2.key}',
+        protocol: protocol,
+        attempts: attempts,
+      ));
+    }
+
+    for (final protocol in localProtocols) {
+      if (representedProtocols.contains(protocol.id)) continue;
+      entries.add((
+        sampleNo: protocol.sampleNo,
+        key: 'local-${protocol.id}',
+        protocol: protocol,
+        attempts: const [],
+      ));
+    }
+    entries.sort((a, b) {
+      final bySample = b.sampleNo.compareTo(a.sampleNo);
+      if (bySample != 0) return bySample;
+      return _sampleLedgerCreatedAt(b).compareTo(_sampleLedgerCreatedAt(a));
+    });
+    return entries;
+  }
+
+  DateTime _sampleLedgerCreatedAt(_SampleLedgerEntry entry) =>
+      entry.attempts.isNotEmpty
+          ? entry.attempts.last.attemptedAt
+          : entry.protocol!.createdAt;
+
+  double _sampleLedgerScore(_SampleLedgerEntry entry) =>
+      entry.attempts.isNotEmpty
+          ? entry.attempts.last.score
+          : entry.protocol!.score;
+
+  String _sampleLedgerDecision(_SampleLedgerEntry entry) =>
+      entry.attempts.isNotEmpty
+          ? entry.attempts.last.decisionStatus
+          : _resolvedProtocolDecision(entry.protocol!);
+
+  String _inspectionDecisionLabel(String decision) => switch (decision) {
+        'approved' => 'Допущен',
+        'blocked' => 'Заблокирован',
+        _ => '',
+      };
+
+  Color _inspectionDecisionColor(String decision) => switch (decision) {
+        'approved' => const Color(0xFF5BE681),
+        'blocked' => const Color(0xFFFF6268),
+        _ => const Color(0xFF9EB0B5),
+      };
+
+  String _protocolDecisionLabel(CheckProtocol protocol) {
+    return _inspectionDecisionLabel(_resolvedProtocolDecision(protocol));
   }
 
   Color _protocolDecisionColor(CheckProtocol protocol) {
-    return switch (_resolvedProtocolDecision(protocol)) {
-      'approved' => const Color(0xFF5BE681),
-      'blocked' => const Color(0xFFFF6268),
-      _ => const Color(0xFF9EB0B5),
-    };
+    return _inspectionDecisionColor(_resolvedProtocolDecision(protocol));
   }
 
   String _resolvedProtocolDecision(CheckProtocol protocol) {
@@ -4717,7 +4803,7 @@ class _CompareScreenState extends State<CompareScreen> {
         child: ValueListenableBuilder<List<CheckProtocol>>(
           valueListenable: CheckHistoryService.checks,
           builder: (context, protocols, _) {
-            final rows = _protocolsForCurrentJob(protocols);
+            final rows = _sampleLedgerEntries(protocols);
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -4761,10 +4847,18 @@ class _CompareScreenState extends State<CompareScreen> {
                             itemCount: rows.length,
                             itemExtent: 31,
                             itemBuilder: (context, index) {
-                              final protocol = rows[index];
-                              final current = protocol.id == _activeProtocolId;
+                              final entry = rows[index];
+                              final protocol = entry.protocol;
+                              final latestAttempt = entry.attempts.isEmpty
+                                  ? null
+                                  : entry.attempts.last;
+                              final current =
+                                  protocol?.id == _activeProtocolId ||
+                                      latestAttempt?.protocolId ==
+                                          _activeProtocolId;
+                              final decision = _sampleLedgerDecision(entry);
                               final statusColor =
-                                  _protocolDecisionColor(protocol);
+                                  _inspectionDecisionColor(decision);
                               return Material(
                                 color: current
                                     ? const Color(0xFF28474C)
@@ -4773,9 +4867,14 @@ class _CompareScreenState extends State<CompareScreen> {
                                         : const Color(0xFF243237),
                                 child: InkWell(
                                   key: ValueKey(
-                                    'sample-ledger-row-${protocol.id}',
+                                    'sample-ledger-row-${entry.key}',
                                   ),
-                                  onTap: () => _showCheckSummary(protocol),
+                                  onTap: () => protocol != null
+                                      ? _showCheckSummary(
+                                          protocol,
+                                          sampleNo: entry.sampleNo,
+                                        )
+                                      : _showServerCheckSummary(entry),
                                   child: Padding(
                                     padding: const EdgeInsets.symmetric(
                                       horizontal: 10,
@@ -4783,29 +4882,36 @@ class _CompareScreenState extends State<CompareScreen> {
                                     child: Row(
                                       children: [
                                         _sampleLedgerCell(
-                                          _protocolReferenceLabel(protocol),
+                                          protocol == null
+                                              ? 'ЭТАЛОН'
+                                              : _protocolReferenceLabel(
+                                                  protocol),
                                           flex: 4,
                                           color: current ? _hudGreen : null,
                                           bold: current,
                                         ),
                                         _sampleLedgerCell(
-                                          '№${protocol.sampleNo}',
+                                          '№${entry.sampleNo}',
                                           flex: 2,
                                           color: current ? _hudGreen : null,
                                           bold: current,
                                         ),
                                         _sampleLedgerCell(
-                                          _protocolTime(protocol.createdAt),
+                                          _protocolTime(
+                                            _sampleLedgerCreatedAt(entry),
+                                          ),
                                           flex: 2,
                                         ),
                                         _sampleLedgerCell(
-                                          protocol.aiAnalysisPerformed
+                                          protocol?.aiAnalysisPerformed == true
                                               ? '✓'
                                               : '—',
                                           flex: 1,
-                                          color: protocol.aiAnalysisPerformed
-                                              ? _hudGreen
-                                              : null,
+                                          color:
+                                              protocol?.aiAnalysisPerformed ==
+                                                      true
+                                                  ? _hudGreen
+                                                  : null,
                                           bold: true,
                                           align: TextAlign.center,
                                         ),
@@ -4816,7 +4922,7 @@ class _CompareScreenState extends State<CompareScreen> {
                                           bold: true,
                                         ),
                                         _sampleLedgerCell(
-                                          _protocolDecisionLabel(protocol),
+                                          _inspectionDecisionLabel(decision),
                                           flex: 3,
                                           color: statusColor,
                                           bold: true,
@@ -4838,7 +4944,10 @@ class _CompareScreenState extends State<CompareScreen> {
     );
   }
 
-  Future<void> _showCheckSummary(CheckProtocol protocol) async {
+  Future<void> _showCheckSummary(
+    CheckProtocol protocol, {
+    int? sampleNo,
+  }) async {
     CheckProtocolStage? stageContaining(String pattern) {
       final lower = pattern.toLowerCase();
       for (final stage in protocol.stages) {
@@ -4868,7 +4977,7 @@ class _CompareScreenState extends State<CompareScreen> {
                   children: [
                     Expanded(
                       child: Text(
-                        'Образец №${protocol.sampleNo}',
+                        'Образец №${sampleNo ?? protocol.sampleNo}',
                         style: const TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.w900,
@@ -4939,6 +5048,78 @@ class _CompareScreenState extends State<CompareScreen> {
                   ),
               ],
             ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showServerCheckSummary(_SampleLedgerEntry entry) async {
+    final latest = entry.attempts.last;
+    final decisionLabel = _inspectionDecisionLabel(latest.decisionStatus);
+    final decisionColor = _inspectionDecisionColor(latest.decisionStatus);
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 22),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Образец №${entry.sampleNo}',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      const Text(
+                        'Проверен',
+                        style: TextStyle(
+                          color: Color(0xFFFFA253),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      if (decisionLabel.isNotEmpty)
+                        Text(
+                          decisionLabel,
+                          style: TextStyle(
+                            color: decisionColor,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'ЭТАЛОН · ${_protocolTime(latest.attemptedAt)} · '
+                '${_sampleLedgerScore(entry).toStringAsFixed(1)}%',
+                style: const TextStyle(
+                  color: AppTheme.graphiteSoft,
+                  fontSize: 12,
+                ),
+              ),
+              const SizedBox(height: 14),
+              _checkSummaryLine('Этап', 'Проверен'),
+              _checkSummaryLine('Проверок', '${entry.attempts.length}'),
+              _checkSummaryLine('Исполнитель', latest.attemptedByName),
+              if (decisionLabel.isNotEmpty)
+                _checkSummaryLine('Статус', decisionLabel),
+              if (latest.decisionNote.isNotEmpty)
+                _checkSummaryLine('Причина', latest.decisionNote),
+            ],
           ),
         ),
       ),

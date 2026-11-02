@@ -324,6 +324,14 @@ void main() {
       find.byKey(const ValueKey('current-sample-number')),
     );
     expect(sampleNumber.text, 'ОБРАЗЕЦ 10');
+    await tester.tap(
+      find.byKey(const ValueKey('workspace-mode-comparison')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('sample-check-ledger')), findsOneWidget);
+    expect(find.text('№9'), findsOneWidget);
+    expect(find.text('Допущен'), findsWidgets);
     expect(tester.takeException(), isNull);
   });
 
