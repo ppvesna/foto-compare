@@ -257,6 +257,9 @@ class _CompareScreenState extends State<CompareScreen> {
   int? _activeProtocolSampleNo;
   CheckProtocol? _currentProtocol;
   Future<void> _cloudProtocolSyncQueue = Future<void>.value();
+  final _sampleLedgerScrollCtrl = ScrollController();
+  Map<String, ProductionInspectionHistoryItem> _inspectionHistoryByProtocol =
+      const {};
 
   static const int _uiImageCacheWidth = 1600;
 
@@ -313,6 +316,7 @@ class _CompareScreenState extends State<CompareScreen> {
     _loadCameraCaptureSettings();
     _loadCameraCalibrationProfile();
     _loadCustomerDirectory();
+    _loadInspectionHistory();
     CalibrationSettingsService.notifier.addListener(_onCalibrationSettings);
     CameraCalibrationProfileService.activeProfileNotifier.addListener(
       _onCameraCalibrationProfile,
@@ -326,6 +330,7 @@ class _CompareScreenState extends State<CompareScreen> {
     if (oldWidget.organizationAccess.organizationId !=
         widget.organizationAccess.organizationId) {
       _loadCustomerDirectory();
+      _loadInspectionHistory();
     }
     if (oldWidget.initialJob?.jobId != widget.initialJob?.jobId) {
       setState(() {
@@ -347,9 +352,11 @@ class _CompareScreenState extends State<CompareScreen> {
         _clearComputedResultState();
       });
       _loadSavedReference();
+      _loadInspectionHistory();
     }
     if (oldWidget.inspectionUnit?.id != widget.inspectionUnit?.id) {
       setState(() => _productionInspectionState = widget.inspectionUnit?.state);
+      _loadInspectionHistory();
     }
   }
 
@@ -370,6 +377,28 @@ class _CompareScreenState extends State<CompareScreen> {
   ProductionJobService get _productionJobService =>
       widget.productionJobService ??
       SupabaseProductionJobService(Supabase.instance.client);
+
+  Future<void> _loadInspectionHistory() async {
+    final organizationId = widget.organizationAccess.organizationId;
+    final workflow = widget.productionWorkflowService;
+    if (organizationId == null || workflow == null) return;
+    try {
+      final history = await workflow.listInspectionHistory(
+        organizationId: organizationId,
+        search: _currentJobNumber,
+        limit: 100,
+      );
+      if (!mounted) return;
+      setState(() {
+        _inspectionHistoryByProtocol = {
+          for (final item in history)
+            if (item.protocolId.isNotEmpty) item.protocolId: item,
+        };
+      });
+    } catch (_) {
+      // Local protocols remain usable when the server history is unavailable.
+    }
+  }
 
   Future<void> _loadCustomerDirectory() {
     final organizationId = widget.organizationAccess.organizationId;
@@ -1242,6 +1271,7 @@ class _CompareScreenState extends State<CompareScreen> {
       _onCameraCalibrationProfile,
     );
     _workspaceScrollCtrl.dispose();
+    _sampleLedgerScrollCtrl.dispose();
     _refAlignCtrl.dispose();
     _cmpAlignCtrl.dispose();
     _resultCmpCtrl.dispose();
@@ -1465,15 +1495,39 @@ class _CompareScreenState extends State<CompareScreen> {
     return _layoutProfile?.createdAt;
   }
 
-  String get _referenceHudValue {
-    final createdAt = _currentReferenceCreatedAt?.toLocal();
-    if (createdAt == null) return 'ЭТАЛОН';
-    final date = '${createdAt.day.toString().padLeft(2, '0')}.'
-        '${createdAt.month.toString().padLeft(2, '0')}.'
-        '${createdAt.year}';
-    final time = '${createdAt.hour.toString().padLeft(2, '0')}:'
-        '${createdAt.minute.toString().padLeft(2, '0')}';
+  String _referenceDateTimeLabel(DateTime createdAt) {
+    final local = createdAt.toLocal();
+    final date = '${local.day.toString().padLeft(2, '0')}.'
+        '${local.month.toString().padLeft(2, '0')}.'
+        '${local.year}';
+    final time = '${local.hour.toString().padLeft(2, '0')}:'
+        '${local.minute.toString().padLeft(2, '0')}';
     return 'ЭТАЛОН $date $time';
+  }
+
+  String get _referenceHudValue {
+    final createdAt = _currentReferenceCreatedAt;
+    return createdAt == null ? 'ЭТАЛОН' : _referenceDateTimeLabel(createdAt);
+  }
+
+  String _protocolReferenceLabel(CheckProtocol protocol) {
+    for (final reference in _savedReferences) {
+      final sameId = protocol.referenceId.isNotEmpty &&
+          reference.id == protocol.referenceId;
+      final sameLabel = protocol.referenceId.isEmpty &&
+          reference.label == protocol.referenceLabel;
+      if (sameId || sameLabel) {
+        return _referenceDateTimeLabel(reference.createdAt);
+      }
+    }
+    final sameAsCurrent = protocol.referenceId.isNotEmpty
+        ? protocol.referenceId == _activeReferenceId
+        : protocol.referenceLabel == _savedRefLabel;
+    final currentCreatedAt = _currentReferenceCreatedAt;
+    if (sameAsCurrent && currentCreatedAt != null) {
+      return _referenceDateTimeLabel(currentCreatedAt);
+    }
+    return 'ЭТАЛОН';
   }
 
   int _nextSampleNumberFor({
@@ -4325,16 +4379,18 @@ class _CompareScreenState extends State<CompareScreen> {
             : MediaQuery.sizeOf(context).width;
         final viewportHeight =
             constraints.minHeight.isFinite ? constraints.minHeight : 0.0;
-        final hasPreviousChecks = _protocolsForCurrentJob(
+        final visibleProtocols = _protocolsForCurrentJob(
           CheckHistoryService.checks.value,
-        ).isNotEmpty;
+        );
+        final hasPreviousChecks = visibleProtocols.isNotEmpty;
+        final ledgerHeight = _sampleLedgerHeight(visibleProtocols.length);
         final chromeHeight = r == null
             ? hasPreviousChecks
-                ? 124.0
+                ? ledgerHeight
                 : 0.0
-            : widget.inspectionUnit == null
-                ? 194.0
-                : 240.0;
+            : 70.0 +
+                ledgerHeight +
+                (widget.inspectionUnit == null ? 0.0 : 46.0);
         final naturalHeight = availableWidth * 9 / 16 + chromeHeight;
         final stageHeight = max(viewportHeight, naturalHeight);
 
@@ -4397,7 +4453,7 @@ class _CompareScreenState extends State<CompareScreen> {
                     _resultModeHud(),
                     if (widget.inspectionUnit != null)
                       _productionInspectionDecisionBar(),
-                    _sampleCheckLedger(),
+                    _sampleCheckLedger(height: ledgerHeight),
                   ] else if (_comparing)
                     const Expanded(
                       child: Center(
@@ -4436,7 +4492,8 @@ class _CompareScreenState extends State<CompareScreen> {
                         ],
                       ),
                     ),
-                    if (hasPreviousChecks) _sampleCheckLedger(),
+                    if (hasPreviousChecks)
+                      _sampleCheckLedger(height: ledgerHeight),
                   ],
                 ],
               ),
@@ -4581,19 +4638,29 @@ class _CompareScreenState extends State<CompareScreen> {
   }
 
   String _protocolDecisionLabel(CheckProtocol protocol) {
-    return switch (protocol.inspectionDecision) {
+    return switch (_resolvedProtocolDecision(protocol)) {
       'approved' => 'Допущен',
-      'blocked' => 'Стоп',
+      'blocked' => 'Заблокирован',
       _ => 'Проверен',
     };
   }
 
   Color _protocolDecisionColor(CheckProtocol protocol) {
-    return switch (protocol.inspectionDecision) {
+    return switch (_resolvedProtocolDecision(protocol)) {
       'approved' => const Color(0xFF5BE681),
       'blocked' => const Color(0xFFFF6268),
       _ => const Color(0xFFFFA253),
     };
+  }
+
+  String _resolvedProtocolDecision(CheckProtocol protocol) {
+    final localDecision = protocol.inspectionDecision;
+    if (localDecision == 'approved' || localDecision == 'blocked') {
+      return localDecision!;
+    }
+    return _inspectionHistoryByProtocol[protocol.id]?.decisionStatus ??
+        localDecision ??
+        'pending';
   }
 
   String _protocolTime(DateTime value) {
@@ -4628,10 +4695,15 @@ class _CompareScreenState extends State<CompareScreen> {
     );
   }
 
-  Widget _sampleCheckLedger() {
+  double _sampleLedgerHeight(int rowCount) {
+    final visibleRows = min(5, max(1, rowCount));
+    return 27 + visibleRows * 31;
+  }
+
+  Widget _sampleCheckLedger({required double height}) {
     return SizedBox(
       key: const ValueKey('sample-check-ledger'),
-      height: 124,
+      height: height,
       child: DecoratedBox(
         decoration: const BoxDecoration(
           color: Color(0xFF202C30),
@@ -4661,7 +4733,7 @@ class _CompareScreenState extends State<CompareScreen> {
                         bold: true,
                         align: TextAlign.center,
                       ),
-                      _sampleLedgerCell('Статус', flex: 3, bold: true),
+                      _sampleLedgerCell('Статус', flex: 4, bold: true),
                     ],
                   ),
                 ),
@@ -4676,71 +4748,76 @@ class _CompareScreenState extends State<CompareScreen> {
                             ),
                           ),
                         )
-                      : ListView.builder(
-                          padding: EdgeInsets.zero,
-                          itemCount: rows.length,
-                          itemExtent: 31,
-                          itemBuilder: (context, index) {
-                            final protocol = rows[index];
-                            final current = protocol.id == _activeProtocolId;
-                            final statusColor =
-                                _protocolDecisionColor(protocol);
-                            return Material(
-                              color: current
-                                  ? const Color(0xFF28474C)
-                                  : index.isEven
-                                      ? const Color(0xFF202C30)
-                                      : const Color(0xFF243237),
-                              child: InkWell(
-                                key: ValueKey(
-                                  'sample-ledger-row-${protocol.id}',
-                                ),
-                                onTap: () => _showCheckSummary(protocol),
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
+                      : Scrollbar(
+                          controller: _sampleLedgerScrollCtrl,
+                          thumbVisibility: rows.length > 5,
+                          child: ListView.builder(
+                            controller: _sampleLedgerScrollCtrl,
+                            padding: EdgeInsets.zero,
+                            itemCount: rows.length,
+                            itemExtent: 31,
+                            itemBuilder: (context, index) {
+                              final protocol = rows[index];
+                              final current = protocol.id == _activeProtocolId;
+                              final statusColor =
+                                  _protocolDecisionColor(protocol);
+                              return Material(
+                                color: current
+                                    ? const Color(0xFF28474C)
+                                    : index.isEven
+                                        ? const Color(0xFF202C30)
+                                        : const Color(0xFF243237),
+                                child: InkWell(
+                                  key: ValueKey(
+                                    'sample-ledger-row-${protocol.id}',
                                   ),
-                                  child: Row(
-                                    children: [
-                                      _sampleLedgerCell(
-                                        protocol.referenceLabel,
-                                        flex: 4,
-                                        color: current ? _hudGreen : null,
-                                        bold: current,
-                                      ),
-                                      _sampleLedgerCell(
-                                        '№${protocol.sampleNo}',
-                                        flex: 2,
-                                        color: current ? _hudGreen : null,
-                                        bold: current,
-                                      ),
-                                      _sampleLedgerCell(
-                                        _protocolTime(protocol.createdAt),
-                                        flex: 2,
-                                      ),
-                                      _sampleLedgerCell(
-                                        protocol.aiAnalysisPerformed
-                                            ? '✓'
-                                            : '—',
-                                        flex: 1,
-                                        color: protocol.aiAnalysisPerformed
-                                            ? _hudGreen
-                                            : null,
-                                        bold: true,
-                                        align: TextAlign.center,
-                                      ),
-                                      _sampleLedgerCell(
-                                        _protocolDecisionLabel(protocol),
-                                        flex: 3,
-                                        color: statusColor,
-                                        bold: true,
-                                      ),
-                                    ],
+                                  onTap: () => _showCheckSummary(protocol),
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        _sampleLedgerCell(
+                                          _protocolReferenceLabel(protocol),
+                                          flex: 4,
+                                          color: current ? _hudGreen : null,
+                                          bold: current,
+                                        ),
+                                        _sampleLedgerCell(
+                                          '№${protocol.sampleNo}',
+                                          flex: 2,
+                                          color: current ? _hudGreen : null,
+                                          bold: current,
+                                        ),
+                                        _sampleLedgerCell(
+                                          _protocolTime(protocol.createdAt),
+                                          flex: 2,
+                                        ),
+                                        _sampleLedgerCell(
+                                          protocol.aiAnalysisPerformed
+                                              ? '✓'
+                                              : '—',
+                                          flex: 1,
+                                          color: protocol.aiAnalysisPerformed
+                                              ? _hudGreen
+                                              : null,
+                                          bold: true,
+                                          align: TextAlign.center,
+                                        ),
+                                        _sampleLedgerCell(
+                                          _protocolDecisionLabel(protocol),
+                                          flex: 4,
+                                          color: statusColor,
+                                          bold: true,
+                                        ),
+                                      ],
+                                    ),
                                   ),
                                 ),
-                              ),
-                            );
-                          },
+                              );
+                            },
+                          ),
                         ),
                 ),
               ],
@@ -4799,7 +4876,7 @@ class _CompareScreenState extends State<CompareScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '${protocol.referenceLabel} · '
+                  '${_protocolReferenceLabel(protocol)} · '
                   '${_protocolTime(protocol.createdAt)} · '
                   '${protocol.score.toStringAsFixed(1)}%',
                   style: const TextStyle(
@@ -4938,6 +5015,7 @@ class _CompareScreenState extends State<CompareScreen> {
       });
       await _saveCheckResult();
       if (!mounted) return;
+      unawaited(_loadInspectionHistory());
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(

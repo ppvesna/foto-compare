@@ -258,7 +258,8 @@ void main() {
 
     expect(find.byKey(const ValueKey('sample-check-ledger')), findsOneWidget);
     expect(find.text('№4'), findsOneWidget);
-    expect(find.text('Стоп'), findsOneWidget);
+    expect(find.text('ЭТАЛОН'), findsOneWidget);
+    expect(find.text('Заблокирован'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
