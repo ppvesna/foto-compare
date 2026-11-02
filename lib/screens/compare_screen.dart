@@ -2380,6 +2380,8 @@ class _CompareScreenState extends State<CompareScreen> {
   String get _automaticReferenceLabel {
     final current = _savedRefLabel?.trim();
     if (current != null && current.isNotEmpty) return current;
+    final previous = _referenceReplacementBackup?.label.trim();
+    if (previous != null && previous.isNotEmpty) return previous;
     final work = _currentJobNumber.trim();
     return work.isEmpty ? 'Эталон' : 'Эталон $work';
   }
@@ -2473,7 +2475,12 @@ class _CompareScreenState extends State<CompareScreen> {
     final bytes = _refImg;
     if (bytes == null) return false;
     final label = _automaticReferenceLabel;
-    final referenceId = _activeReferenceId ??
+    // A confirmed replacement updates the reference already assigned to the
+    // job. Creating a fresh id here would leave two visually identical
+    // references in the picker even though the job can have only one active
+    // reference.
+    final referenceId = _referenceReplacementBackup?.id ??
+        _activeReferenceId ??
         _layoutProfile?.id ??
         DateTime.now().microsecondsSinceEpoch.toString();
     final candidate = SavedReferenceProfile(
