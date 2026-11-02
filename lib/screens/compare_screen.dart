@@ -3390,7 +3390,7 @@ class _CompareScreenState extends State<CompareScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             PixelText(
-              text: 'ОБРАЗЕЦ №$_sampleNo',
+              text: 'ОБРАЗЕЦ $_sampleNo',
               color: _hudWarning,
               pixelSize: 1.0,
             ),
@@ -3450,7 +3450,7 @@ class _CompareScreenState extends State<CompareScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           PixelText(
-            text: 'ОБРАЗЕЦ №$_sampleNo',
+            text: 'ОБРАЗЕЦ $_sampleNo',
             color: _hudGreenSecondary,
             pixelSize: compact ? 0.82 : 1.0,
           ),
@@ -4801,10 +4801,10 @@ class _CompareScreenState extends State<CompareScreen> {
                     '${_protocolDecisionLabel(protocol)} · '
                         '${_protocolTime(protocol.inspectionDecisionAt!)}',
                   ),
-                if (protocol.inspectionDecisionNote.isNotEmpty)
+                if (protocol.inspectionDecisionNote?.isNotEmpty == true)
                   _checkSummaryLine(
                     'Причина',
-                    protocol.inspectionDecisionNote,
+                    protocol.inspectionDecisionNote!,
                   ),
               ],
             ),

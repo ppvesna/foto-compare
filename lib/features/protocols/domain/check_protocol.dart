@@ -25,8 +25,10 @@ class CheckProtocol {
   final double apertureMm;
   final bool aiAnalysisPerformed;
   final String aiVerdict;
-  final String inspectionDecision;
-  final String inspectionDecisionNote;
+  // Nullable only for hot-upgraded/legacy in-memory objects. JSON loading and
+  // every new protocol still receive the explicit safe defaults below.
+  final String? inspectionDecision;
+  final String? inspectionDecisionNote;
   final DateTime? inspectionDecisionAt;
   final List<CheckProtocolStage> stages;
 
