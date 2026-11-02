@@ -1455,6 +1455,27 @@ class _CompareScreenState extends State<CompareScreen> {
 
   String get _currentSampleLabel => 'Отпечаток $_sampleNo';
 
+  DateTime? get _currentReferenceCreatedAt {
+    final referenceId = _activeReferenceId;
+    if (referenceId != null) {
+      for (final reference in _savedReferences) {
+        if (reference.id == referenceId) return reference.createdAt;
+      }
+    }
+    return _layoutProfile?.createdAt;
+  }
+
+  String get _referenceHudValue {
+    final createdAt = _currentReferenceCreatedAt?.toLocal();
+    if (createdAt == null) return 'ЭТАЛОН';
+    final date = '${createdAt.day.toString().padLeft(2, '0')}.'
+        '${createdAt.month.toString().padLeft(2, '0')}.'
+        '${createdAt.year}';
+    final time = '${createdAt.hour.toString().padLeft(2, '0')}:'
+        '${createdAt.minute.toString().padLeft(2, '0')}';
+    return 'ЭТАЛОН $date $time';
+  }
+
   int _nextSampleNumberFor({
     String? referenceId,
     String? referenceLabel,
@@ -3253,7 +3274,7 @@ class _CompareScreenState extends State<CompareScreen> {
               if (_savedRefLabel != null && _savedRefLabel!.trim().isNotEmpty)
                 line(
                   'ЭТАЛОН',
-                  _savedRefLabel!,
+                  _referenceHudValue,
                   _hudGreenSecondary,
                 ),
               if (!narrow && _currentCustomerName.isNotEmpty)
@@ -3392,7 +3413,7 @@ class _CompareScreenState extends State<CompareScreen> {
             PixelText(
               text: 'ОБРАЗЕЦ $_sampleNo',
               color: _hudWarning,
-              pixelSize: 1.0,
+              pixelSize: 1.2,
             ),
             const SizedBox(height: 6),
             const PixelText(
@@ -3438,8 +3459,8 @@ class _CompareScreenState extends State<CompareScreen> {
       _ => ('ПРОВЕРЕН', _hudWarning),
     };
     return Container(
-      width: compact ? 132 : 176,
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      width: compact ? 150 : 212,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         color: const Color(0xD9263438),
         borderRadius: BorderRadius.circular(8),
@@ -3452,13 +3473,13 @@ class _CompareScreenState extends State<CompareScreen> {
           PixelText(
             text: 'ОБРАЗЕЦ $_sampleNo',
             color: _hudGreenSecondary,
-            pixelSize: compact ? 0.82 : 1.0,
+            pixelSize: compact ? 1.05 : 1.35,
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 6),
           PixelText(
             text: label,
             color: color,
-            pixelSize: compact ? 0.78 : 0.92,
+            pixelSize: compact ? 0.9 : 1.05,
           ),
         ],
       ),
@@ -4304,8 +4325,13 @@ class _CompareScreenState extends State<CompareScreen> {
             : MediaQuery.sizeOf(context).width;
         final viewportHeight =
             constraints.minHeight.isFinite ? constraints.minHeight : 0.0;
+        final hasPreviousChecks = _protocolsForCurrentJob(
+          CheckHistoryService.checks.value,
+        ).isNotEmpty;
         final chromeHeight = r == null
-            ? 0.0
+            ? hasPreviousChecks
+                ? 124.0
+                : 0.0
             : widget.inspectionUnit == null
                 ? 194.0
                 : 240.0;
@@ -4378,7 +4404,7 @@ class _CompareScreenState extends State<CompareScreen> {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       ),
                     )
-                  else
+                  else ...[
                     Expanded(
                       child: Stack(
                         fit: StackFit.expand,
@@ -4410,6 +4436,8 @@ class _CompareScreenState extends State<CompareScreen> {
                         ],
                       ),
                     ),
+                    if (hasPreviousChecks) _sampleCheckLedger(),
+                  ],
                 ],
               ),
             ),
@@ -4420,7 +4448,7 @@ class _CompareScreenState extends State<CompareScreen> {
   }
 
   Widget _productionInspectionDecisionBar() {
-    final blocked = _productionInspectionState == ProductionUnitState.blocked;
+    final currentSampleDecided = _inspectionDecision != 'pending';
     return Container(
       height: 46,
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -4495,7 +4523,7 @@ class _CompareScreenState extends State<CompareScreen> {
             child: FilledButton.tonalIcon(
               key: const ValueKey('approve-production-unit'),
               style: tonalStyle,
-              onPressed: _productionDecisionBusy || blocked
+              onPressed: _productionDecisionBusy || currentSampleDecided
                   ? null
                   : () => _decideProductionInspection(
                         ProductionInspectionDecision.approved,
@@ -4511,7 +4539,7 @@ class _CompareScreenState extends State<CompareScreen> {
               child: FilledButton.icon(
                 key: const ValueKey('block-production-unit'),
                 style: blockedStyle,
-                onPressed: _productionDecisionBusy || blocked
+                onPressed: _productionDecisionBusy || currentSampleDecided
                     ? null
                     : () => _decideProductionInspection(
                           ProductionInspectionDecision.blocked,
@@ -4884,17 +4912,24 @@ class _CompareScreenState extends State<CompareScreen> {
     }
     setState(() => _productionDecisionBusy = true);
     try {
-      await workflow.decideInspection(
-        unitId: unit.id,
-        decision: decision,
-        note: note,
-      );
+      final keepsExistingProductionBlock =
+          decision == ProductionInspectionDecision.approved &&
+              _productionInspectionState == ProductionUnitState.blocked;
+      if (!keepsExistingProductionBlock) {
+        await workflow.decideInspection(
+          unitId: unit.id,
+          decision: decision,
+          note: note,
+        );
+      }
       if (!mounted) return;
       setState(() {
-        _productionInspectionState =
-            decision == ProductionInspectionDecision.approved
-                ? ProductionUnitState.approved
-                : ProductionUnitState.blocked;
+        if (!keepsExistingProductionBlock) {
+          _productionInspectionState =
+              decision == ProductionInspectionDecision.approved
+                  ? ProductionUnitState.approved
+                  : ProductionUnitState.blocked;
+        }
         _inspectionDecision = decision == ProductionInspectionDecision.approved
             ? 'approved'
             : 'blocked';
@@ -4905,9 +4940,15 @@ class _CompareScreenState extends State<CompareScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(decision == ProductionInspectionDecision.approved
-              ? '${unit.fullLabel}: допущено.'
-              : '${unit.fullLabel}: заблокировано.'),
+          content: Text(
+            keepsExistingProductionBlock
+                ? 'Образец $_sampleNo допущен. '
+                    'Производственная блокировка остаётся '
+                    'до решения администратора.'
+                : decision == ProductionInspectionDecision.approved
+                    ? '${unit.fullLabel}: допущено.'
+                    : '${unit.fullLabel}: заблокировано.',
+          ),
         ),
       );
     } catch (error) {

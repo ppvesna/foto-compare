@@ -197,6 +197,71 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('comparison shows previous samples before a new sample is loaded',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1100, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => CheckHistoryService.checks.value = const []);
+    SharedPreferences.setMockInitialValues({});
+    CheckHistoryService.checks.value = [
+      CheckProtocol(
+        id: 'check-4',
+        createdAt: DateTime(2026, 11, 2, 10, 15),
+        ownerUserId: 'operator-1',
+        organizationId: 'organization-1',
+        jobId: 'job-1',
+        jobNumber: 'WORK-001',
+        customerId: 'customer-1',
+        customerName: 'Заказчик',
+        customerConfirmed: true,
+        score: 81,
+        verdict: 'Предварительно',
+        refSize: '100×100',
+        cmpSize: '100×100',
+        labId: '-',
+        referenceId: 'reference-1',
+        referenceLabel: 'Эталон 1',
+        sampleLabel: 'Отпечаток 4',
+        sampleNo: 4,
+        labMatch: null,
+        inspectionDecision: 'blocked',
+        stages: const [],
+      ),
+    ];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CompareScreen(
+            entitlements: EntitlementSnapshot.forPlan(PlanTier.pro),
+            organizationAccess: OrganizationAccess.forRole(
+              organizationId: 'organization-1',
+              organizationName: 'Vesna',
+              role: OrganizationRole.admin,
+            ),
+            initialJob: const ProductionJobContext(
+              jobId: 'job-1',
+              jobNumber: 'WORK-001',
+              customerId: 'customer-1',
+              customerName: 'Заказчик',
+              customerConfirmed: true,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('workspace-mode-comparison')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('sample-check-ledger')), findsOneWidget);
+    expect(find.text('№4'), findsOneWidget);
+    expect(find.text('Стоп'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('empty comparison keeps the main photo background',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(590, 700));
@@ -632,6 +697,15 @@ void main() {
       stageLabels,
       contains('Образец. Снимите или загрузите проверяемую распечатку'),
     );
+    final referenceTooltip = tester.widget<Tooltip>(
+      find
+          .ancestor(
+            of: find.byKey(const ValueKey('active-status-value-ЭТАЛОН')),
+            matching: find.byType(Tooltip),
+          )
+          .first,
+    );
+    expect(referenceTooltip.message, startsWith('ЭТАЛОН 26.10.2026 '));
     expect(tester.takeException(), isNull);
   });
 
