@@ -41,6 +41,8 @@ enum _InspectionTool { point, loupe }
 
 enum _WorkspaceView { reference, sample, comparison }
 
+enum _ReferenceReplacementChoice { useNew, keepPrevious }
+
 class _JobSelectionDraft {
   final String jobNumber;
   final String? customerId;
@@ -235,6 +237,7 @@ class _CompareScreenState extends State<CompareScreen> {
   String? _activeReferenceId;
   List<SavedReferenceProfile> _savedReferences = [];
   bool _referenceRestorePending = false;
+  SavedReferenceProfile? _referenceReplacementBackup;
   String _jobNumber = '';
   String? _cloudJobId;
   List<OrganizationCustomer> _organizationCustomers = const [];
@@ -331,6 +334,7 @@ class _CompareScreenState extends State<CompareScreen> {
         _refCropApplied = false;
         _savedRefLabel = null;
         _activeReferenceId = null;
+        _referenceReplacementBackup = null;
         _layoutProfile = null;
         _refAnchorPts = null;
         _cmpImg = null;
@@ -436,6 +440,7 @@ class _CompareScreenState extends State<CompareScreen> {
     final jobId = _cloudJobId;
     if (organizationId != null && jobId != null && jobId.isNotEmpty) {
       final repository = widget.jobReferenceRepository;
+      var loadedFromCloud = false;
       if (repository != null) {
         try {
           final cloudReference = await repository.loadActive(
@@ -443,19 +448,31 @@ class _CompareScreenState extends State<CompareScreen> {
             jobId: jobId,
           );
           if (cloudReference != null) {
-            active = await ReferenceStorage.saveProfile(
-              id: cloudReference.id,
-              bytes: cloudReference.bytes,
-              label: cloudReference.label,
-              layoutProfile: cloudReference.layoutProfile,
-            );
-            await ReferenceStorage.bindToJob(
-              jobId: jobId,
-              referenceId: active.id,
-            );
-            refs = List<SavedReferenceProfile>.from(
-              ReferenceStorage.profiles.value,
-            );
+            loadedFromCloud = true;
+            active = cloudReference;
+            try {
+              active = await ReferenceStorage.saveProfile(
+                id: cloudReference.id,
+                bytes: cloudReference.bytes,
+                label: cloudReference.label,
+                layoutProfile: cloudReference.layoutProfile,
+              );
+              await ReferenceStorage.bindToJob(
+                jobId: jobId,
+                referenceId: active.id,
+              );
+              refs = List<SavedReferenceProfile>.from(
+                ReferenceStorage.profiles.value,
+              );
+            } catch (error, stackTrace) {
+              debugPrint(
+                'Job reference local cache failed: $error\n$stackTrace',
+              );
+              refs = [
+                cloudReference,
+                ...refs.where((item) => item.id != cloudReference.id),
+              ];
+            }
           }
         } catch (_) {
           // The device cache keeps an assigned reference usable offline.
@@ -464,12 +481,15 @@ class _CompareScreenState extends State<CompareScreen> {
       active ??= await ReferenceStorage.loadForJob(jobId);
       active ??= _referenceFromExistingJobHistory(refs, jobId);
       if (active != null) {
-        await ReferenceStorage.bindToJob(
-          jobId: jobId,
-          referenceId: active.id,
-        );
-        final repository = widget.jobReferenceRepository;
-        if (repository != null) {
+        try {
+          await ReferenceStorage.bindToJob(
+            jobId: jobId,
+            referenceId: active.id,
+          );
+        } catch (error, stackTrace) {
+          debugPrint('Job reference binding cache failed: $error\n$stackTrace');
+        }
+        if (!loadedFromCloud && repository != null) {
           try {
             await repository.saveActive(
               organizationId: organizationId,
@@ -490,7 +510,11 @@ class _CompareScreenState extends State<CompareScreen> {
       _referenceRestorePending = false;
     });
     if (active != null) {
-      await _activateSavedReference(active, showMessage: false);
+      await _activateSavedReference(
+        active,
+        showMessage: false,
+        openSample: organizationId != null && jobId != null,
+      );
     }
   }
 
@@ -526,6 +550,15 @@ class _CompareScreenState extends State<CompareScreen> {
         jobId: jobId,
         reference: reference,
       );
+      try {
+        await ReferenceStorage.bindToJob(
+          jobId: jobId,
+          referenceId: reference.id,
+        );
+      } catch (error, stackTrace) {
+        debugPrint('Job reference binding cache failed: $error\n$stackTrace');
+      }
+      return;
     }
     await ReferenceStorage.bindToJob(
       jobId: jobId,
@@ -536,8 +569,14 @@ class _CompareScreenState extends State<CompareScreen> {
   Future<void> _activateSavedReference(
     SavedReferenceProfile item, {
     bool showMessage = true,
+    bool openSample = false,
+    bool resetSample = false,
   }) async {
-    await ReferenceStorage.setActive(item.id);
+    try {
+      await ReferenceStorage.setActive(item.id);
+    } catch (error, stackTrace) {
+      debugPrint('Reference active cache failed: $error\n$stackTrace');
+    }
     if (!mounted) return;
     final profile = item.layoutProfile;
     final storedSize = profile != null &&
@@ -559,7 +598,8 @@ class _CompareScreenState extends State<CompareScreen> {
             )
             .toList();
     setState(() {
-      _workspaceView = _WorkspaceView.reference;
+      _workspaceView =
+          openSample ? _WorkspaceView.sample : _WorkspaceView.reference;
       _refImg = item.bytes;
       _refCropApplied = true;
       _refImgSize = storedSize.isEmpty ? null : storedSize;
@@ -570,10 +610,16 @@ class _CompareScreenState extends State<CompareScreen> {
       _cmpAligned = null;
       _refAligned = null;
       _cmpAnchorPts = null;
+      if (resetSample) {
+        _cmpImg = null;
+        _cmpCropApplied = false;
+        _cmpImgSize = null;
+      }
       _calStep = 0;
       _tempRefPts = [];
       _tempCmpPts = [];
       _clearComputedResultState();
+      _referenceReplacementBackup = null;
       _sampleNo = _nextSampleNumberFor(
         referenceId: item.id,
         referenceLabel: item.label,
@@ -1171,37 +1217,6 @@ class _CompareScreenState extends State<CompareScreen> {
             onPressed: () => Navigator.pop(
               ctx,
               ctrl.text.trim().isEmpty ? 'Профиль' : ctrl.text.trim(),
-            ),
-            child: const Text('Сохранить'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<String?> _promptReferenceName() async {
-    final ctrl = TextEditingController(
-      text:
-          'Эталон ${DateTime.now().day}.${DateTime.now().month}.${DateTime.now().year}',
-    );
-    return showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Название эталона'),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          decoration: const InputDecoration(hintText: 'Название'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Отмена'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(
-              ctx,
-              ctrl.text.trim().isEmpty ? 'Эталон' : ctrl.text.trim(),
             ),
             child: const Text('Сохранить'),
           ),
@@ -2090,6 +2105,7 @@ class _CompareScreenState extends State<CompareScreen> {
       title: isRef ? 'Рамка — Эталон' : 'Рамка — Образец',
     );
     if (selection != null && mounted) {
+      if (isRef) _rememberReferenceForReplacement();
       final cropWatch = Stopwatch()..start();
       final timingLabel = isRef ? 'Обрезка эталона' : 'Обрезка образца';
       var cropCompleted = false;
@@ -2174,7 +2190,10 @@ class _CompareScreenState extends State<CompareScreen> {
   }
 
   // ── Выбор фото ───────────────────────────────────
-  Future<void> _pickImage(bool isRef) async {
+  Future<void> _pickImage(
+    bool isRef, {
+    bool replacingExisting = false,
+  }) async {
     final result = await showModalBottomSheet<String>(
       context: context,
       builder: (_) => Material(
@@ -2207,6 +2226,7 @@ class _CompareScreenState extends State<CompareScreen> {
         result == 'camera' ? ImageSource.camera : ImageSource.gallery;
     final x = await _picker.pickImage(source: source, imageQuality: 92);
     if (x == null) return;
+    if (isRef && replacingExisting) _rememberReferenceForReplacement();
 
     setState(() {
       _imageBusy = true;
@@ -2261,6 +2281,7 @@ class _CompareScreenState extends State<CompareScreen> {
       _tempRefPts = [];
       _tempCmpPts = [];
       _clearComputedResultState();
+      _referenceReplacementBackup = null;
     });
     _cmpAlignCtrl.value = Matrix4.identity();
     _resultCmpCtrl.value = Matrix4.identity();
@@ -2323,13 +2344,21 @@ class _CompareScreenState extends State<CompareScreen> {
       ),
     );
     if (selected == null || !mounted) return;
+    final replacesCurrent =
+        _cmpImg != null && _activeReferenceId != selected.id;
     setState(() {
       _imageBusy = true;
       _imageBusyLabel = 'Закрепляю эталон за работой...';
     });
     try {
       await _assignReferenceToCurrentJob(selected);
-      if (mounted) await _activateSavedReference(selected);
+      if (mounted) {
+        await _activateSavedReference(
+          selected,
+          openSample: true,
+          resetSample: replacesCurrent,
+        );
+      }
     } catch (error) {
       if (mounted) {
         await xpDlg(
@@ -2348,50 +2377,187 @@ class _CompareScreenState extends State<CompareScreen> {
     return id != null && _savedReferences.any((item) => item.id == id);
   }
 
-  Future<void> _saveCurrentReference() async {
-    final bytes = _refImg;
-    if (bytes == null) return;
-    var label = _savedRefLabel?.trim();
-    if (label == null || label.isEmpty) {
-      label = await _promptReferenceName();
+  String get _automaticReferenceLabel {
+    final current = _savedRefLabel?.trim();
+    if (current != null && current.isNotEmpty) return current;
+    final work = _currentJobNumber.trim();
+    return work.isEmpty ? 'Эталон' : 'Эталон $work';
+  }
+
+  void _rememberReferenceForReplacement() {
+    if (_referenceReplacementBackup != null ||
+        !_currentReferenceIsStored ||
+        _refImg == null ||
+        _activeReferenceId == null) {
+      return;
     }
-    if (label == null || !mounted) return;
+    SavedReferenceProfile? stored;
+    for (final item in _savedReferences) {
+      if (item.id == _activeReferenceId) {
+        stored = item;
+        break;
+      }
+    }
+    _referenceReplacementBackup = stored ??
+        SavedReferenceProfile(
+          id: _activeReferenceId!,
+          label: _savedRefLabel ?? 'Эталон',
+          bytes: _refImg!,
+          layoutProfile: _layoutProfile,
+          createdAt: DateTime.now(),
+        );
+  }
+
+  Future<_ReferenceReplacementChoice> _confirmReferenceReplacement() async {
+    return await showDialog<_ReferenceReplacementChoice>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Новый эталон'),
+            content: const Text(
+              'Использовать подготовленный эталон для этой работы или '
+              'оставить прежний?',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(
+                  dialogContext,
+                  _ReferenceReplacementChoice.keepPrevious,
+                ),
+                child: const Text('Оставить прежний'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(
+                  dialogContext,
+                  _ReferenceReplacementChoice.useNew,
+                ),
+                child: const Text('Использовать новый'),
+              ),
+            ],
+          ),
+        ) ??
+        _ReferenceReplacementChoice.keepPrevious;
+  }
+
+  Future<bool> _prepareReferenceForSample() async {
+    if (_refImg == null) return false;
+    if (_currentReferenceIsStored) return true;
+    if (!_refCropApplied) {
+      await xpDlg(
+        context,
+        'Рамка эталона',
+        'Сначала выделите область эталона. После перехода к образцу '
+            'обрезанный эталон сохранится автоматически.',
+      );
+      return false;
+    }
+    final previous = _referenceReplacementBackup;
+    if (previous != null) {
+      final choice = await _confirmReferenceReplacement();
+      if (!mounted) return false;
+      if (choice == _ReferenceReplacementChoice.keepPrevious) {
+        await _activateSavedReference(previous, showMessage: false);
+        return mounted;
+      }
+    }
+    return _saveCurrentReference();
+  }
+
+  Future<void> _openSampleStage({bool requestImage = false}) async {
+    if (!await _prepareReferenceForSample() || !mounted) return;
+    setState(() => _workspaceView = _WorkspaceView.sample);
+    if (requestImage && _cmpImg == null) await _pickImage(false);
+  }
+
+  Future<bool> _saveCurrentReference({bool showConfirmation = false}) async {
+    final bytes = _refImg;
+    if (bytes == null) return false;
+    final label = _automaticReferenceLabel;
+    final referenceId = _activeReferenceId ??
+        _layoutProfile?.id ??
+        DateTime.now().microsecondsSinceEpoch.toString();
+    final candidate = SavedReferenceProfile(
+      id: referenceId,
+      label: label,
+      bytes: bytes,
+      layoutProfile: _layoutProfile,
+      createdAt: DateTime.now(),
+    );
+    final organizationId = widget.organizationAccess.organizationId;
+    final jobId = _cloudJobId;
+    final repository = widget.jobReferenceRepository;
+    final usesCloudJobReference = organizationId != null &&
+        jobId != null &&
+        jobId.isNotEmpty &&
+        repository != null;
+    final replacingExisting = _referenceReplacementBackup != null;
 
     setState(() {
       _imageBusy = true;
       _imageBusyLabel = 'Сохраняю эталон...';
     });
     try {
-      final saved = await ReferenceStorage.saveProfile(
-        id: _activeReferenceId,
-        bytes: bytes,
-        label: label,
-        layoutProfile: _layoutProfile,
-      );
-      await _assignReferenceToCurrentJob(saved);
-      if (!mounted) return;
-      setState(() {
-        _savedReferences = List<SavedReferenceProfile>.from(
-          ReferenceStorage.profiles.value,
+      SavedReferenceProfile saved;
+      if (usesCloudJobReference) {
+        await _assignReferenceToCurrentJob(candidate);
+        saved = candidate;
+        try {
+          saved = await ReferenceStorage.saveProfile(
+            id: candidate.id,
+            bytes: candidate.bytes,
+            label: candidate.label,
+            layoutProfile: candidate.layoutProfile,
+          );
+        } catch (error, stackTrace) {
+          debugPrint('Reference local cache failed: $error\n$stackTrace');
+        }
+      } else {
+        saved = await ReferenceStorage.saveProfile(
+          id: candidate.id,
+          bytes: candidate.bytes,
+          label: candidate.label,
+          layoutProfile: candidate.layoutProfile,
         );
+        await _assignReferenceToCurrentJob(saved);
+      }
+      if (!mounted) return false;
+      setState(() {
+        _savedReferences = [
+          saved,
+          ..._savedReferences.where((item) => item.id != saved.id),
+        ];
         _savedRefLabel = saved.label;
         _activeReferenceId = saved.id;
+        _referenceReplacementBackup = null;
+        if (replacingExisting) {
+          _cmpImg = null;
+          _cmpCropApplied = false;
+          _cmpImgSize = null;
+          _cmpAligned = null;
+          _cmpAnchorPts = null;
+          _clearComputedResultState();
+        }
       });
-      await xpDlg(
-        context,
-        'Эталон сохранён',
-        _layoutProfile == null
-            ? '"${saved.label}" сохранён и закреплён за этой работой. Точки можно задать при следующей проверке.'
-            : '"${saved.label}" сохранён с точками и закреплён за этой работой.',
-      );
+      if (showConfirmation) {
+        await xpDlg(
+          context,
+          'Эталон сохранён',
+          '"${saved.label}" сохранён и закреплён за этой работой.',
+        );
+      }
+      return true;
     } catch (error) {
       if (mounted) {
         await xpDlg(
           context,
           'Эталон не сохранён',
-          'Не удалось закрепить новый эталон за работой. Рабочим остался прежний эталон.\n\n$error',
+          replacingExisting
+              ? 'Не удалось закрепить новый эталон. Рабочим остался прежний.\n\n$error'
+              : 'Не удалось закрепить первый эталон за работой. '
+                  'Переход к образцу остановлен.\n\n$error',
         );
       }
+      return false;
     } finally {
       if (mounted) setState(() => _imageBusy = false);
     }
@@ -2403,11 +2569,12 @@ class _CompareScreenState extends State<CompareScreen> {
   ) async {
     switch (value) {
       case 'replace':
-        await _pickImage(view == _WorkspaceView.reference);
+        await _pickImage(
+          view == _WorkspaceView.reference,
+          replacingExisting: view == _WorkspaceView.reference,
+        );
       case 'crop':
         await _cropImage(view == _WorkspaceView.reference);
-      case 'save':
-        await _saveCurrentReference();
       case 'saved':
         await _showSavedReferencePicker();
     }
@@ -2546,6 +2713,7 @@ class _CompareScreenState extends State<CompareScreen> {
       _tempCmpPts = [];
       _savedRefLabel = null;
       _activeReferenceId = null;
+      _referenceReplacementBackup = null;
       _clearComputedResultState();
       _resetZoomControllers();
     });
@@ -2730,11 +2898,6 @@ class _CompareScreenState extends State<CompareScreen> {
                     ),
                     if (view == _WorkspaceView.reference) ...[
                       const PopupMenuDivider(),
-                      PopupMenuItem(
-                        value: 'save',
-                        enabled: _refImg != null,
-                        child: const Text('Сохранить эталон'),
-                      ),
                       const PopupMenuItem(
                         value: 'saved',
                         child: Text('Выбрать сохранённый'),
@@ -3741,10 +3904,7 @@ class _CompareScreenState extends State<CompareScreen> {
         done: hasSample,
         active: hasRef && refCropDone && !hasSample,
         onTap: hasRef && !_imageBusy
-            ? () {
-                _selectWorkspace(_WorkspaceView.sample);
-                _pickImage(false);
-              }
+            ? () => _openSampleStage(requestImage: true)
             : null,
       ),
       _WorkflowAction(
@@ -3911,6 +4071,12 @@ class _CompareScreenState extends State<CompareScreen> {
             ? _WorkspaceView.sample
             : null;
     if (calibrationView != null && calibrationView != view) return;
+    if (view == _WorkspaceView.sample &&
+        _refImg != null &&
+        !_currentReferenceIsStored) {
+      unawaited(_openSampleStage());
+      return;
+    }
     setState(() {
       _workspaceView = view;
       if (view == _WorkspaceView.comparison) _inspectionTool = null;

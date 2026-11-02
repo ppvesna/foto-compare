@@ -306,7 +306,8 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('reference and sample own their replacement actions',
+  testWidgets(
+      'reference saves on forward transition and keeps replacement actions',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(590, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -330,7 +331,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Другой эталон'), findsOneWidget);
     expect(find.text('Изменить рамку'), findsOneWidget);
-    expect(find.text('Сохранить эталон'), findsOneWidget);
+    expect(find.text('Сохранить эталон'), findsNothing);
     expect(find.text('Выбрать сохранённый'), findsOneWidget);
     await tester.tapAt(const Offset(580, 680));
     await tester.pumpAndSettle();
@@ -625,11 +626,11 @@ void main() {
         .widgetList<Semantics>(find.byType(Semantics))
         .map((widget) => widget.properties.label)
         .whereType<String>()
-        .where((label) => label.startsWith('Эталон.'))
+        .where((label) => label.startsWith('Образец.'))
         .toList();
     expect(
       stageLabels,
-      contains('Эталон. Сохранён: Эталон работы 1'),
+      contains('Образец. Снимите или загрузите проверяемую распечатку'),
     );
     expect(tester.takeException(), isNull);
   });
