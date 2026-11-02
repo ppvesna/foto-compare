@@ -1073,20 +1073,20 @@ class _WorksScreenState extends State<WorksScreen> {
       }) sample) {
     final attempts = sample.attempts;
     final latest = attempts.last;
-    final status = switch (latest.decisionStatus) {
+    final decision = switch (latest.decisionStatus) {
       'blocked' => 'Заблокирован',
       'approved' => 'Допущен',
-      _ => 'В работе',
+      _ => null,
     };
     final color = switch (latest.decisionStatus) {
       'blocked' => const Color(0xFFA82820),
       'approved' => const Color(0xFF417C50),
-      _ => AppTheme.blue,
+      _ => const Color(0xFFB65D19),
     };
     final icon = switch (latest.decisionStatus) {
       'blocked' => Icons.block_rounded,
       'approved' => Icons.task_alt_rounded,
-      _ => Icons.pending_actions_rounded,
+      _ => Icons.fact_check_rounded,
     };
     return ListTile(
       key: ValueKey(
@@ -1097,16 +1097,18 @@ class _WorksScreenState extends State<WorksScreen> {
       leading: Icon(icon, color: color),
       title: Text('Образец №${sample.number}'),
       subtitle: Text(
-        'Сравнений: ${attempts.length}'
+        'Проверен · сравнений: ${attempts.length}'
         ' · ${latest.score.toStringAsFixed(1)}%\n'
         '${_formatDate(latest.attemptedAt)}'
         '${latest.attemptedByName.isEmpty ? '' : ' · ${latest.attemptedByName}'}'
         '${latest.decisionNote.trim().isEmpty ? '' : ' · ${latest.decisionNote.trim()}'}',
       ),
-      trailing: Text(
-        status,
-        style: TextStyle(color: color, fontWeight: FontWeight.w800),
-      ),
+      trailing: decision == null
+          ? null
+          : Text(
+              decision,
+              style: TextStyle(color: color, fontWeight: FontWeight.w800),
+            ),
     );
   }
 

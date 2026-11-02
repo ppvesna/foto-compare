@@ -70,7 +70,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Образец №2'), findsOneWidget);
-    expect(find.text('В работе'), findsOneWidget);
+    expect(find.textContaining('Проверен'), findsNWidgets(2));
     expect(find.text('Образец №1'), findsOneWidget);
     expect(find.text('Заблокирован'), findsOneWidget);
     expect(find.textContaining('Партия'), findsNothing);

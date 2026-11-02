@@ -8,6 +8,7 @@ import 'package:photo_compare/features/production/production.dart';
 import 'package:photo_compare/features/protocols/protocols.dart';
 import 'package:photo_compare/features/references/references.dart';
 import 'package:photo_compare/screens/compare_screen.dart';
+import 'package:photo_compare/widgets/pixel_text.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -205,6 +206,28 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     CheckHistoryService.checks.value = [
       CheckProtocol(
+        id: 'check-5',
+        createdAt: DateTime(2026, 11, 2, 10, 20),
+        ownerUserId: 'operator-1',
+        organizationId: 'organization-1',
+        jobId: 'job-1',
+        jobNumber: 'WORK-001',
+        customerId: 'customer-1',
+        customerName: 'Заказчик',
+        customerConfirmed: true,
+        score: 93,
+        verdict: 'Предварительно',
+        refSize: '100×100',
+        cmpSize: '100×100',
+        labId: '-',
+        referenceId: 'reference-1',
+        referenceLabel: 'Эталон 1',
+        sampleLabel: 'Отпечаток 5',
+        sampleNo: 5,
+        labMatch: null,
+        stages: const [],
+      ),
+      CheckProtocol(
         id: 'check-4',
         createdAt: DateTime(2026, 11, 2, 10, 15),
         ownerUserId: 'operator-1',
@@ -257,9 +280,50 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('sample-check-ledger')), findsOneWidget);
+    expect(find.text('№5'), findsOneWidget);
+    expect(find.text('Этап'), findsOneWidget);
+    expect(find.text('Проверен'), findsNWidgets(2));
+    expect(find.text('Статус'), findsOneWidget);
     expect(find.text('№4'), findsOneWidget);
-    expect(find.text('ЭТАЛОН'), findsOneWidget);
+    expect(find.text('ЭТАЛОН'), findsNWidgets(2));
     expect(find.text('Заблокирован'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('sample numbering continues from the complete work history',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1100, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    SharedPreferences.setMockInitialValues({});
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CompareScreen(
+            entitlements: EntitlementSnapshot.forPlan(PlanTier.pro),
+            organizationAccess: OrganizationAccess.forRole(
+              organizationId: 'organization-1',
+              organizationName: 'Vesna',
+              role: OrganizationRole.employee,
+            ),
+            initialJob: const ProductionJobContext(
+              jobId: 'job-1',
+              jobNumber: 'WORK-001',
+              customerId: 'customer-1',
+              customerName: 'Заказчик',
+              customerConfirmed: true,
+            ),
+            productionWorkflowService: _NineSampleWorkflowService(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final sampleNumber = tester.widget<PixelText>(
+      find.byKey(const ValueKey('current-sample-number')),
+    );
+    expect(sampleNumber.text, 'ОБРАЗЕЦ 10');
     expect(tester.takeException(), isNull);
   });
 
@@ -810,4 +874,39 @@ void main() {
     expect(find.text('Эталон · точка 2'), findsNothing);
     expect(tester.takeException(), isNull);
   });
+}
+
+class _NineSampleWorkflowService implements ProductionWorkflowService {
+  @override
+  Future<List<ProductionInspectionHistoryItem>> listInspectionHistory({
+    required String organizationId,
+    String search = '',
+    int limit = 100,
+  }) async {
+    return List.generate(
+      9,
+      (index) => ProductionInspectionHistoryItem(
+        attemptId: 'attempt-$index',
+        jobId: 'job-1',
+        jobNumber: 'WORK-001',
+        customerName: 'Заказчик',
+        batchNumber: 1,
+        unitNumber: 1,
+        unitType: ProductionUnitType.stack,
+        inspectionNumber: index + 1,
+        attemptNumber: 1,
+        protocolOwnerUserId: 'employee-1',
+        protocolId: 'protocol-$index',
+        score: 90,
+        attemptedByUserId: 'employee-1',
+        attemptedByName: 'Маша',
+        attemptedAt: DateTime.utc(2026, 11, 2, 10, index),
+        decisionStatus: 'approved',
+        decisionNote: '',
+      ),
+    );
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

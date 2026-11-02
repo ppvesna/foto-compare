@@ -260,6 +260,7 @@ class _CompareScreenState extends State<CompareScreen> {
   final _sampleLedgerScrollCtrl = ScrollController();
   Map<String, ProductionInspectionHistoryItem> _inspectionHistoryByProtocol =
       const {};
+  int _serverSampleCount = 0;
 
   static const int _uiImageCacheWidth = 1600;
 
@@ -389,11 +390,27 @@ class _CompareScreenState extends State<CompareScreen> {
         limit: 100,
       );
       if (!mounted) return;
+      final jobHistory = history
+          .where(
+            (item) =>
+                item.jobId == _currentJobId ||
+                (_currentJobNumber.isNotEmpty &&
+                    item.jobNumber == _currentJobNumber),
+          )
+          .toList(growable: false);
+      final sampleKeys = {
+        for (final item in jobHistory)
+          '${item.batchNumber}:${item.unitNumber}:${item.inspectionNumber}',
+      };
       setState(() {
         _inspectionHistoryByProtocol = {
-          for (final item in history)
+          for (final item in jobHistory)
             if (item.protocolId.isNotEmpty) item.protocolId: item,
         };
+        _serverSampleCount = sampleKeys.length;
+        if (_activeProtocolId == null && _result == null) {
+          _sampleNo = _nextSampleNumberFor(minValue: _sampleNo);
+        }
       });
     } catch (_) {
       // Local protocols remain usable when the server history is unavailable.
@@ -652,10 +669,7 @@ class _CompareScreenState extends State<CompareScreen> {
       _tempCmpPts = [];
       _clearComputedResultState();
       _referenceReplacementBackup = null;
-      _sampleNo = _nextSampleNumberFor(
-        referenceId: item.id,
-        referenceLabel: item.label,
-      );
+      _sampleNo = _nextSampleNumberFor();
     });
     if (showMessage) {
       xpDlg(
@@ -1530,22 +1544,14 @@ class _CompareScreenState extends State<CompareScreen> {
     return 'ЭТАЛОН';
   }
 
-  int _nextSampleNumberFor({
-    String? referenceId,
-    String? referenceLabel,
-    int minValue = 1,
-  }) {
-    final refId = referenceId ?? _activeReferenceId ?? '';
-    final refLabel = referenceLabel ?? _savedRefLabel ?? '';
+  int _nextSampleNumberFor({int minValue = 1}) {
     final jobNumber = _currentJobNumber;
-    var maxNo = 0;
+    final jobId = _currentJobId;
+    var maxNo = _serverSampleCount;
     for (final p in _scopedCheckHistory) {
-      final sameJob =
-          jobNumber.isEmpty ? p.jobNumber.isEmpty : p.jobNumber == jobNumber;
-      final sameRef = refId.isNotEmpty
-          ? p.referenceId == refId
-          : refLabel.isNotEmpty && p.referenceLabel == refLabel;
-      if (sameJob && sameRef) maxNo = max(maxNo, p.sampleNo);
+      final sameJob = p.jobId == jobId ||
+          (jobNumber.isNotEmpty && p.jobNumber == jobNumber);
+      if (sameJob) maxNo = max(maxNo, p.sampleNo);
     }
     return max(minValue, maxNo + 1);
   }
@@ -2058,11 +2064,7 @@ class _CompareScreenState extends State<CompareScreen> {
     final jobNumber = _currentJobNumber;
     final sampleNumber = replacingCurrent
         ? _activeProtocolSampleNo!
-        : _nextSampleNumberFor(
-            referenceId: referenceId,
-            referenceLabel: _savedRefLabel,
-            minValue: _sampleNo,
-          );
+        : _nextSampleNumberFor(minValue: _sampleNo);
     final sampleImageId = replacingCurrent
         ? _activeProtocolSampleImageId!
         : '$_currentJobId-sample-$sampleNumber-${now.millisecondsSinceEpoch}';
@@ -2362,11 +2364,7 @@ class _CompareScreenState extends State<CompareScreen> {
   }
 
   Future<void> _startNextSample() async {
-    final nextSampleNumber = _nextSampleNumberFor(
-      referenceId: _activeReferenceId,
-      referenceLabel: _savedRefLabel,
-      minValue: _sampleNo + 1,
-    );
+    final nextSampleNumber = _nextSampleNumberFor(minValue: _sampleNo + 1);
     setState(() {
       _workspaceView = _WorkspaceView.sample;
       _sampleNo = nextSampleNumber;
@@ -3465,6 +3463,7 @@ class _CompareScreenState extends State<CompareScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             PixelText(
+              key: const ValueKey('current-sample-number'),
               text: 'ОБРАЗЕЦ $_sampleNo',
               color: _hudWarning,
               pixelSize: 1.2,
@@ -3882,7 +3881,7 @@ class _CompareScreenState extends State<CompareScreen> {
     );
   }
 
-  Widget _comparisonLoupeControl() {
+  Widget _comparisonResultToolbar() {
     return AnimatedBuilder(
       animation: _resultCmpCtrl,
       builder: (context, _) {
@@ -3890,106 +3889,110 @@ class _CompareScreenState extends State<CompareScreen> {
         final active = _loupeDragStart != null ||
             _areaLoupe != null ||
             (scale - 100).abs() > 1;
-        return Tooltip(
-          message: active ? 'Сбросить увеличение' : 'Увеличить область',
-          child: InkWell(
-            key: const ValueKey('result-loupe-control'),
-            onTap: _toggleAreaLoupeControl,
-            borderRadius: BorderRadius.circular(12),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 140),
-              width: 48,
-              height: 50,
-              decoration: BoxDecoration(
-                color:
-                    active ? const Color(0xE0354146) : const Color(0xC52A363A),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: active
-                      ? const Color(0xFFFFA23F)
-                      : const Color(0xFF66858B),
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final compact = constraints.maxWidth < 520;
+            Widget action({
+              required Key key,
+              required String tooltip,
+              required String label,
+              required IconData icon,
+              required VoidCallback onTap,
+              bool selected = false,
+            }) {
+              final color = selected ? const Color(0xFFFFA23F) : _hudGreen;
+              return Expanded(
+                child: Tooltip(
+                  message: tooltip,
+                  child: InkWell(
+                    key: key,
+                    onTap: onTap,
+                    borderRadius: BorderRadius.circular(9),
+                    child: SizedBox(
+                      height: 38,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(icon, size: 19, color: color),
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: Text(
+                              label,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: color,
+                                fontSize: compact ? 10 : 11,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 ),
+              );
+            }
+
+            return Container(
+              height: 46,
+              padding: const EdgeInsets.all(4),
+              decoration: BoxDecoration(
+                color: const Color(0xE6273439),
+                borderRadius: BorderRadius.circular(13),
+                border: Border.all(color: const Color(0xFF66858B)),
                 boxShadow: const [
                   BoxShadow(
-                    color: Color(0x44000000),
-                    blurRadius: 8,
+                    color: Color(0x55000000),
+                    blurRadius: 9,
                     offset: Offset(0, 3),
                   ),
                 ],
               ),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
+              child: Row(
                 children: [
-                  Icon(
-                    active ? Icons.zoom_out_map_rounded : Icons.zoom_in_rounded,
-                    size: 22,
-                    color: active ? const Color(0xFFFFA23F) : _hudGreen,
+                  action(
+                    key: const ValueKey('result-loupe-control'),
+                    tooltip:
+                        active ? 'Сбросить увеличение' : 'Увеличить область',
+                    label: 'Лупа $scale%',
+                    icon: Icons.search_rounded,
+                    onTap: _toggleAreaLoupeControl,
+                    selected: active,
                   ),
-                  PixelText(
-                    text: '$scale%',
-                    color: active ? const Color(0xFFFFA23F) : _hudGreen,
-                    pixelSize: 0.9,
+                  const VerticalDivider(
+                    width: 1,
+                    indent: 7,
+                    endIndent: 7,
+                    color: Color(0xFF526B71),
+                  ),
+                  action(
+                    key: const ValueKey('comparison-next-sample'),
+                    tooltip: 'Следующий образец',
+                    label: compact ? 'Следующий' : 'Следующий образец',
+                    icon: Icons.arrow_forward_rounded,
+                    onTap: _startNextSample,
+                  ),
+                  const VerticalDivider(
+                    width: 1,
+                    indent: 7,
+                    endIndent: 7,
+                    color: Color(0xFF526B71),
+                  ),
+                  action(
+                    key: const ValueKey('comparison-finish'),
+                    tooltip: 'Завершить проверку',
+                    label: compact ? 'Завершить' : 'Завершить проверку',
+                    icon: Icons.flag_rounded,
+                    onTap: _finishInspection,
                   ),
                 ],
               ),
-            ),
-          ),
+            );
+          },
         );
       },
-    );
-  }
-
-  Widget _comparisonResultActions() {
-    Widget action({
-      required Key key,
-      required String tooltip,
-      required IconData icon,
-      required VoidCallback onTap,
-    }) {
-      return Tooltip(
-        message: tooltip,
-        child: InkWell(
-          key: key,
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(11),
-          child: Container(
-            width: 44,
-            height: 42,
-            decoration: BoxDecoration(
-              color: const Color(0xC52A363A),
-              borderRadius: BorderRadius.circular(11),
-              border: Border.all(color: const Color(0xFF66858B)),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x44000000),
-                  blurRadius: 8,
-                  offset: Offset(0, 3),
-                ),
-              ],
-            ),
-            child: Icon(icon, size: 21, color: _hudGreen),
-          ),
-        ),
-      );
-    }
-
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        action(
-          key: const ValueKey('comparison-next-sample'),
-          tooltip: 'Следующий образец',
-          icon: Icons.add_photo_alternate_outlined,
-          onTap: _startNextSample,
-        ),
-        const SizedBox(width: 6),
-        action(
-          key: const ValueKey('comparison-finish'),
-          tooltip: 'Завершить проверку',
-          icon: Icons.outlined_flag_rounded,
-          onTap: _finishInspection,
-        ),
-      ],
     );
   }
 
@@ -4641,7 +4644,7 @@ class _CompareScreenState extends State<CompareScreen> {
     return switch (_resolvedProtocolDecision(protocol)) {
       'approved' => 'Допущен',
       'blocked' => 'Заблокирован',
-      _ => 'Проверен',
+      _ => '',
     };
   }
 
@@ -4649,7 +4652,7 @@ class _CompareScreenState extends State<CompareScreen> {
     return switch (_resolvedProtocolDecision(protocol)) {
       'approved' => const Color(0xFF5BE681),
       'blocked' => const Color(0xFFFF6268),
-      _ => const Color(0xFFFFA253),
+      _ => const Color(0xFF9EB0B5),
     };
   }
 
@@ -4733,7 +4736,8 @@ class _CompareScreenState extends State<CompareScreen> {
                         bold: true,
                         align: TextAlign.center,
                       ),
-                      _sampleLedgerCell('Статус', flex: 4, bold: true),
+                      _sampleLedgerCell('Этап', flex: 2, bold: true),
+                      _sampleLedgerCell('Статус', flex: 3, bold: true),
                     ],
                   ),
                 ),
@@ -4806,8 +4810,14 @@ class _CompareScreenState extends State<CompareScreen> {
                                           align: TextAlign.center,
                                         ),
                                         _sampleLedgerCell(
+                                          'Проверен',
+                                          flex: 2,
+                                          color: const Color(0xFFFFA253),
+                                          bold: true,
+                                        ),
+                                        _sampleLedgerCell(
                                           _protocolDecisionLabel(protocol),
-                                          flex: 4,
+                                          flex: 3,
                                           color: statusColor,
                                           bold: true,
                                         ),
@@ -4841,6 +4851,7 @@ class _CompareScreenState extends State<CompareScreen> {
     final geometryStage = stageContaining('геометр');
     final ocrStage = stageContaining('ocr');
     final barcodeStage = stageContaining('штрих');
+    final decisionLabel = _protocolDecisionLabel(protocol);
     final decisionColor = _protocolDecisionColor(protocol);
     await showModalBottomSheet<void>(
       context: context,
@@ -4864,13 +4875,27 @@ class _CompareScreenState extends State<CompareScreen> {
                         ),
                       ),
                     ),
-                    Text(
-                      _protocolDecisionLabel(protocol),
-                      style: TextStyle(
-                        color: decisionColor,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w900,
-                      ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        const Text(
+                          'Проверен',
+                          style: TextStyle(
+                            color: Color(0xFFFFA253),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        if (decisionLabel.isNotEmpty)
+                          Text(
+                            decisionLabel,
+                            style: TextStyle(
+                              color: decisionColor,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                      ],
                     ),
                   ],
                 ),
@@ -4885,6 +4910,7 @@ class _CompareScreenState extends State<CompareScreen> {
                   ),
                 ),
                 const SizedBox(height: 14),
+                _checkSummaryLine('Этап', 'Проверен'),
                 _checkSummaryLine(
                   'AI-анализ',
                   protocol.aiAnalysisPerformed
@@ -4902,8 +4928,8 @@ class _CompareScreenState extends State<CompareScreen> {
                   _checkSummaryLine('Штрихкоды', barcodeStage.metric),
                 if (protocol.inspectionDecisionAt != null)
                   _checkSummaryLine(
-                    'Решение',
-                    '${_protocolDecisionLabel(protocol)} · '
+                    'Статус',
+                    '$decisionLabel · '
                         '${_protocolTime(protocol.inspectionDecisionAt!)}',
                   ),
                 if (protocol.inspectionDecisionNote?.isNotEmpty == true)
@@ -5211,14 +5237,16 @@ class _CompareScreenState extends State<CompareScreen> {
           imageSize: _parseImageSize(r.refSize),
         ),
         Positioned(
-          right: 10,
-          top: 10,
-          child: _comparisonLoupeControl(),
-        ),
-        Positioned(
+          left: 10,
           right: 10,
           bottom: 10,
-          child: _comparisonResultActions(),
+          child: Align(
+            alignment: Alignment.bottomCenter,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 640),
+              child: _comparisonResultToolbar(),
+            ),
+          ),
         ),
       ],
     );
@@ -6648,10 +6676,7 @@ class _CompareScreenState extends State<CompareScreen> {
       _requestedCustomerName = value.requestedCustomerName;
       _customerConfirmed = value.customerId != null;
       _cloudJobId = null;
-      _sampleNo = _nextSampleNumberFor(
-        referenceId: _activeReferenceId,
-        referenceLabel: _savedRefLabel,
-      );
+      _sampleNo = _nextSampleNumberFor();
     });
 
     final organizationId = widget.organizationAccess.organizationId;
