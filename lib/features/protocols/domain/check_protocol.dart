@@ -23,6 +23,8 @@ class CheckProtocol {
   final String captureLighting;
   final String captureFilter;
   final double apertureMm;
+  final bool aiAnalysisPerformed;
+  final String aiVerdict;
   final List<CheckProtocolStage> stages;
 
   const CheckProtocol({
@@ -50,6 +52,8 @@ class CheckProtocol {
     this.captureLighting = 'D65',
     this.captureFilter = 'Без фильтра',
     this.apertureMm = 2,
+    this.aiAnalysisPerformed = false,
+    this.aiVerdict = '',
     required this.stages,
   });
 
@@ -82,6 +86,8 @@ class CheckProtocol {
             json['measurementCondition'] as String? ??
             'Без фильтра',
         apertureMm: (json['apertureMm'] as num?)?.toDouble() ?? 2,
+        aiAnalysisPerformed: json['aiAnalysisPerformed'] as bool? ?? false,
+        aiVerdict: json['aiVerdict'] as String? ?? '',
         stages: (json['stages'] as List)
             .map((e) => CheckProtocolStage.fromJson(
                   Map<String, dynamic>.from(e as Map),
@@ -114,6 +120,8 @@ class CheckProtocol {
         'captureLighting': captureLighting,
         'captureFilter': captureFilter,
         'apertureMm': apertureMm,
+        'aiAnalysisPerformed': aiAnalysisPerformed,
+        'aiVerdict': aiVerdict,
         'stages': stages.map((e) => e.toJson()).toList(),
       };
 }

@@ -16,6 +16,9 @@ class PersonalProtocolFormatter {
       'Образец: ${protocol.sampleLabel}',
       'Сходство: $score%',
       'Статус: ${protocol.verdict}',
+      protocol.aiAnalysisPerformed
+          ? 'AI-анализ: выполнен${protocol.aiVerdict.isEmpty ? '' : ' · ${protocol.aiVerdict}'}'
+          : 'AI-анализ: не выполнялся',
     ];
 
     for (final stage in protocol.stages.where(_includeStage)) {

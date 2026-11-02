@@ -880,7 +880,10 @@ class _CompareScreenState extends State<CompareScreen> {
       _refAnchorPts = List<Offset>.from(refPts);
       _refImgSize = refSize;
     });
-    return true;
+    // The cropped reference is saved before calibration. Once the operator
+    // confirms its points, enrich that same reference instead of leaving the
+    // library entry permanently marked as having no saved points.
+    return _saveCurrentReference();
   }
 
   // Шаг 2 → расчёт
@@ -1342,7 +1345,10 @@ class _CompareScreenState extends State<CompareScreen> {
     setState(() => _aiLoading = true);
     try {
       final analysis = await AiCompareService.analyze(ref, cmp);
-      if (mounted) setState(() => _aiResult = analysis);
+      if (mounted) {
+        setState(() => _aiResult = analysis);
+        await _saveCheckResult();
+      }
     } catch (e) {
       if (mounted) xpDlg(context, 'Ошибка AI', e.toString());
     } finally {
@@ -2001,6 +2007,8 @@ class _CompareScreenState extends State<CompareScreen> {
       captureLighting: _cameraCaptureSettings.lighting.label,
       captureFilter: _cameraCaptureSettings.opticalFilter.label,
       apertureMm: _measurementSettings.aperture.diameterMm,
+      aiAnalysisPerformed: _aiResult != null,
+      aiVerdict: _aiResult?.verdict ?? '',
       stages: _checkProtocolStages(r),
     );
     if (!mounted) return;
@@ -2962,7 +2970,6 @@ class _CompareScreenState extends State<CompareScreen> {
 
   Widget _workspaceOverflowMenu() {
     final hasResult = _result != null;
-    final hasBothImages = _refImg != null && _cmpImg != null;
     final showShortProtocol =
         widget.organizationAccess.organizationId == null && hasResult;
     return Container(
@@ -3001,10 +3008,6 @@ class _CompareScreenState extends State<CompareScreen> {
                   value: 'steps',
                   child: Text('Все этапы'),
                 ),
-                const PopupMenuItem(
-                  value: 'ai',
-                  child: Text('AI-анализ'),
-                ),
                 if (showShortProtocol)
                   const PopupMenuItem(
                     value: 'shortProtocol',
@@ -3029,11 +3032,6 @@ class _CompareScreenState extends State<CompareScreen> {
                   value: 'savedReference',
                   child: Text('Выбрать сохранённый эталон'),
                 ),
-                if (hasBothImages)
-                  const PopupMenuItem(
-                    value: 'ai',
-                    child: Text('AI-анализ'),
-                  ),
                 const PopupMenuDivider(),
                 const PopupMenuItem(
                   value: 'new',
@@ -3318,8 +3316,7 @@ class _CompareScreenState extends State<CompareScreen> {
   _WorkflowAction? _primaryScreenAction() {
     if (_result != null || _calStep != 0) return null;
     final actions = _workflowActions();
-    final action = _currentWorkflowAction(actions);
-    return action.number == '8' ? null : action;
+    return _currentWorkflowAction(actions);
   }
 
   String _screenActionLabel(_WorkflowAction action) {
@@ -3331,7 +3328,7 @@ class _CompareScreenState extends State<CompareScreen> {
       '5' => 'Выделить область образца',
       '6' => 'Совместить изображения',
       '7' => 'Запустить сравнение',
-      _ => _aiResult == null ? 'Запустить AI' : 'Повторить AI',
+      _ => action.label,
     };
   }
 
@@ -3945,21 +3942,6 @@ class _CompareScreenState extends State<CompareScreen> {
             ? _runCompare
             : null,
       ),
-      _WorkflowAction(
-        '8',
-        _aiLoading
-            ? 'AI-анализ...'
-            : _aiResult == null
-                ? 'AI-анализ'
-                : 'Повторить AI-анализ',
-        Icons.auto_awesome_outlined,
-        done: _aiResult != null,
-        active: _result != null && _aiResult == null,
-        busy: _aiLoading,
-        onTap: _result != null && !_aiLoading && !_comparing
-            ? _runAiAnalysis
-            : null,
-      ),
     ];
   }
 
@@ -4345,56 +4327,114 @@ class _CompareScreenState extends State<CompareScreen> {
         color: AppTheme.surface,
         border: Border(top: BorderSide(color: AppTheme.line)),
       ),
-      child: Row(children: [
-        Expanded(
-          child: Text(
-            '${unit.fullLabel} · ${(_productionInspectionState ?? unit.state).label}',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 10.5,
-              fontWeight: FontWeight.w800,
-              color: blocked
-                  ? const Color(0xFFA22D25)
-                  : approved
-                      ? const Color(0xFF3A6E37)
-                      : AppTheme.graphite,
+      child: LayoutBuilder(builder: (context, constraints) {
+        final compact = constraints.maxWidth < 620;
+        final showStatus = constraints.maxWidth >= 860;
+        final gap = compact ? 4.0 : 6.0;
+        final padding = EdgeInsets.symmetric(horizontal: compact ? 6 : 10);
+        final outlinedStyle = OutlinedButton.styleFrom(
+          minimumSize: const Size(0, 34),
+          padding: padding,
+          visualDensity: VisualDensity.compact,
+        );
+        final tonalStyle = FilledButton.styleFrom(
+          minimumSize: const Size(0, 34),
+          padding: padding,
+          visualDensity: VisualDensity.compact,
+        );
+        final blockedStyle = FilledButton.styleFrom(
+          minimumSize: const Size(0, 34),
+          padding: padding,
+          visualDensity: VisualDensity.compact,
+          backgroundColor: const Color(0xFFB53B33),
+        );
+
+        return Row(children: [
+          if (showStatus) ...[
+            Expanded(
+              child: Text(
+                '${unit.fullLabel} · ${(_productionInspectionState ?? unit.state).label}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w800,
+                  color: blocked
+                      ? const Color(0xFFA22D25)
+                      : approved
+                          ? const Color(0xFF3A6E37)
+                          : AppTheme.graphite,
+                ),
+              ),
+            ),
+            SizedBox(width: gap),
+          ] else
+            const Spacer(),
+          Tooltip(
+            message: 'Повторить сравнение',
+            child: OutlinedButton.icon(
+              key: const ValueKey('repeat-production-comparison'),
+              style: outlinedStyle,
+              onPressed:
+                  _productionDecisionBusy || _comparing ? null : _runCompare,
+              icon: const Icon(Icons.replay_rounded, size: 16),
+              label: Text(compact ? 'Ещё раз' : 'Сравнить ещё раз'),
             ),
           ),
-        ),
-        const SizedBox(width: 7),
-        OutlinedButton.icon(
-          key: const ValueKey('repeat-production-comparison'),
-          onPressed: _productionDecisionBusy || _comparing ? null : _runCompare,
-          icon: const Icon(Icons.replay_rounded, size: 16),
-          label: const Text('Сравнить ещё раз'),
-        ),
-        const SizedBox(width: 6),
-        FilledButton.tonalIcon(
-          key: const ValueKey('approve-production-unit'),
-          onPressed: _productionDecisionBusy || blocked
-              ? null
-              : () => _decideProductionInspection(
-                    ProductionInspectionDecision.approved,
-                  ),
-          icon: const Icon(Icons.task_alt_rounded, size: 16),
-          label: const Text('Допустить'),
-        ),
-        const SizedBox(width: 6),
-        FilledButton.icon(
-          key: const ValueKey('block-production-unit'),
-          style: FilledButton.styleFrom(
-            backgroundColor: const Color(0xFFB53B33),
+          SizedBox(width: gap),
+          Tooltip(
+            message: _aiResult == null
+                ? 'Запустить AI-анализ'
+                : 'Повторить AI-анализ',
+            child: FilledButton.tonalIcon(
+              key: const ValueKey('production-ai-analysis'),
+              style: tonalStyle,
+              onPressed: _productionDecisionBusy || _comparing || _aiLoading
+                  ? null
+                  : _runAiAnalysis,
+              icon: _aiLoading
+                  ? const SizedBox.square(
+                      dimension: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Icon(
+                      _aiResult == null
+                          ? Icons.auto_awesome_outlined
+                          : Icons.auto_awesome,
+                      size: 16,
+                    ),
+              label: Text(compact ? 'AI' : 'AI-анализ'),
+            ),
           ),
-          onPressed: _productionDecisionBusy || blocked
-              ? null
-              : () => _decideProductionInspection(
-                    ProductionInspectionDecision.blocked,
-                  ),
-          icon: const Icon(Icons.block_rounded, size: 16),
-          label: const Text('Заблокировать'),
-        ),
-      ]),
+          SizedBox(width: gap),
+          FilledButton.tonalIcon(
+            key: const ValueKey('approve-production-unit'),
+            style: tonalStyle,
+            onPressed: _productionDecisionBusy || blocked
+                ? null
+                : () => _decideProductionInspection(
+                      ProductionInspectionDecision.approved,
+                    ),
+            icon: const Icon(Icons.task_alt_rounded, size: 16),
+            label: const Text('Допустить'),
+          ),
+          SizedBox(width: gap),
+          Tooltip(
+            message: 'Заблокировать образец',
+            child: FilledButton.icon(
+              key: const ValueKey('block-production-unit'),
+              style: blockedStyle,
+              onPressed: _productionDecisionBusy || blocked
+                  ? null
+                  : () => _decideProductionInspection(
+                        ProductionInspectionDecision.blocked,
+                      ),
+              icon: const Icon(Icons.block_rounded, size: 16),
+              label: Text(compact ? 'Стоп' : 'Заблокировать'),
+            ),
+          ),
+        ]);
+      }),
     );
   }
 
@@ -4885,6 +4925,8 @@ class _CompareScreenState extends State<CompareScreen> {
           captureLighting: _cameraCaptureSettings.lighting.label,
           captureFilter: _cameraCaptureSettings.opticalFilter.label,
           apertureMm: _measurementSettings.aperture.diameterMm,
+          aiAnalysisPerformed: _aiResult != null,
+          aiVerdict: _aiResult?.verdict ?? '',
           stages: _checkProtocolStages(result),
         );
   }
@@ -5059,19 +5101,23 @@ class _CompareScreenState extends State<CompareScreen> {
                 final imageId = p.sampleImageId.isEmpty
                     ? '-'
                     : _shortLabId(p.sampleImageId);
+                final aiLabel = p.aiAnalysisPerformed
+                    ? 'AI: да${p.aiVerdict.isEmpty ? '' : ' · ${p.aiVerdict}'}'
+                    : 'AI: нет';
                 return ExpansionTile(
                   initiallyExpanded: i == 0,
                   tilePadding: const EdgeInsets.symmetric(horizontal: 10),
                   childrenPadding: EdgeInsets.zero,
                   title: Text(
-                    '$jobLabel$customerLabel · ${p.sampleLabel}',
+                    '$jobLabel$customerLabel · Образец №${p.sampleNo}',
                     style: const TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                   subtitle: Text(
-                    '${p.referenceLabel} · файл $imageId · ${p.verdict} · ${p.score.toStringAsFixed(1)}%',
+                    'Эталон: ${p.referenceLabel} · $aiLabel · '
+                    'файл $imageId · ${p.verdict} · ${p.score.toStringAsFixed(1)}%',
                     style: const TextStyle(fontSize: 10),
                   ),
                   trailing: SimBadge(value: p.score, fontSize: 10),
@@ -6104,7 +6150,16 @@ class _CompareScreenState extends State<CompareScreen> {
 
   Widget _jobInspectorSection() {
     final hasJob = _currentJobNumber.isNotEmpty;
-    return _inspectorSection('Работа', [
+    final referenceLabel = _savedRefLabel ?? _layoutProfile?.name;
+    final aiPerformed =
+        _aiResult != null || (_currentProtocol?.aiAnalysisPerformed ?? false);
+    final aiVerdict = _aiResult?.verdict ?? _currentProtocol?.aiVerdict ?? '';
+    final aiStatus = _aiLoading
+        ? 'выполняется'
+        : aiPerformed
+            ? 'выполнен${aiVerdict.isEmpty ? '' : ' · $aiVerdict'}'
+            : 'не выполнялся';
+    return _inspectorSection('Протокол проверки', [
       _jobInfoTile(
         'Работа',
         hasJob ? _currentJobNumber : 'не задана',
@@ -6124,17 +6179,23 @@ class _CompareScreenState extends State<CompareScreen> {
         children: [
           Expanded(
             child: _jobInfoTile(
-              'Отпечаток',
-              _currentSampleLabel,
-              _cmpImg != null,
+              'Эталон',
+              referenceLabel ?? 'не выбран',
+              referenceLabel != null,
             ),
           ),
           const SizedBox(width: 6),
           Expanded(
-            child: _jobInfoTile('ID для базы', _currentJobId, hasJob),
+            child: _jobInfoTile(
+              'Образец',
+              '№$_sampleNo',
+              _cmpImg != null,
+            ),
           ),
         ],
       ),
+      const SizedBox(height: 6),
+      _jobInfoTile('AI-анализ', aiStatus, aiPerformed || _aiLoading),
     ]);
   }
 
@@ -6283,7 +6344,7 @@ class _CompareScreenState extends State<CompareScreen> {
     if (ai == null) {
       return _inspectorSection('AI анализ', const [
         Text(
-          'AI-отчёт появится здесь после запуска этапа «AI-анализ» в порядке действий.',
+          'AI-отчёт появится здесь после запуска AI-анализа в строке действий после сравнения.',
           style: TextStyle(fontSize: 11, height: 1.4, color: Colors.black54),
         ),
       ]);

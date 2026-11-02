@@ -15,6 +15,8 @@ void main() {
         referenceLabel: 'Эталон 1',
         sampleLabel: 'Образец 2',
         labMatch: 98,
+        aiAnalysisPerformed: true,
+        aiVerdict: 'допустимо',
         stages: const [
           CheckProtocolStage(
             name: 'Цветовая карта ΔE*76',
@@ -41,10 +43,28 @@ void main() {
     expect(text, contains('TRIMATRIX · КРАТКИЙ ПРОТОКОЛ'));
     expect(text, contains('09.10.2026 · 14:05'));
     expect(text, contains('Сходство: 91,3%'));
+    expect(text, contains('AI-анализ: выполнен · допустимо'));
     expect(text, contains('Цвет: max 2,1 · среднее 0,8'));
     expect(text, contains('Геометрия: 99,2%'));
     expect(text, isNot(contains('Время обработки')));
     expect(text, isNot(contains('Работа:')));
     expect(text, isNot(contains('Заказчик:')));
+  });
+
+  test('old protocols default to no AI analysis', () {
+    final protocol = CheckProtocol.fromJson({
+      'id': 'legacy',
+      'createdAt': DateTime(2026).toIso8601String(),
+      'score': 90,
+      'verdict': 'PASS',
+      'refSize': '10×10',
+      'cmpSize': '10×10',
+      'labId': '-',
+      'labMatch': null,
+      'stages': const <Map<String, dynamic>>[],
+    });
+
+    expect(protocol.aiAnalysisPerformed, isFalse);
+    expect(protocol.aiVerdict, isEmpty);
   });
 }
