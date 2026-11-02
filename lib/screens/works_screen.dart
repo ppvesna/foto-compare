@@ -1088,8 +1088,6 @@ class _WorksScreenState extends State<WorksScreen> {
       'approved' => Icons.task_alt_rounded,
       _ => Icons.pending_actions_rounded,
     };
-    final unitLabel = 'Партия ${latest.batchNumber} · '
-        '${latest.unitType.label} ${latest.unitNumber}';
     return ListTile(
       key: ValueKey(
         'work-history-sample-${latest.batchNumber}-'
@@ -1099,7 +1097,7 @@ class _WorksScreenState extends State<WorksScreen> {
       leading: Icon(icon, color: color),
       title: Text('Образец №${sample.number}'),
       subtitle: Text(
-        '$unitLabel · сравнений: ${attempts.length}'
+        'Сравнений: ${attempts.length}'
         ' · ${latest.score.toStringAsFixed(1)}%\n'
         '${_formatDate(latest.attemptedAt)}'
         '${latest.attemptedByName.isEmpty ? '' : ' · ${latest.attemptedByName}'}'

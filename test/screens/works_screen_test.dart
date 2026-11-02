@@ -73,6 +73,9 @@ void main() {
     expect(find.text('В работе'), findsOneWidget);
     expect(find.text('Образец №1'), findsOneWidget);
     expect(find.text('Заблокирован'), findsOneWidget);
+    expect(find.textContaining('Партия'), findsNothing);
+    expect(find.textContaining('Стопа'), findsNothing);
+    expect(find.textContaining('Рулон'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 

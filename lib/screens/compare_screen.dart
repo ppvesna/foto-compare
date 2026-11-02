@@ -4962,7 +4962,7 @@ class _CompareScreenState extends State<CompareScreen> {
       final submitted = await showDialog<bool>(
         context: context,
         builder: (dialogContext) => AlertDialog(
-          title: Text('Заблокировать ${unit.fullLabel}?'),
+          title: Text('Заблокировать образец №$_sampleNo?'),
           content: TextField(
             controller: controller,
             autofocus: true,
@@ -5024,8 +5024,8 @@ class _CompareScreenState extends State<CompareScreen> {
                     'Производственная блокировка остаётся '
                     'до решения администратора.'
                 : decision == ProductionInspectionDecision.approved
-                    ? '${unit.fullLabel}: допущено.'
-                    : '${unit.fullLabel}: заблокировано.',
+                    ? 'Образец №$_sampleNo: допущен.'
+                    : 'Образец №$_sampleNo: заблокирован.',
           ),
         ),
       );
