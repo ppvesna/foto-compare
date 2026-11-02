@@ -928,13 +928,34 @@ class _WorksScreenState extends State<WorksScreen> {
   Future<void> _showWorkHistory(ProductionWorkSummary work) async {
     final detail = await _loadWorkForAction(work);
     if (detail == null || !mounted) return;
+    List<ProductionInspectionHistoryItem> inspectionHistory = const [];
+    final organizationId = widget.organizationId;
+    if (organizationId != null) {
+      try {
+        final allHistory = await widget.workflowService.listInspectionHistory(
+          organizationId: organizationId,
+          search: work.jobNumber,
+          limit: 100,
+        );
+        inspectionHistory = allHistory
+            .where((item) => item.jobId == work.jobId)
+            .toList(growable: false);
+      } catch (_) {
+        // The work timeline remains available if inspection history is down.
+      }
+    }
+    if (!mounted) return;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
       builder: (sheetContext) => FractionallySizedBox(
         heightFactor: .9,
-        child: _workHistorySheet(sheetContext, detail),
+        child: _workHistorySheet(
+          sheetContext,
+          detail,
+          inspectionHistory,
+        ),
       ),
     );
   }
@@ -942,10 +963,10 @@ class _WorksScreenState extends State<WorksScreen> {
   Widget _workHistorySheet(
     BuildContext sheetContext,
     ProductionWorkDetail detail,
+    List<ProductionInspectionHistoryItem> inspectionHistory,
   ) {
     final work = detail.summary;
-    final units = detail.batches.expand((batch) => batch.units).toList()
-      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    final samples = _sampleHistoryGroups(inspectionHistory);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -990,28 +1011,10 @@ class _WorksScreenState extends State<WorksScreen> {
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
               ),
               const SizedBox(height: 8),
-              if (units.isEmpty)
+              if (samples.isEmpty)
                 const Text('Проверок пока нет.')
               else
-                ...units.map(
-                  (unit) => ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(
-                      unit.state == ProductionUnitState.blocked
-                          ? Icons.block_rounded
-                          : Icons.fact_check_outlined,
-                      color: unit.state == ProductionUnitState.blocked
-                          ? const Color(0xFFA82820)
-                          : const Color(0xFF417C50),
-                    ),
-                    title: Text('Образец №${unit.number}'),
-                    subtitle: Text(
-                      'Сравнений: ${unit.attemptCount}'
-                      '${unit.latestScore == null ? '' : ' · ${unit.latestScore!.toStringAsFixed(1)}%'}',
-                    ),
-                    trailing: Text(unit.state.label),
-                  ),
-                ),
+                ...samples.map(_sampleHistoryTile),
               const SizedBox(height: 18),
               const Text(
                 'История работы',
@@ -1026,6 +1029,86 @@ class _WorksScreenState extends State<WorksScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  List<
+      ({
+        int number,
+        List<ProductionInspectionHistoryItem> attempts,
+      })> _sampleHistoryGroups(
+    List<ProductionInspectionHistoryItem> history,
+  ) {
+    final grouped = <String, List<ProductionInspectionHistoryItem>>{};
+    for (final item in history) {
+      final key = '${item.batchNumber}:${item.unitNumber}:'
+          '${item.inspectionNumber}';
+      grouped.putIfAbsent(key, () => []).add(item);
+    }
+    final chronological = grouped.values.toList()
+      ..forEach(
+        (attempts) => attempts.sort(
+          (a, b) => a.attemptedAt.compareTo(b.attemptedAt),
+        ),
+      )
+      ..sort(
+        (a, b) => a.first.attemptedAt.compareTo(b.first.attemptedAt),
+      );
+    return chronological.indexed
+        .map(
+          (entry) => (
+            number: entry.$1 + 1,
+            attempts: entry.$2,
+          ),
+        )
+        .toList(growable: false)
+        .reversed
+        .toList(growable: false);
+  }
+
+  Widget _sampleHistoryTile(
+      ({
+        int number,
+        List<ProductionInspectionHistoryItem> attempts,
+      }) sample) {
+    final attempts = sample.attempts;
+    final latest = attempts.last;
+    final status = switch (latest.decisionStatus) {
+      'blocked' => 'Заблокирован',
+      'approved' => 'Допущен',
+      _ => 'В работе',
+    };
+    final color = switch (latest.decisionStatus) {
+      'blocked' => const Color(0xFFA82820),
+      'approved' => const Color(0xFF417C50),
+      _ => AppTheme.blue,
+    };
+    final icon = switch (latest.decisionStatus) {
+      'blocked' => Icons.block_rounded,
+      'approved' => Icons.task_alt_rounded,
+      _ => Icons.pending_actions_rounded,
+    };
+    final unitLabel = 'Партия ${latest.batchNumber} · '
+        '${latest.unitType.label} ${latest.unitNumber}';
+    return ListTile(
+      key: ValueKey(
+        'work-history-sample-${latest.batchNumber}-'
+        '${latest.unitNumber}-${latest.inspectionNumber}',
+      ),
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(icon, color: color),
+      title: Text('Образец №${sample.number}'),
+      subtitle: Text(
+        '$unitLabel · сравнений: ${attempts.length}'
+        ' · ${latest.score.toStringAsFixed(1)}%\n'
+        '${_formatDate(latest.attemptedAt)}'
+        '${latest.attemptedByName.isEmpty ? '' : ' · ${latest.attemptedByName}'}'
+        '${latest.decisionNote.trim().isEmpty ? '' : ' · ${latest.decisionNote.trim()}'}',
+      ),
+      trailing: Text(
+        status,
+        style: TextStyle(color: color, fontWeight: FontWeight.w800),
+      ),
     );
   }
 

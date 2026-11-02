@@ -41,6 +41,41 @@ void main() {
     expect(openedComparison?.unit.id, 'unit-1');
   });
 
+  testWidgets('work history numbers real inspections instead of units',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1100, 760));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: WorksScreen(
+            organizationId: 'org-1',
+            organizationAccess: OrganizationAccess.forRole(
+              organizationId: 'org-1',
+              role: OrganizationRole.employee,
+            ),
+            workflowService: _FakeWorkflowService(),
+            onOpenComparison: (_) {},
+            onOpenChat: (_) {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('work-menu-job-500')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Результаты и история'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Образец №2'), findsOneWidget);
+    expect(find.text('В работе'), findsOneWidget);
+    expect(find.text('Образец №1'), findsOneWidget);
+    expect(find.text('Заблокирован'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('customer sees work status without comparison controls',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(1100, 760));
@@ -490,8 +525,49 @@ class _FakeWorkflowService implements ProductionWorkflowService {
     required String organizationId,
     String search = '',
     int limit = 100,
-  }) async =>
-      const [];
+  }) async {
+    if (customerMode) return const [];
+    return [
+      ProductionInspectionHistoryItem(
+        attemptId: 'attempt-2',
+        jobId: 'job-500',
+        jobNumber: 'VESNA-500',
+        customerName: 'Заказчик 500',
+        batchNumber: 1,
+        unitNumber: 1,
+        unitType: ProductionUnitType.stack,
+        inspectionNumber: 2,
+        attemptNumber: 1,
+        protocolOwnerUserId: 'employee-1',
+        protocolId: 'protocol-2',
+        score: 93.2,
+        attemptedByUserId: 'employee-1',
+        attemptedByName: 'Маша',
+        attemptedAt: DateTime.utc(2026, 10, 3, 11),
+        decisionStatus: 'checking',
+        decisionNote: '',
+      ),
+      ProductionInspectionHistoryItem(
+        attemptId: 'attempt-1',
+        jobId: 'job-500',
+        jobNumber: 'VESNA-500',
+        customerName: 'Заказчик 500',
+        batchNumber: 1,
+        unitNumber: 1,
+        unitType: ProductionUnitType.stack,
+        inspectionNumber: 1,
+        attemptNumber: 1,
+        protocolOwnerUserId: 'employee-1',
+        protocolId: 'protocol-1',
+        score: 82.4,
+        attemptedByUserId: 'employee-1',
+        attemptedByName: 'Маша',
+        attemptedAt: DateTime.utc(2026, 10, 3, 10),
+        decisionStatus: 'blocked',
+        decisionNote: 'Полоса по краю',
+      ),
+    ];
+  }
 
   @override
   Future<String> createBatch({
